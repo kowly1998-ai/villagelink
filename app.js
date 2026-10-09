@@ -81,6 +81,7 @@
   function toast(t) { const el = $('#toast'); el.textContent = t; el.hidden = false; clearTimeout(toastT); toastT = setTimeout(() => { el.hidden = true; }, 2800); }
 
   const I = {
+    plus: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>',
     home: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round"><path d="M3 10.5 12 3l9 7.5V20a1 1 0 0 1-1 1h-5v-6h-6v6H4a1 1 0 0 1-1-1z"/></svg>',
     users: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c.8-3.6 3.4-5.5 6.5-5.5s5.7 1.9 6.5 5.5M16 4.6a3.5 3.5 0 0 1 0 6.8M18 14.8c1.9.7 3.1 2.4 3.5 5.2"/></svg>',
     wallet: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><rect x="3" y="6" width="18" height="14" rx="2.5"/><path d="M3 10.5h18M16 15h2"/></svg>',
@@ -376,18 +377,18 @@
     const onApp = act.filter(m => m.user_id).length;
     const bal = S.ctx.bal;
     return `
-      <section class="card hero"><div class="eyebrow">Solde de l’association</div><div class="big num">${money(bal.in - bal.out)}</div>
-        <div class="split num"><span>Collecté <b>${money(bal.in)}</b></span><span>Dépensé <b>${money(bal.out)}</b></span></div>
-        <div><a class="link" href="${B()}/transparence" style="color:#7FE0AE">Voir où va l’argent →</a></div></section>
-      <section class="stack"><div class="between"><h2>Derniers paiements et dépenses</h2><a class="link" href="${B()}/finances">Tout voir</a></div>
-        <div class="list">${lastOps.map(t => txItem(t, lastRev)).join('') || '<div class="empty">Aucune opération pour le moment. Elles s’afficheront ici avec leur date et leur heure.</div>'}</div></section>
+      <section class="card hero"><div class="eyebrow">Solde de la caisse</div><div class="big num">${num(bal.in - bal.out)} <span class="cur">${esc(CUR_LABEL[a.currency] || 'FCFA')}</span></div>
+        <div class="boxes num"><div><small>Collecté</small><b>${money(bal.in)}</b></div><div><small>Dépensé</small><b>${money(bal.out)}</b></div></div>
+        ${can('collect') ? `<a class="btn gold block" href="${B()}/encaisser">${I.plus} Encaisser une cotisation</a>` : ''}
+        <div><a class="link" href="${B()}/transparence">Voir où va l’argent</a></div></section>
       <div class="grid2">
-        <a class="stat" href="${B()}/membres"><span class="l">Membres</span><span class="v num">${act.length}</span><span class="l">${onApp} sur l’application</span></a>
-        <a class="stat ${late ? 'warn' : ''}" href="${B()}/cotisations"><span class="l">En retard</span><span class="v num">${late}</span><span class="l">${late ? 'membres à relancer' : 'tout le monde est à jour'}</span></a>
-        ${fee ? `<a class="stat" href="${B()}/cotisations" style="grid-column:1/-1"><div class="between"><span class="l">Cotisations de ${pFR(cur)}</span><span class="pill p-blue num">${paidCount}/${dueNow.length} payé</span></div>
-          <span class="v num">${money(collected)} <span class="l">sur ${money(expected)}</span></span><div class="bar"><i style="width:${pct(collected, expected)}%"></i></div></a>`
-          : (can('settings') ? `<a class="stat" href="${B()}/parametres" style="grid-column:1/-1"><span class="l">Cotisation</span><span class="v" style="font-size:17px">Fixez le montant mensuel</span><span class="l">Pour suivre qui est à jour et qui est en retard.</span></a>` : '')}
+        ${fee ? `<a class="stat" href="${B()}/cotisations"><div class="ring num" style="--p:${pct(paidCount, dueNow.length)}"><span>${pct(paidCount, dueNow.length)}${NB}%</span></div><span class="t">${esc(pFR(cur).replace(/^./, c => c.toUpperCase()))}</span><span class="l num">${paidCount} sur ${dueNow.length} ont payé · ${money(collected)} sur ${money(expected)}</span></a>`
+          : (can('settings') ? `<a class="stat" href="${B()}/parametres"><span class="t">Cotisation</span><span class="l">Fixez le montant mensuel pour suivre qui est à jour.</span></a>` : `<a class="stat" href="${B()}/membres"><span class="l">Membres</span><span class="v num">${act.length}</span><span class="l">${onApp} sur l’application</span></a>`)}
+        <a class="stat ${late ? 'warn' : ''}" href="${B()}/cotisations"><span class="v num">${late}</span><span class="l">En retard</span><span class="l">${late ? 'Relancer sur WhatsApp' : 'Tout le monde est à jour'}</span></a>
       </div>
+      <section class="stack"><div class="between"><h2>Derniers mouvements</h2><a class="link" href="${B()}/finances">Tout voir</a></div>
+        <div class="list">${lastOps.map(t => txItem(t, lastRev)).join('') || '<div class="empty">Aucune opération pour le moment. Elles s’afficheront ici avec leur date et leur heure.</div>'}</div></section>
+      <a class="card between" href="${B()}/membres"><span><span class="t" style="font-weight:700">${act.length} membre${act.length > 1 ? 's' : ''}</span><br><span class="muted" style="font-size:13px">${onApp} sur l’application</span></span><span class="chev">${I.chev}</span></a>
       ${pendingMembers().length && can('members') ? `<a class="card stack" href="${B()}/membres?f=pending" style="border-color:var(--warn)"><span class="eyebrow">À valider</span><h2>${pendingMembers().length} demande${pendingMembers().length > 1 ? 's' : ''} d’adhésion</h2><span class="muted">Vérifiez que ce sont bien des ressortissants du village avant de valider.</span></a>` : ''}
       ${projCard}
       ${act.length <= 1 && can('members') ? `<a class="card stack" href="${B()}/membres/import"><span class="eyebrow">Pour bien démarrer</span><h2>Ajoutez la liste des membres</h2><span class="muted">Collez-la depuis votre cahier, Excel ou WhatsApp, ou partagez le code d’invitation.</span></a>` : ''}
@@ -774,7 +775,7 @@
       <div class="list menu">${items.map(([k, t, s, ic]) => `<a class="item" href="${B()}/${k}"><span class="ico">${ic}</span><div class="body"><div class="t">${t}</div><div class="s">${s}</div></div><span class="chev">${I.chev}</span></a>`).join('')}</div>
       <div class="list menu"><a class="item" href="#/bienvenue"><span class="ico">${I.swap}</span><div class="body"><div class="t">Mes associations</div><div class="s">Changer, rejoindre ou créer une association</div></div><span class="chev">${I.chev}</span></a>
       <button class="item" data-act="signout"><span class="ico">${I.out}</span><div class="body"><div class="t">Se déconnecter</div><div class="s">${esc(S.user.email || '')}</div></div></button></div>
-      <p class="muted" style="font-size:12.5px;text-align:center">VillageLink · version 1.2</p>`;
+      <p class="muted" style="font-size:12.5px;text-align:center">VillageLink · version 1.3</p>`;
   };
 
   V.parametres = async () => {
