@@ -203,3 +203,4 @@ textarea.mono{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:13px}
 .stat.warn .l{color:var(--warn)}
 .stat.warn .l:first-child{color:var(--ink);font-weight:700}
 .stat .t{font-weight:700}
+.seg.seg3{grid-template-columns:repeat(3,1fr)}

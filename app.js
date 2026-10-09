@@ -55,6 +55,14 @@
   const go = h => { if (location.hash === h) route(); else location.hash = h; };
   const store = { get(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }, set(k, v) { try { localStorage.setItem(k, v); } catch (e) { /* stockage indisponible */ } } };
 
+  /* Thème : clair par défaut, comme la maquette ; sombre ou automatique au choix dans Plus */
+  const THEMES = [['light', 'Clair'], ['dark', 'Sombre'], ['auto', 'Auto']];
+  const themeNow = () => { const t = store.get('vl:theme'); return t === 'dark' || t === 'auto' ? t : 'light'; };
+  const applyTheme = () => { const t = themeNow(), el = document.documentElement; if (t === 'auto') el.removeAttribute('data-theme'); else el.setAttribute('data-theme', t);
+    const dark = t === 'dark' || (t === 'auto' && window.matchMedia && matchMedia('(prefers-color-scheme: dark)').matches);
+    const meta = document.querySelector('meta[name=theme-color]'); if (meta) meta.setAttribute('content', dark ? '#140C1F' : '#F5F2FA'); };
+  applyTheme();
+
   function errMsg(e) {
     const m = (e && (e.message || e.error_description)) || String(e);
     if (/row-level security|permission denied/i.test(m)) return 'Vous n’avez pas le droit de faire cette action.';
@@ -775,7 +783,8 @@
       <div class="list menu">${items.map(([k, t, s, ic]) => `<a class="item" href="${B()}/${k}"><span class="ico">${ic}</span><div class="body"><div class="t">${t}</div><div class="s">${s}</div></div><span class="chev">${I.chev}</span></a>`).join('')}</div>
       <div class="list menu"><a class="item" href="#/bienvenue"><span class="ico">${I.swap}</span><div class="body"><div class="t">Mes associations</div><div class="s">Changer, rejoindre ou créer une association</div></div><span class="chev">${I.chev}</span></a>
       <button class="item" data-act="signout"><span class="ico">${I.out}</span><div class="body"><div class="t">Se déconnecter</div><div class="s">${esc(S.user.email || '')}</div></div></button></div>
-      <p class="muted" style="font-size:12.5px;text-align:center">VillageLink · version 1.3</p>`;
+      <section class="card stack"><h2>Affichage</h2><div class="seg seg3" role="group" aria-label="Thème">${THEMES.map(([k, l]) => `<button data-act="theme" data-theme="${k}" aria-pressed="${themeNow() === k}">${l}</button>`).join('')}</div><p class="help">« Auto » suit le réglage clair ou sombre de votre téléphone.</p></section>
+      <p class="muted" style="font-size:12.5px;text-align:center">VillageLink · version 1.3.1</p>`;
   };
 
   V.parametres = async () => {
@@ -1006,6 +1015,7 @@
       if (act === 'auth-mode') { S.authMode = b.dataset.mode; S.authMsg = ''; renderAuth(); }
       else if (act === 'signout') { await sb.auth.signOut(); S.ctx = null; S.authMode = 'login'; S.authMsg = ''; S.session = null; S.user = null; location.hash = '#/'; renderAuth(); }
       else if (act === 'reload') location.reload();
+      else if (act === 'theme') { store.set('vl:theme', b.dataset.theme); applyTheme(); document.querySelectorAll('[data-act=theme]').forEach(x => x.setAttribute('aria-pressed', String(x === b))); }
       else if (act === 'hidemsg') {
         if (b.dataset.confirm !== '1') { b.dataset.confirm = '1'; b.textContent = 'Confirmer le masquage'; return; }
         must(await sb.rpc('hide_message', { p_id: Number(b.dataset.id) }));
