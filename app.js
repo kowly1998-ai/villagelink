@@ -40,6 +40,10 @@
   const curYM = () => todayISO().slice(0, 7);
   const ym = d => String(d || '').slice(0, 7);
   const dFR = d => { if (!d) return ''; const s = String(d); if (s.length > 10) { const x = new Date(s); return `${x.getDate()}${NB}${MOIS[x.getMonth()]} ${x.getFullYear()}`; } const [y, m, da] = s.split('-').map(Number); return `${da}${NB}${MOIS[m - 1]} ${y}`; };
+  const hm = ts => { const x = new Date(ts); return `${pad(x.getHours())}h${pad(x.getMinutes())}`; };
+  const localDay = ts => { const x = new Date(ts); return `${x.getFullYear()}-${pad(x.getMonth() + 1)}-${pad(x.getDate())}`; };
+  const whenTx = t => !t.created_at ? dFR(t.occurred_on) : (localDay(t.created_at) === String(t.occurred_on)
+    ? `${dFR(t.occurred_on)} à ${hm(t.created_at)}` : `${dFR(t.occurred_on)} (saisi le ${dFR(localDay(t.created_at))} à ${hm(t.created_at)})`);
   const pFR = p => { const [y, m] = String(p).split('-').map(Number); return `${MOISL[m - 1]} ${y}`; };
   const addMonth = (p, k) => { let [y, m] = p.split('-').map(Number); m += k; while (m > 12) { m -= 12; y++; } while (m < 1) { m += 12; y--; } return `${y}-${pad(m)}`; };
   const monthsBetween = (a, b) => { const out = []; let p = a; let guard = 0; while (p <= b && guard++ < 600) { out.push(p); p = addMonth(p, 1); } return out; };
@@ -92,6 +96,7 @@
     gear: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><circle cx="12" cy="12" r="3"/><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3M5.3 5.3l2.1 2.1M16.6 16.6l2.1 2.1M5.3 18.7l2.1-2.1M16.6 7.4l2.1-2.1" stroke-linecap="round"/></svg>',
     swap: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M7 7h12l-3-3M17 17H5l3 3"/></svg>',
     out: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M15 4h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-3M10 17l5-5-5-5M15 12H4"/></svg>',
+    chat: '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round"><path d="M4 5h16v11H9l-5 4z"/><path d="M8 9.5h8M8 12.5h5" stroke-linecap="round"/></svg>',
     wa: '<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2a10 10 0 0 0-8.6 15.1L2 22l5-1.3A10 10 0 1 0 12 2zm0 18.2a8.2 8.2 0 0 1-4.2-1.2l-.3-.2-3 .8.8-2.9-.2-.3A8.2 8.2 0 1 1 12 20.2zm4.5-6.1c-.2-.1-1.5-.7-1.7-.8s-.4-.1-.6.1-.6.8-.8 1-.3.2-.5.1a6.7 6.7 0 0 1-3.3-2.9c-.3-.4.2-.4.7-1.4.1-.2 0-.3 0-.4l-.8-1.8c-.2-.5-.4-.4-.6-.4h-.5a1 1 0 0 0-.7.3 3 3 0 0 0-.9 2.2 5.2 5.2 0 0 0 1.1 2.7 11.8 11.8 0 0 0 4.5 4c1.7.7 2.3.8 3.2.6a2.7 2.7 0 0 0 1.8-1.2 2.2 2.2 0 0 0 .2-1.2c-.1-.1-.3-.2-.5-.3z"/></svg>'
   };
 
@@ -129,10 +134,12 @@
       sb.from('v_balances').select('*').eq('association_id', id).maybeSingle().then(must)
     ]);
     if (!a) { S.ctx = null; return null; }
+    let lastMsg = 0;
+    try { const r = await sb.from('messages').select('id').eq('association_id', id).order('id', { ascending: false }).limit(1); if (!r.error && r.data[0]) lastMsg = r.data[0].id; } catch (e) { /* discussion pas encore installée */ }
     const paidMap = new Map();
     paid.forEach(r => paidMap.set(r.member_id + '|' + r.period, Number(r.paid)));
     const me = members.find(m => m.user_id === S.user.id) || null;
-    S.ctx = { loadedAt: Date.now(), assoc: a, me, members, byId: new Map(members.map(m => [m.id, m])), paidMap,
+    S.ctx = { loadedAt: Date.now(), lastMsg, assoc: a, me, members, byId: new Map(members.map(m => [m.id, m])), paidMap,
       bal: { in: Number(bal ? bal.total_in : 0), out: Number(bal ? bal.total_out : 0) } };
     store.set('vl:last', id);
     return S.ctx;
@@ -302,6 +309,7 @@
     root.innerHTML = `<div id="app">
       <header class="top"><a class="org" href="${base}"><div class="logo" aria-hidden="true">${esc(initials(a.name).slice(0, 1))}</div>
         <div style="min-width:0"><b>${esc(a.name)}</b><small>${esc([a.village, a.region, a.origin_country].filter(Boolean).join(' · '))}</small></div></a>
+        <a class="iconbtn" href="${base}/discussion" aria-label="Discussion">${I.chat}${S.ctx.lastMsg > Number(store.get('vl:seen:' + a.id) || 0) ? '<span class="badge-dot">•</span>' : ''}</a>
         <a class="iconbtn" href="${base}/annonces" aria-label="Annonces">${I.bell}</a></header>
       <main id="view"><div class="loading">Chargement…</div></main>
       <nav class="tabs" aria-label="Navigation principale"><div class="tabs-in">${TABS.map(([k, l, ic]) => `<a class="tab" href="${base}${k ? '/' + k : ''}" ${tab === k ? 'aria-current="page"' : ''}><span class="ic">${ic}</span>${l}</a>`).join('')}</div></nav></div>`;
@@ -323,7 +331,7 @@
     const reversed = reversedIds && reversedIds.has(t.id);
     const title = t.category === 'Cotisations' && t.member_id ? 'Cotisation · ' + memberName(t.member_id) : t.description;
     const fx = effect(t);
-    return `<a class="item" href="${B()}/op/${t.id}"><div class="body"><div class="t ${reversed ? 'strike' : ''}">${esc(title)}</div><div class="s">${dFR(t.occurred_on)} · ${esc(t.category)}${t.reversal_of ? ' · contre-écriture' : ''}${reversed ? ' · annulée' : ''}</div></div><span class="amt num ${fx >= 0 ? 'in' : 'out'}">${fx >= 0 ? '+' : '−'}${money(Math.abs(fx))}</span></a>`;
+    return `<a class="item" href="${B()}/op/${t.id}"><div class="body"><div class="t ${reversed ? 'strike' : ''}">${esc(title)}</div><div class="s wrap">${whenTx(t)} · ${esc(t.category)}${t.reversal_of ? ' · contre-écriture' : ''}${reversed ? ' · annulée' : ''}</div></div><span class="amt num ${fx >= 0 ? 'in' : 'out'}">${fx >= 0 ? '+' : '−'}${money(Math.abs(fx))}</span></a>`;
   };
   async function reversedSet(rows) {
     const ids = rows.filter(t => !t.reversal_of).map(t => t.id);
@@ -344,10 +352,12 @@
 
   V.home = async () => {
     const a = S.ctx.assoc, fee = Number(a.fee_amount) || 0, cur = curYM();
-    const [projects, logs] = await Promise.all([
+    const [lastOps, projects, logs] = await Promise.all([
+      sb.from('transactions').select('*').eq('association_id', a.id).order('created_at', { ascending: false }).order('id', { ascending: false }).limit(5).then(must),
       sb.from('projects').select('*').eq('association_id', a.id).eq('status', 'En cours').order('created_at', { ascending: false }).limit(1).then(must),
       sb.from('activity_log').select('*').eq('association_id', a.id).order('id', { ascending: false }).limit(5).then(must)
     ]);
+    const lastRev = await reversedSet(lastOps);
     let projCard = '';
     if (projects.length) {
       const p = projects[0];
@@ -369,6 +379,8 @@
       <section class="card hero"><div class="eyebrow">Solde de l’association</div><div class="big num">${money(bal.in - bal.out)}</div>
         <div class="split num"><span>Collecté <b>${money(bal.in)}</b></span><span>Dépensé <b>${money(bal.out)}</b></span></div>
         <div><a class="link" href="${B()}/transparence" style="color:#7FE0AE">Voir où va l’argent →</a></div></section>
+      <section class="stack"><div class="between"><h2>Derniers paiements et dépenses</h2><a class="link" href="${B()}/finances">Tout voir</a></div>
+        <div class="list">${lastOps.map(t => txItem(t, lastRev)).join('') || '<div class="empty">Aucune opération pour le moment. Elles s’afficheront ici avec leur date et leur heure.</div>'}</div></section>
       <div class="grid2">
         <a class="stat" href="${B()}/membres"><span class="l">Membres</span><span class="v num">${act.length}</span><span class="l">${onApp} sur l’application</span></a>
         <a class="stat ${late ? 'warn' : ''}" href="${B()}/cotisations"><span class="l">En retard</span><span class="v num">${late}</span><span class="l">${late ? 'membres à relancer' : 'tout le monde est à jour'}</span></a>
@@ -610,12 +622,12 @@
     const isReceipt = q.get('recu') === '1' && m;
     const receipt = receiptText(t, m, author);
     return `${subHead(isReceipt ? 'Paiement enregistré' : 'Opération ' + txRef(t.id), m ? B() + '/m/' + m.id : B() + '/finances')}
-      ${isReceipt ? `<div class="receipt stack num"><div class="between"><b>Reçu ${txRef(t.id)}</b><span class="pill p-ok">Payé</span></div><dl class="kv" style="margin:0"><dt>Membre</dt><dd>${esc(m.full_name)}</dd><dt>Objet</dt><dd>${esc(t.description)}</dd><dt>Montant</dt><dd>${money(t.amount)}</dd><dt>Mode</dt><dd>${esc(t.payment_method || '—')}</dd><dt>Date</dt><dd>${dFR(t.occurred_on)}</dd></dl>
+      ${isReceipt ? `<div class="receipt stack num"><div class="between"><b>Reçu ${txRef(t.id)}</b><span class="pill p-ok">Payé</span></div><dl class="kv" style="margin:0"><dt>Membre</dt><dd>${esc(m.full_name)}</dd><dt>Objet</dt><dd>${esc(t.description)}</dd><dt>Montant</dt><dd>${money(t.amount)}</dd><dt>Mode</dt><dd>${esc(t.payment_method || '—')}</dd><dt>Date</dt><dd>${whenTx(t)}</dd></dl>
         ${t.period && paidFor(m.id, t.period) < Number(S.ctx.assoc.fee_amount) ? `<span class="pill p-late">Reste ${money(Number(S.ctx.assoc.fee_amount) - paidFor(m.id, t.period))} pour ${pFR(t.period)}</span>` : ''}</div>
         <a class="btn wa block" target="_blank" rel="noopener" href="${waTo(m.phone, receipt)}">${I.wa} Envoyer le reçu sur WhatsApp</a>
         <a class="btn ghost block" href="${B()}/encaisser">Enregistrer un autre paiement</a>` : `
       <section class="card stack num"><div class="between"><span class="pill ${t.kind === 'in' ? 'p-ok' : 'p-red'}">${t.kind === 'in' ? 'Recette' : 'Dépense'} · ${esc(t.category)}</span><span class="amt ${effect(t) >= 0 ? 'in' : 'out'}" style="font-size:18px">${effect(t) >= 0 ? '+' : '−'}${money(Math.abs(t.amount))}</span></div>
-        <dl class="kv" style="margin:0"><dt>Objet</dt><dd>${esc(t.description)}</dd>${m ? `<dt>Membre</dt><dd>${esc(m.full_name)}</dd>` : ''}${t.period ? `<dt>Mois</dt><dd>${pFR(t.period)}</dd>` : ''}${proj ? `<dt>Projet</dt><dd>${esc(proj.name)}</dd>` : ''}<dt>Date</dt><dd>${dFR(t.occurred_on)}</dd>${t.payment_method ? `<dt>Mode</dt><dd>${esc(t.payment_method)}</dd>` : ''}<dt>Saisi par</dt><dd>${esc(author ? author.full_name : '—')}</dd><dt>Saisi le</dt><dd>${dFR(t.created_at)}</dd>${t.comment ? `<dt>${t.reversal_of ? 'Motif' : 'Commentaire'}</dt><dd>${esc(t.comment)}</dd>` : ''}</dl>
+        <dl class="kv" style="margin:0"><dt>Objet</dt><dd>${esc(t.description)}</dd>${m ? `<dt>Membre</dt><dd>${esc(m.full_name)}</dd>` : ''}${t.period ? `<dt>Mois</dt><dd>${pFR(t.period)}</dd>` : ''}${proj ? `<dt>Projet</dt><dd>${esc(proj.name)}</dd>` : ''}<dt>Date</dt><dd>${dFR(t.occurred_on)}</dd>${t.payment_method ? `<dt>Mode</dt><dd>${esc(t.payment_method)}</dd>` : ''}<dt>Saisi par</dt><dd>${esc(author ? author.full_name : '—')}</dd><dt>Saisi le</dt><dd>${dFR(t.created_at)} à ${hm(t.created_at)}</dd>${t.comment ? `<dt>${t.reversal_of ? 'Motif' : 'Commentaire'}</dt><dd>${esc(t.comment)}</dd>` : ''}</dl>
         ${t.proof_path ? `<button class="btn ghost sm" data-act="proof" data-path="${esc(t.proof_path)}">Voir le justificatif</button><div id="proof-box"></div>` : '<span class="muted" style="font-size:13px">Aucun justificatif</span>'}</section>
       ${rev ? `<p class="note">Opération annulée le ${dFR(rev.occurred_on)} par la contre-écriture <a class="link" href="${B()}/op/${rev.id}">${txRef(rev.id)}</a>. Motif : ${esc(rev.comment)}</p>` : ''}
       ${orig ? `<p class="note">Cette ligne annule <a class="link" href="${B()}/op/${orig.id}">${txRef(orig.id)}</a>. Les deux restent visibles dans l’historique.</p>` : ''}
@@ -624,7 +636,7 @@
   };
   function receiptText(t, m, author) {
     const a = S.ctx.assoc;
-    return `Reçu ${txRef(t.id)}\n${a.name}\n\n${m ? 'Membre : ' + m.full_name + '\n' : ''}${t.description}\nMontant : ${money(t.amount)}\nMode : ${t.payment_method || '—'}\nDate : ${dFR(t.occurred_on)}\nEnregistré par : ${author ? author.full_name : S.ctx.me.full_name}\n\nMerci pour votre contribution au développement de ${a.village || 'notre village'}.`;
+    return `Reçu ${txRef(t.id)}\n${a.name}\n\n${m ? 'Membre : ' + m.full_name + '\n' : ''}${t.description}\nMontant : ${money(t.amount)}\nMode : ${t.payment_method || '—'}\nDate : ${whenTx(t)}\nEnregistré par : ${author ? author.full_name : S.ctx.me.full_name}\n\nMerci pour votre contribution au développement de ${a.village || 'notre village'}.`;
   }
 
   /* Transparence ----------------------------------------------------- */
@@ -720,6 +732,32 @@
       ${rows.map(x => `<section class="card stack"><div class="between"><span class="pill ${col[x.kind] || 'p-blue'}">${esc(x.kind)}</span><span class="muted" style="font-size:13px">${dFR(x.created_at)}</span></div><h2>${esc(x.title)}</h2><p style="margin:0;white-space:pre-line">${esc(x.body)}</p><div class="between"><span class="muted" style="font-size:13px">${esc(by(x.created_by))}</span><a class="link" target="_blank" rel="noopener" href="${waShare(x.kind + ' · ' + x.title + '\n\n' + x.body + '\n\n' + a.name)}">Partager sur WhatsApp</a></div></section>`).join('') || '<div class="empty">Aucune annonce pour le moment.</div>'}`;
   };
 
+  const MSG_KINDS = ['Message', 'Idée', 'Réclamation'];
+  V.discussion = async (sub, q) => {
+    const a = S.ctx.assoc;
+    const f = MSG_KINDS.includes(q.get('f')) ? q.get('f') : '';
+    let qy = sb.from('messages').select('*').eq('association_id', a.id);
+    if (f) qy = qy.eq('kind', f);
+    const res = await qy.order('id', { ascending: false }).limit(100);
+    if (res.error) return `${subHead('Discussion', B() + '/plus')}<p class="note">La discussion n’est pas encore installée sur la base. Le président doit coller le script « migration 1.2 » dans Supabase.</p>`;
+    const rows = res.data.slice().reverse();
+    if (rows.length) store.set('vl:seen:' + a.id, String(Math.max(...rows.map(m => m.id), S.ctx.lastMsg || 0)));
+    const canHideAll = ['president', 'secretaire'].includes(S.ctx.me.role);
+    const pill = { Idée: 'p-ok', Réclamation: 'p-late', Message: '' };
+    return `${subHead('Discussion', B() + '/plus')}
+      <div class="chips" role="group" aria-label="Filtrer">${[['', 'Tout'], ['Idée', 'Idées'], ['Réclamation', 'Réclamations']].map(([k, l]) => `<a class="chip" style="text-decoration:none" href="${B()}/discussion${k ? '?f=' + encodeURIComponent(k) : ''}" aria-pressed="${f === k}">${l}</a>`).join('')}</div>
+      <div class="chat" id="chat">${rows.map(m => { const mine = m.author_id === S.user.id; return `<div class="msg ${mine ? 'mine' : ''} ${m.hidden ? 'hidden-msg' : ''}">
+        <div class="msg-head"><b>${esc(mine ? 'Vous' : m.author_label)}</b>${m.kind !== 'Message' ? ` <span class="pill ${pill[m.kind]}">${esc(m.kind)}</span>` : ''}</div>
+        <div class="msg-body">${m.hidden ? 'Message masqué' + (m.hidden_by ? ' par ' + esc(m.hidden_by) : '') : esc(m.body)}</div>
+        <div class="msg-foot"><span>${dFR(localDay(m.created_at))} à ${hm(m.created_at)}</span>${!m.hidden && (mine || canHideAll) ? `<button class="link" data-act="hidemsg" data-id="${m.id}">Masquer</button>` : ''}</div></div>`; }).join('') || `<div class="empty">Aucun message${f ? ' dans cette catégorie' : ''}. Écrivez le premier !</div>`}</div>
+      <form class="card stack" data-form="message" novalidate>
+        <div class="field"><label for="ms-k">Type</label><select id="ms-k" name="kind">${MSG_KINDS.map(k => opt(k, k, f || 'Message')).join('')}</select></div>
+        <div class="field"><label for="ms-b">Votre message</label><textarea id="ms-b" name="body" rows="3" maxlength="1000" placeholder="Écrivez à tous les membres de l’association"></textarea></div>
+        <p class="err" hidden></p><button class="btn primary block" type="submit">Envoyer</button>
+        <p class="help">Visible par tous les membres validés. Le président et le secrétaire peuvent masquer un message déplacé.</p></form>`;
+  };
+  AFTER.discussion = () => { const c = $('#chat'); if (c && c.lastElementChild) c.lastElementChild.scrollIntoView({ block: 'end' }); };
+
   V.journal = async (sub, q) => {
     const p = Math.max(0, Math.floor(Number(q.get('p'))) || 0), size = 50;
     const rows = must(await sb.from('activity_log').select('*').eq('association_id', S.ctx.assoc.id).order('id', { ascending: false }).range(p * size, p * size + size));
@@ -730,13 +768,13 @@
   };
 
   V.plus = async () => {
-    const items = [['transparence', 'Transparence', 'Où va l’argent, en clair', I.eye], ['finances', 'Finances', 'Recettes, dépenses et justificatifs', I.list], ['annonces', 'Annonces', 'Convocations et nouvelles du village', I.mega], ['journal', 'Journal d’activité', 'Qui a fait quoi, et quand', I.clock], ['parametres', 'Association', 'Fiche, cotisation, code d’invitation', I.gear]];
+    const items = [['discussion', 'Discussion', 'Messages, idées et réclamations des membres', I.chat.replace('width="24" height="24" ', '')], ['transparence', 'Transparence', 'Où va l’argent, en clair', I.eye], ['finances', 'Finances', 'Recettes, dépenses et justificatifs', I.list], ['annonces', 'Annonces', 'Convocations et nouvelles du village', I.mega], ['journal', 'Journal d’activité', 'Qui a fait quoi, et quand', I.clock], ['parametres', 'Association', 'Fiche, cotisation, code d’invitation', I.gear]];
     return `<h1>Plus</h1>
       <div class="rolebar"><span>Connecté en tant que <b>${esc(S.ctx.me.full_name)}</b>, ${esc(ROLES[S.ctx.me.role].toLowerCase())}</span></div>
       <div class="list menu">${items.map(([k, t, s, ic]) => `<a class="item" href="${B()}/${k}"><span class="ico">${ic}</span><div class="body"><div class="t">${t}</div><div class="s">${s}</div></div><span class="chev">${I.chev}</span></a>`).join('')}</div>
       <div class="list menu"><a class="item" href="#/bienvenue"><span class="ico">${I.swap}</span><div class="body"><div class="t">Mes associations</div><div class="s">Changer, rejoindre ou créer une association</div></div><span class="chev">${I.chev}</span></a>
       <button class="item" data-act="signout"><span class="ico">${I.out}</span><div class="body"><div class="t">Se déconnecter</div><div class="s">${esc(S.user.email || '')}</div></div></button></div>
-      <p class="muted" style="font-size:12.5px;text-align:center">VillageLink · version 1.1.2</p>`;
+      <p class="muted" style="font-size:12.5px;text-align:center">VillageLink · version 1.2</p>`;
   };
 
   V.parametres = async () => {
@@ -920,6 +958,13 @@
       must(await sb.from('project_updates').insert({ association_id: S.ctx.assoc.id, project_id: form.dataset.id, body }));
       toast('Mise à jour publiée'); route();
     },
+    async message(fd) {
+      const body = val(fd, 'body'), kind = val(fd, 'kind');
+      if (!body) fail('Écrivez votre message.');
+      if (body.length > 1000) fail('1 000 caractères maximum.');
+      must(await sb.from('messages').insert({ association_id: S.ctx.assoc.id, kind: MSG_KINDS.includes(kind) ? kind : 'Message', body }));
+      S.ctx.loadedAt = 0; toast('Message envoyé'); route();
+    },
     async announce(fd) {
       const title = val(fd, 'title'), body = val(fd, 'body');
       if (title.length < 2 || body.length < 2) fail('Ajoutez un titre et un message.');
@@ -960,6 +1005,11 @@
       if (act === 'auth-mode') { S.authMode = b.dataset.mode; S.authMsg = ''; renderAuth(); }
       else if (act === 'signout') { await sb.auth.signOut(); S.ctx = null; S.authMode = 'login'; S.authMsg = ''; S.session = null; S.user = null; location.hash = '#/'; renderAuth(); }
       else if (act === 'reload') location.reload();
+      else if (act === 'hidemsg') {
+        if (b.dataset.confirm !== '1') { b.dataset.confirm = '1'; b.textContent = 'Confirmer le masquage'; return; }
+        must(await sb.rpc('hide_message', { p_id: Number(b.dataset.id) }));
+        toast('Message masqué'); route();
+      }
       else if (act === 'review') {
         const ok = b.dataset.ok === '1';
         if (!ok && b.dataset.confirm !== '1') { b.dataset.confirm = '1'; b.textContent = 'Confirmer le refus'; return; }
