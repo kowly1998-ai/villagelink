@@ -145,8 +145,18 @@
     const start = [ym(a.dues_start), ym(m.joined_on)].sort().pop();
     const periods = start <= cur ? monthsBetween(start, cur) : [];
     const owed = periods.filter(p => paidFor(m.id, p) < fee);
-    const pastDue = new Date().getDate() > a.fee_due_day;
-    const late = owed.filter(p => p < cur || pastDue);
+    // Un mois est en retard quand son échéance est passée. Pour les mois suivis depuis la
+    // création de l'association dans l'app, l'échéance doit aussi tomber après l'adhésion
+    // et après cette création (sinon tout le monde serait en retard dès le premier jour).
+    const created = String(a.created_at || '').slice(0, 10) || todayISO();
+    const since = [created, String(m.joined_on || '')].sort().pop();
+    const isLate = p => {
+      const due = `${p}-${pad(a.fee_due_day)}`;
+      if (due >= todayISO()) return false;
+      if (p < ym(created)) return true;
+      return due >= since;
+    };
+    const late = owed.filter(isLate);
     return { owed, late, remaining: owed.reduce((s, p) => s + fee - paidFor(m.id, p), 0), isLate: late.length > 0 };
   }
   const activeMembers = () => S.ctx.members.filter(m => m.active && !m.pending);
@@ -722,7 +732,7 @@
       <div class="list menu">${items.map(([k, t, s, ic]) => `<a class="item" href="${B()}/${k}"><span class="ico">${ic}</span><div class="body"><div class="t">${t}</div><div class="s">${s}</div></div><span class="chev">${I.chev}</span></a>`).join('')}</div>
       <div class="list menu"><a class="item" href="#/bienvenue"><span class="ico">${I.swap}</span><div class="body"><div class="t">Mes associations</div><div class="s">Changer, rejoindre ou créer une association</div></div><span class="chev">${I.chev}</span></a>
       <button class="item" data-act="signout"><span class="ico">${I.out}</span><div class="body"><div class="t">Se déconnecter</div><div class="s">${esc(S.user.email || '')}</div></div></button></div>
-      <p class="muted" style="font-size:12.5px;text-align:center">VillageLink · version 1.1</p>`;
+      <p class="muted" style="font-size:12.5px;text-align:center">VillageLink · version 1.1.1</p>`;
   };
 
   V.parametres = async () => {
