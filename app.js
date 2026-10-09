@@ -114,13 +114,13 @@
   ------------------------------------------------------------------ */
   const ROLES = { president: 'Président', vice_president: 'Vice-président', secretaire: 'Secrétaire général', tresorier: 'Trésorier', projets: 'Responsable des projets', membre: 'Membre' };
   const CAN = {
-    members: ['president', 'secretaire', 'tresorier'],
+    members: ['president', 'vice_president', 'secretaire', 'tresorier'],
     roles: ['president'],
-    collect: ['tresorier', 'president'],
+    collect: ['tresorier', 'president', 'vice_president'],
     spend: ['tresorier'],
     reverse: ['tresorier'],
-    projects: ['president', 'projets'],
-    announce: ['president', 'secretaire'],
+    projects: ['president', 'vice_president', 'projets'],
+    announce: ['president', 'vice_president', 'secretaire'],
     settings: ['president']
   };
   const can = a => !!(S.ctx && S.ctx.me && CAN[a].includes(S.ctx.me.role));
@@ -751,7 +751,7 @@
     if (res.error) return `${subHead('Discussion', B() + '/plus')}<p class="note">La discussion n’est pas encore installée sur la base. Le président doit coller le script « migration 1.2 » dans Supabase.</p>`;
     const rows = res.data.slice().reverse();
     if (rows.length) store.set('vl:seen:' + a.id, String(Math.max(...rows.map(m => m.id), S.ctx.lastMsg || 0)));
-    const canHideAll = ['president', 'secretaire'].includes(S.ctx.me.role);
+    const canHideAll = ['president', 'vice_president', 'secretaire'].includes(S.ctx.me.role);
     const pill = { Idée: 'p-ok', Réclamation: 'p-late', Message: '' };
     return `${subHead('Discussion', B() + '/plus')}
       <div class="chips" role="group" aria-label="Filtrer">${[['', 'Tout'], ['Idée', 'Idées'], ['Réclamation', 'Réclamations']].map(([k, l]) => `<a class="chip" style="text-decoration:none" href="${B()}/discussion${k ? '?f=' + encodeURIComponent(k) : ''}" aria-pressed="${f === k}">${l}</a>`).join('')}</div>
@@ -763,7 +763,7 @@
         <div class="field"><label for="ms-k">Type</label><select id="ms-k" name="kind">${MSG_KINDS.map(k => opt(k, k, f || 'Message')).join('')}</select></div>
         <div class="field"><label for="ms-b">Votre message</label><textarea id="ms-b" name="body" rows="3" maxlength="1000" placeholder="Écrivez à tous les membres de l’association"></textarea></div>
         <p class="err" hidden></p><button class="btn primary block" type="submit">Envoyer</button>
-        <p class="help">Visible par tous les membres validés. Le président et le secrétaire peuvent masquer un message déplacé.</p></form>`;
+        <p class="help">Visible par tous les membres validés. Le président, le vice-président et le secrétaire peuvent masquer un message déplacé.</p></form>`;
   };
   AFTER.discussion = () => { const c = $('#chat'); if (c && c.lastElementChild) c.lastElementChild.scrollIntoView({ block: 'end' }); };
 
@@ -784,7 +784,7 @@
       <div class="list menu"><a class="item" href="#/bienvenue"><span class="ico">${I.swap}</span><div class="body"><div class="t">Mes associations</div><div class="s">Changer, rejoindre ou créer une association</div></div><span class="chev">${I.chev}</span></a>
       <button class="item" data-act="signout"><span class="ico">${I.out}</span><div class="body"><div class="t">Se déconnecter</div><div class="s">${esc(S.user.email || '')}</div></div></button></div>
       <section class="card stack"><h2>Affichage</h2><div class="seg seg3" role="group" aria-label="Thème">${THEMES.map(([k, l]) => `<button data-act="theme" data-theme="${k}" aria-pressed="${themeNow() === k}">${l}</button>`).join('')}</div><p class="help">« Auto » suit le réglage clair ou sombre de votre téléphone.</p></section>
-      <p class="muted" style="font-size:12.5px;text-align:center">VillageLink · version 1.3.1</p>`;
+      <p class="muted" style="font-size:12.5px;text-align:center">VillageLink · version 1.3.2</p>`;
   };
 
   V.parametres = async () => {
