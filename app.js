@@ -132,7 +132,7 @@
     const paidMap = new Map();
     paid.forEach(r => paidMap.set(r.member_id + '|' + r.period, Number(r.paid)));
     const me = members.find(m => m.user_id === S.user.id) || null;
-    S.ctx = { assoc: a, me, members, byId: new Map(members.map(m => [m.id, m])), paidMap,
+    S.ctx = { loadedAt: Date.now(), assoc: a, me, members, byId: new Map(members.map(m => [m.id, m])), paidMap,
       bal: { in: Number(bal ? bal.total_in : 0), out: Number(bal ? bal.total_out : 0) } };
     store.set('vl:last', id);
     return S.ctx;
@@ -245,6 +245,7 @@
     const list = must(await sb.rpc('my_memberships')).filter(a => a.active || a.pending);
     root.innerHTML = `<div class="auth" style="max-width:520px">
       <div class="between"><div class="brand"><div class="logo">V</div><b>VillageLink</b></div><button class="btn ghost sm" data-act="signout">Déconnexion</button></div>
+      ${list.some(a => a.pending) ? '<button class="btn ghost block" data-act="reload">Actualiser : ma demande a-t-elle été validée ?</button>' : ''}
       ${list.length ? `<section class="stack"><span class="eyebrow">Mes associations</span><div class="list">${list.map(a => a.pending
         ? `<div class="item"><div class="logo" style="width:40px;height:40px;font-size:18px">${esc(initials(a.name).slice(0, 1))}</div><div class="body"><div class="t">${esc(a.name)}</div><div class="s wrap">Demande envoyée. Un membre du bureau doit la valider.</div></div><span class="pill p-late">En attente</span></div>`
         : `<a class="item" href="#/a/${a.association_id}"><div class="logo" style="width:40px;height:40px;font-size:18px">${esc(initials(a.name).slice(0, 1))}</div><div class="body"><div class="t">${esc(a.name)}</div><div class="s">${esc([a.village, a.residence_city].filter(Boolean).join(' · '))}</div></div><span class="chev">${I.chev}</span></a>`).join('')}</div></section>` : '<p class="lead">Bienvenue. Rejoignez votre association avec le code donné par le bureau, ou créez-la si vous en êtes le président.</p>'}
@@ -279,6 +280,9 @@
     if (!S.ctx || S.ctx.assoc.id !== id) {
       root.innerHTML = '<div class="loading">Chargement de l’association…</div>';
       await loadCtx(id);
+    } else if (Date.now() - S.ctx.loadedAt > 15000) {
+      // Données de plus de 15 secondes : on recharge pour voir les nouvelles demandes, paiements, etc.
+      try { await loadCtx(id); } catch (e) { console.error(e); }
     }
     if (!S.ctx) {
       const mine = (must(await sb.rpc('my_memberships')) || []).find(a => a.association_id === id);
@@ -732,7 +736,7 @@
       <div class="list menu">${items.map(([k, t, s, ic]) => `<a class="item" href="${B()}/${k}"><span class="ico">${ic}</span><div class="body"><div class="t">${t}</div><div class="s">${s}</div></div><span class="chev">${I.chev}</span></a>`).join('')}</div>
       <div class="list menu"><a class="item" href="#/bienvenue"><span class="ico">${I.swap}</span><div class="body"><div class="t">Mes associations</div><div class="s">Changer, rejoindre ou créer une association</div></div><span class="chev">${I.chev}</span></a>
       <button class="item" data-act="signout"><span class="ico">${I.out}</span><div class="body"><div class="t">Se déconnecter</div><div class="s">${esc(S.user.email || '')}</div></div></button></div>
-      <p class="muted" style="font-size:12.5px;text-align:center">VillageLink · version 1.1.1</p>`;
+      <p class="muted" style="font-size:12.5px;text-align:center">VillageLink · version 1.1.2</p>`;
   };
 
   V.parametres = async () => {
@@ -978,6 +982,12 @@
   const setOnline = () => $('#offline').classList.toggle('hidden', navigator.onLine);
   window.addEventListener('online', setOnline); window.addEventListener('offline', setOnline); setOnline();
   window.addEventListener('hashchange', route);
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState !== 'visible' || !S.session) return;
+    if (S.ctx) S.ctx.loadedAt = 0;
+    // On ne réaffiche pas une page avec un formulaire : la saisie en cours serait perdue.
+    if (!document.querySelector('#view form[data-form]')) route();
+  });
 
   /* ------------------------------------------------------------------
      Session
