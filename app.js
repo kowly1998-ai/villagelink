@@ -44,6 +44,8 @@
   const localDay = ts => { const x = new Date(ts); return `${x.getFullYear()}-${pad(x.getMonth() + 1)}-${pad(x.getDate())}`; };
   const whenTx = t => !t.created_at ? dFR(t.occurred_on) : (localDay(t.created_at) === String(t.occurred_on)
     ? `${dFR(t.occurred_on)} à ${hm(t.created_at)}` : `${dFR(t.occurred_on)} (saisi le ${dFR(localDay(t.created_at))} à ${hm(t.created_at)})`);
+  const JOURS = ['dimanche', 'lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi'];
+  const dLong = ts => { const x = new Date(ts); return `${JOURS[x.getDay()]} ${x.getDate()}${NB}${MOISL[x.getMonth()]} ${x.getFullYear()} à ${hm(ts)}`; };
   const pFR = p => { const [y, m] = String(p).split('-').map(Number); return `${MOISL[m - 1]} ${y}`; };
   const addMonth = (p, k) => { let [y, m] = p.split('-').map(Number); m += k; while (m > 12) { m -= 12; y++; } while (m < 1) { m += 12; y--; } return `${y}-${pad(m)}`; };
   const monthsBetween = (a, b) => { const out = []; let p = a; let guard = 0; while (p <= b && guard++ < 600) { out.push(p); p = addMonth(p, 1); } return out; };
@@ -102,6 +104,7 @@
     list: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M8 6h13M8 12h13M8 18h13M3.5 6h.01M3.5 12h.01M3.5 18h.01"/></svg>',
     mega: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round"><path d="M3 10v4h4l7 5V5L7 10z"/><path d="M18 9a4 4 0 0 1 0 6" stroke-linecap="round"/></svg>',
     clock: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>',
+    cal: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4" stroke-linecap="round"/><path d="m9 15 2 2 4-4" stroke-linecap="round"/></svg>',
     gear: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><circle cx="12" cy="12" r="3"/><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3M5.3 5.3l2.1 2.1M16.6 16.6l2.1 2.1M5.3 18.7l2.1-2.1M16.6 7.4l2.1-2.1" stroke-linecap="round"/></svg>',
     swap: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M7 7h12l-3-3M17 17H5l3 3"/></svg>',
     out: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M15 4h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-3M10 17l5-5-5-5M15 12H4"/></svg>',
@@ -121,6 +124,7 @@
     reverse: ['tresorier'],
     projects: ['president', 'vice_president', 'projets'],
     announce: ['president', 'vice_president', 'secretaire'],
+    meetings: ['president', 'vice_president', 'secretaire'],
     settings: ['president']
   };
   const can = a => !!(S.ctx && S.ctx.me && CAN[a].includes(S.ctx.me.role));
@@ -206,7 +210,7 @@
     }
     const { parts, q } = parseHash();
     try {
-      if (!S.session) return renderAuth();
+      if (!S.session) { if (!document.querySelector('form[data-form=auth]')) renderAuth(); return; }
       if (parts[0] === 'mot-de-passe') return renderNewPassword();
       if (parts[0] === 'bienvenue') return await renderWelcome();
       if (parts[0] === 'a' && parts[1]) return await renderAssoc(parts[1], parts.slice(2), q);
@@ -361,6 +365,7 @@
 
   V.home = async () => {
     const a = S.ctx.assoc, fee = Number(a.fee_amount) || 0, cur = curYM();
+    const nextMeet = await sb.from('meetings').select('*').eq('association_id', a.id).eq('status', 'Prévue').gte('starts_at', new Date(Date.now() - 6 * 3600e3).toISOString()).order('starts_at', { ascending: true }).limit(1).then(r => (r.error ? [] : r.data || []), () => []);
     const [lastOps, projects, logs] = await Promise.all([
       sb.from('transactions').select('*').eq('association_id', a.id).order('created_at', { ascending: false }).order('id', { ascending: false }).limit(5).then(must),
       sb.from('projects').select('*').eq('association_id', a.id).eq('status', 'En cours').order('created_at', { ascending: false }).limit(1).then(must),
@@ -389,6 +394,7 @@
         <div class="boxes num"><div><small>Collecté</small><b>${money(bal.in)}</b></div><div><small>Dépensé</small><b>${money(bal.out)}</b></div></div>
         ${can('collect') ? `<a class="btn gold block" href="${B()}/encaisser">${I.plus} Encaisser une cotisation</a>` : ''}
         <div><a class="link" href="${B()}/transparence">Voir où va l’argent</a></div></section>
+      ${nextMeet.length ? `<a class="card meet-next" href="${B()}/r/${nextMeet[0].id}">${dateBox(nextMeet[0].starts_at)}<span class="body"><span class="eyebrow">Prochaine réunion</span><b>${esc(nextMeet[0].title)}</b><span class="muted">${esc(hm(nextMeet[0].starts_at))}${nextMeet[0].place ? ' · ' + esc(nextMeet[0].place) : ''}</span></span><span class="chev">${I.chev}</span></a>` : ''}
       <div class="grid2">
         ${fee ? `<a class="stat" href="${B()}/cotisations"><div class="ring num" style="--p:${pct(paidCount, dueNow.length)}"><span>${pct(paidCount, dueNow.length)}${NB}%</span></div><span class="t">${esc(pFR(cur).replace(/^./, c => c.toUpperCase()))}</span><span class="l num">${paidCount} sur ${dueNow.length} ont payé · ${money(collected)} sur ${money(expected)}</span></a>`
           : (can('settings') ? `<a class="stat" href="${B()}/parametres"><span class="t">Cotisation</span><span class="l">Fixez le montant mensuel pour suivre qui est à jour.</span></a>` : `<a class="stat" href="${B()}/membres"><span class="l">Membres</span><span class="v num">${act.length}</span><span class="l">${onApp} sur l’application</span></a>`)}
@@ -741,6 +747,91 @@
       ${rows.map(x => `<section class="card stack"><div class="between"><span class="pill ${col[x.kind] || 'p-blue'}">${esc(x.kind)}</span><span class="muted" style="font-size:13px">${dFR(x.created_at)}</span></div><h2>${esc(x.title)}</h2><p style="margin:0;white-space:pre-line">${esc(x.body)}</p><div class="between"><span class="muted" style="font-size:13px">${esc(by(x.created_by))}</span><a class="link" target="_blank" rel="noopener" href="${waShare(x.kind + ' · ' + x.title + '\n\n' + x.body + '\n\n' + a.name)}">Partager sur WhatsApp</a></div></section>`).join('') || '<div class="empty">Aucune annonce pour le moment.</div>'}`;
   };
 
+  /* Réunions --------------------------------------------------------- */
+  const MEET_PILL = { Prévue: 'p-blue', Tenue: 'p-ok', Annulée: 'p-red' };
+  const dateBox = ts => { const x = new Date(ts); return `<span class="datebox" aria-hidden="true"><small>${MOIS[x.getMonth()].replace('.', '')}</small><b>${x.getDate()}</b></span>`; };
+  const appLink = path => location.origin + location.pathname + '#' + path;
+  const convText = m => `CONVOCATION · ${S.ctx.assoc.name}\n\n${m.title}\nDate : ${dLong(m.starts_at)}${m.place ? '\nLieu : ' + m.place : ''}${m.agenda ? '\n\nOrdre du jour :\n' + m.agenda : ''}\n\nVotre présence est importante.\n${appLink('/a/' + S.ctx.assoc.id + '/r/' + m.id)}`;
+  const meetItem = m => `<a class="card meet-row" href="${B()}/r/${m.id}">${dateBox(m.starts_at)}<span class="body"><b>${esc(m.title)}</b><span class="muted">${esc(hm(m.starts_at))}${m.place ? ' · ' + esc(m.place) : ''}</span></span><span class="pill ${MEET_PILL[m.status]}">${esc(m.status)}</span></a>`;
+
+  V.reunions = async (sub) => {
+    if (sub[1] === 'nouvelle') return meetingForm(null);
+    const a = S.ctx.assoc;
+    const res = await sb.from('meetings').select('*').eq('association_id', a.id).order('starts_at', { ascending: false }).limit(100);
+    if (res.error) return `${subHead('Réunions', B() + '/plus')}<p class="note">Les réunions ne sont pas encore installées sur la base.</p>`;
+    const limit = Date.now() - 6 * 3600e3;
+    const next = res.data.filter(m => m.status === 'Prévue' && new Date(m.starts_at).getTime() >= limit).reverse();
+    const past = res.data.filter(m => !next.includes(m));
+    return `<div class="subhead between" style="margin-left:-8px"><span class="row" style="gap:6px"><a class="iconbtn" href="${B()}/plus" aria-label="Retour">${I.back}</a><h1>Réunions</h1></span>${can('meetings') ? `<a class="btn primary sm" href="${B()}/reunions/nouvelle">+ Convoquer</a>` : ''}</div>
+      <section class="stack"><h2>À venir</h2>${next.map(meetItem).join('') || `<div class="empty">Aucune réunion prévue.${can('meetings') ? ' Convoquez la prochaine avec le bouton « + Convoquer ».' : ''}</div>`}</section>
+      ${past.length ? `<section class="stack"><h2>Passées</h2>${past.map(meetItem).join('')}</section>` : ''}`;
+  };
+
+  function meetingForm(m) {
+    if (!can('meetings')) return `${subHead('Réunion', B() + '/reunions')}<p class="note">Réservé au président, au vice-président et au secrétaire général.</p>`;
+    const d = m ? new Date(m.starts_at) : null;
+    const dv = d ? `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}` : '', tv = d ? `${pad(d.getHours())}:${pad(d.getMinutes())}` : '16:00';
+    return `${subHead(m ? 'Modifier la convocation' : 'Convoquer une réunion', m ? B() + '/r/' + m.id : B() + '/reunions')}
+      <form class="stack" data-form="meeting" data-id="${m ? m.id : ''}" novalidate>
+        <div class="field"><label for="mt-t">Titre</label><input id="mt-t" name="title" maxlength="160" value="${esc(m ? m.title : 'Assemblée générale')}" required></div>
+        <div class="row2"><div class="field"><label for="mt-d">Date</label><input id="mt-d" name="date" type="date" value="${esc(dv)}" required></div><div class="field"><label for="mt-h">Heure</label><input id="mt-h" name="time" type="time" value="${esc(tv)}" required></div></div>
+        <div class="field"><label for="mt-p">Lieu</label><input id="mt-p" name="place" maxlength="200" value="${esc(m && m.place)}" placeholder="Ex. chez le président, à Pikine"></div>
+        <div class="field"><label for="mt-a">Ordre du jour</label><textarea id="mt-a" name="agenda" rows="5" maxlength="4000" placeholder="Un point par ligne&#10;Ex. Bilan des cotisations&#10;Projet forage">${esc(m && m.agenda)}</textarea></div>
+        <p class="err" hidden></p><button class="btn primary block" type="submit">${m ? 'Enregistrer' : 'Convoquer'}</button>
+        ${m ? '' : '<p class="help">Après la convocation, partagez-la dans le groupe WhatsApp de l’association.</p>'}</form>`;
+  }
+
+  V.r = async (sub) => {
+    const a = S.ctx.assoc;
+    const m = must(await sb.from('meetings').select('*').eq('association_id', a.id).eq('id', sub[1]).maybeSingle());
+    if (!m) return `${subHead('Réunion introuvable', B() + '/reunions')}`;
+    if (sub[2] === 'modifier') return meetingForm(m);
+    const att = must(await sb.from('meeting_attendance').select('*').eq('meeting_id', m.id));
+    if (sub[2] === 'presence') return attendanceView(m, att);
+    if (sub[2] === 'compte-rendu') return minutesForm(m);
+    const pres = att.filter(x => x.present), abs = att.filter(x => !x.present);
+    const crText = `Compte rendu · ${m.title}\n${dLong(m.starts_at)}${m.place ? ' · ' + m.place : ''}\nPrésents : ${pres.length}\n\n${m.minutes}\n\n${a.name}`;
+    const mg = can('meetings');
+    return `${subHead('Réunion', B() + '/reunions')}
+      <section class="card stack"><div class="between"><span class="pill ${MEET_PILL[m.status]}">${esc(m.status)}</span><span class="muted" style="font-size:13px">Convoquée par ${esc(String(m.created_label || '').replace(/\s*\(.*\)$/, '') || '—')}</span></div>
+        <h2 style="font-size:22px">${esc(m.title)}</h2>
+        <dl class="kv" style="margin:0"><dt>Date</dt><dd>${esc(dLong(m.starts_at))}</dd>${m.place ? `<dt>Lieu</dt><dd>${esc(m.place)}</dd>` : ''}</dl>
+        ${m.agenda ? `<div class="stack" style="gap:4px"><span class="eyebrow">Ordre du jour</span><p style="margin:0;white-space:pre-line">${esc(m.agenda)}</p></div>` : ''}</section>
+      <div class="row" style="flex-wrap:wrap">${m.status !== 'Annulée' ? `<a class="btn wa sm" target="_blank" rel="noopener" href="${waShare(convText(m))}">${I.wa} Envoyer la convocation</a>` : ''}${mg ? `<a class="btn ghost sm" href="${B()}/r/${m.id}/modifier">Modifier</a>` : ''}</div>
+      <section class="card stack"><div class="between"><h2>Présence</h2>${mg && m.status !== 'Annulée' ? `<a class="btn primary sm" href="${B()}/r/${m.id}/presence">Faire l’appel</a>` : ''}</div>
+        ${att.length ? `<div class="row num" style="gap:8px;flex-wrap:wrap"><span class="pill p-ok">${pres.length} présent${pres.length > 1 ? 's' : ''}</span><span class="pill p-late">${abs.length} absent${abs.length > 1 ? 's' : ''}</span></div>
+          ${pres.length ? `<p style="margin:0" class="muted">${pres.map(x => esc(memberName(x.member_id))).join(', ')}</p>` : ''}` : `<span class="muted">${m.status === 'Prévue' ? 'L’appel se fait le jour de la réunion.' : 'Aucune présence enregistrée.'}</span>`}</section>
+      <section class="card stack"><div class="between"><h2>Compte rendu</h2>${mg && m.status !== 'Annulée' ? `<a class="btn ${m.minutes ? 'ghost' : 'primary'} sm" href="${B()}/r/${m.id}/compte-rendu">${m.minutes ? 'Modifier' : 'Rédiger'}</a>` : ''}</div>
+        ${m.minutes ? `<p style="margin:0;white-space:pre-line">${esc(m.minutes)}</p><a class="link" target="_blank" rel="noopener" href="${waShare(crText)}">Partager le compte rendu sur WhatsApp</a>` : `<span class="muted">${m.status === 'Annulée' ? 'Réunion annulée.' : 'Pas encore de compte rendu.'}</span>`}</section>
+      ${mg && m.status === 'Prévue' ? `<div class="row" style="flex-wrap:wrap"><button class="btn ghost sm" data-act="meetstatus" data-id="${m.id}" data-status="Tenue">Marquer comme tenue</button><button class="btn danger sm" data-act="meetstatus" data-id="${m.id}" data-status="Annulée">Annuler la réunion</button></div>` : ''}
+      ${mg && m.status !== 'Prévue' ? `<button class="link" data-act="meetstatus" data-id="${m.id}" data-status="Prévue">Remettre en « Prévue »</button>` : ''}`;
+  };
+
+  function attendanceView(m, att) {
+    if (!can('meetings')) return `${subHead('Présence', B() + '/r/' + m.id)}<p class="note">Réservé au président, au vice-président et au secrétaire général.</p>`;
+    const st = new Map(att.map(x => [x.member_id, x.present]));
+    const list = activeMembers().slice().sort((x, y) => x.full_name.localeCompare(y.full_name, 'fr'));
+    const btn = (id, v, l) => `<button class="btn sm att ${v ? 'att-yes' : 'att-no'}" data-act="attend" data-meet="${m.id}" data-id="${id}" data-v="${v ? 1 : 0}" aria-pressed="${st.get(id) === v}">${l}</button>`;
+    return `${subHead('Faire l’appel', B() + '/r/' + m.id)}
+      <p class="muted" style="margin:0">${esc(m.title)} · ${esc(dLong(m.starts_at))}</p>
+      <div class="row num" id="att-count" style="gap:8px;flex-wrap:wrap">${attCount(att)}</div>
+      <div class="list" id="att-list">${list.map(x => `<div class="item" data-mid="${x.id}"><div class="av">${esc(initials(x.full_name))}</div><div class="body"><div class="t">${esc(x.full_name)}</div><div class="s">${esc(ROLES[x.role])}</div></div><div class="row" style="gap:6px">${btn(x.id, true, 'Présent')}${btn(x.id, false, 'Absent')}</div></div>`).join('') || '<div class="empty">Aucun membre actif.</div>'}</div>
+      <a class="btn primary block" href="${B()}/r/${m.id}">Terminer</a>
+      <p class="help">Chaque choix est enregistré tout de suite. Touchez à nouveau le même bouton pour l’effacer.</p>`;
+  }
+  const attCount = att => { const p = att.filter(x => x.present).length, n = att.length - p, tot = activeMembers().length; return `<span class="pill p-ok">${p} présent${p > 1 ? 's' : ''}</span><span class="pill p-late">${n} absent${n > 1 ? 's' : ''}</span><span class="pill p-blue">${Math.max(0, tot - att.length)} non noté${tot - att.length > 1 ? 's' : ''}</span>`; };
+
+  function minutesForm(m) {
+    if (!can('meetings')) return `${subHead('Compte rendu', B() + '/r/' + m.id)}<p class="note">Réservé au président, au vice-président et au secrétaire général.</p>`;
+    return `${subHead('Compte rendu', B() + '/r/' + m.id)}
+      <p class="muted" style="margin:0">${esc(m.title)} · ${esc(dLong(m.starts_at))}</p>
+      <form class="stack" data-form="minutes" data-id="${m.id}" novalidate>
+        <div class="field"><label for="cr-b">Ce qui a été dit et décidé</label><textarea id="cr-b" name="minutes" rows="12" maxlength="20000" placeholder="Décisions prises, montants votés, qui fait quoi et pour quand">${esc(m.minutes)}</textarea></div>
+        ${m.status === 'Prévue' ? '<div class="field"><label class="check"><input type="checkbox" name="held" checked> Marquer la réunion comme tenue</label></div>' : ''}
+        <p class="err" hidden></p><button class="btn primary block" type="submit">Publier le compte rendu</button>
+        <p class="help">Tous les membres pourront le lire dans l’application.</p></form>`;
+  }
+
   const MSG_KINDS = ['Message', 'Idée', 'Réclamation'];
   V.discussion = async (sub, q) => {
     const a = S.ctx.assoc;
@@ -777,14 +868,14 @@
   };
 
   V.plus = async () => {
-    const items = [['discussion', 'Discussion', 'Messages, idées et réclamations des membres', I.chat.replace('width="24" height="24" ', '')], ['transparence', 'Transparence', 'Où va l’argent, en clair', I.eye], ['finances', 'Finances', 'Recettes, dépenses et justificatifs', I.list], ['annonces', 'Annonces', 'Convocations et nouvelles du village', I.mega], ['journal', 'Journal d’activité', 'Qui a fait quoi, et quand', I.clock], ['parametres', 'Association', 'Fiche, cotisation, code d’invitation', I.gear]];
+    const items = [['discussion', 'Discussion', 'Messages, idées et réclamations des membres', I.chat.replace('width="24" height="24" ', '')], ['transparence', 'Transparence', 'Où va l’argent, en clair', I.eye], ['finances', 'Finances', 'Recettes, dépenses et justificatifs', I.list], ['reunions', 'Réunions', 'Convocations, présence et comptes rendus', I.cal], ['annonces', 'Annonces', 'Nouvelles du village', I.mega], ['journal', 'Journal d’activité', 'Qui a fait quoi, et quand', I.clock], ['parametres', 'Association', 'Fiche, cotisation, code d’invitation', I.gear]];
     return `<h1>Plus</h1>
       <div class="rolebar"><span>Connecté en tant que <b>${esc(S.ctx.me.full_name)}</b>, ${esc(ROLES[S.ctx.me.role].toLowerCase())}</span></div>
       <div class="list menu">${items.map(([k, t, s, ic]) => `<a class="item" href="${B()}/${k}"><span class="ico">${ic}</span><div class="body"><div class="t">${t}</div><div class="s">${s}</div></div><span class="chev">${I.chev}</span></a>`).join('')}</div>
       <div class="list menu"><a class="item" href="#/bienvenue"><span class="ico">${I.swap}</span><div class="body"><div class="t">Mes associations</div><div class="s">Changer, rejoindre ou créer une association</div></div><span class="chev">${I.chev}</span></a>
       <button class="item" data-act="signout"><span class="ico">${I.out}</span><div class="body"><div class="t">Se déconnecter</div><div class="s">${esc(S.user.email || '')}</div></div></button></div>
       <section class="card stack"><h2>Affichage</h2><div class="seg seg3" role="group" aria-label="Thème">${THEMES.map(([k, l]) => `<button data-act="theme" data-theme="${k}" aria-pressed="${themeNow() === k}">${l}</button>`).join('')}</div><p class="help">« Auto » suit le réglage clair ou sombre de votre téléphone.</p></section>
-      <p class="muted" style="font-size:12.5px;text-align:center">VillageLink · version 1.3.2</p>`;
+      <p class="muted" style="font-size:12.5px;text-align:center">VillageLink · version 1.4</p>`;
   };
 
   V.parametres = async () => {
@@ -975,6 +1066,24 @@
       must(await sb.from('messages').insert({ association_id: S.ctx.assoc.id, kind: MSG_KINDS.includes(kind) ? kind : 'Message', body }));
       S.ctx.loadedAt = 0; toast('Message envoyé'); route();
     },
+    async meeting(fd, form) {
+      const title = val(fd, 'title'), date = val(fd, 'date'), time = val(fd, 'time') || '00:00';
+      if (title.length < 2) fail('Donnez un titre à la réunion.');
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !/^\d{2}:\d{2}/.test(time)) fail('Choisissez la date et l’heure.');
+      const [y, mo, d] = date.split('-').map(Number), [h, mi] = time.split(':').map(Number);
+      const row = { title, starts_at: new Date(y, mo - 1, d, h, mi).toISOString(), place: val(fd, 'place'), agenda: val(fd, 'agenda') };
+      const id = form.dataset.id;
+      if (id) { must(await sb.from('meetings').update(row).eq('id', id).select('id').single()); toast('Convocation modifiée'); go(B() + '/r/' + id); }
+      else { const r = must(await sb.from('meetings').insert({ association_id: S.ctx.assoc.id, ...row }).select('id').single()); toast('Réunion convoquée'); go(B() + '/r/' + r.id); }
+    },
+    async minutes(fd, form) {
+      const minutes = val(fd, 'minutes');
+      if (minutes.length < 5) fail('Écrivez le compte rendu.');
+      const row = { minutes };
+      if (fd.get('held')) row.status = 'Tenue';
+      must(await sb.from('meetings').update(row).eq('id', form.dataset.id).select('id').single());
+      toast('Compte rendu publié'); go(B() + '/r/' + form.dataset.id);
+    },
     async announce(fd) {
       const title = val(fd, 'title'), body = val(fd, 'body');
       if (title.length < 2 || body.length < 2) fail('Ajoutez un titre et un message.');
@@ -1021,6 +1130,23 @@
         must(await sb.rpc('hide_message', { p_id: Number(b.dataset.id) }));
         toast('Message masqué'); route();
       }
+      else if (act === 'meetstatus') {
+        const s2 = b.dataset.status;
+        if (s2 === 'Annulée' && b.dataset.confirm !== '1') { b.dataset.confirm = '1'; b.textContent = 'Confirmer l’annulation'; return; }
+        must(await sb.from('meetings').update({ status: s2 }).eq('id', b.dataset.id).select('id').single());
+        toast(s2 === 'Tenue' ? 'Réunion marquée comme tenue' : s2 === 'Annulée' ? 'Réunion annulée' : 'Réunion remise en prévue'); route();
+      }
+      else if (act === 'attend') {
+        const row = b.closest('[data-mid]'), v = b.dataset.v === '1', on = b.getAttribute('aria-pressed') === 'true';
+        row.querySelectorAll('[data-act=attend]').forEach(x => { x.disabled = true; });
+        try {
+          if (on) must(await sb.from('meeting_attendance').delete().eq('meeting_id', b.dataset.meet).eq('member_id', b.dataset.id));
+          else must(await sb.from('meeting_attendance').upsert({ meeting_id: b.dataset.meet, member_id: b.dataset.id, association_id: S.ctx.assoc.id, present: v }, { onConflict: 'meeting_id,member_id' }));
+          row.querySelectorAll('[data-act=attend]').forEach(x => x.setAttribute('aria-pressed', String(!on && x === b)));
+          const att = must(await sb.from('meeting_attendance').select('*').eq('meeting_id', b.dataset.meet));
+          const c = $('#att-count'); if (c) c.innerHTML = attCount(att);
+        } finally { row.querySelectorAll('[data-act=attend]').forEach(x => { x.disabled = false; }); }
+      }
       else if (act === 'review') {
         const ok = b.dataset.ok === '1';
         if (!ok && b.dataset.confirm !== '1') { b.dataset.confirm = '1'; b.textContent = 'Confirmer le refus'; return; }
@@ -1060,7 +1186,8 @@
     if (event === 'PASSWORD_RECOVERY') { location.hash = '#/mot-de-passe'; return; }
     if (!started) return;
     if (event === 'SIGNED_IN' && !had) route();
-    if (event === 'SIGNED_OUT') { S.ctx = null; renderAuth(); }
+    // Ne pas réafficher l'écran de connexion s'il est déjà là : la saisie en cours serait effacée.
+    if (event === 'SIGNED_OUT') { S.ctx = null; if (!document.querySelector('form[data-form=auth]')) renderAuth(); }
   });
   (async () => {
     try {

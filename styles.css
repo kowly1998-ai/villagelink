@@ -204,3 +204,17 @@ textarea.mono{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:13px}
 .stat.warn .l:first-child{color:var(--ink);font-weight:700}
 .stat .t{font-weight:700}
 .seg.seg3{grid-template-columns:repeat(3,1fr)}
+/* --- réunions (1.4) --- */
+.datebox{width:52px;height:56px;border-radius:14px;background:var(--accent-soft);color:var(--accent-text);display:flex;flex-direction:column;align-items:center;justify-content:center;flex:none;line-height:1.05}
+.datebox small{font-size:11.5px;font-weight:700;text-transform:uppercase;letter-spacing:.04em}
+.datebox b{font-size:22px;font-weight:800}
+.meet-row,.meet-next{display:flex;align-items:center;gap:12px;padding:12px 14px}
+.meet-row .body,.meet-next .body{flex:1;min-width:0;display:flex;flex-direction:column;gap:1px}
+.meet-row .body b,.meet-next .body b{font-weight:700;overflow-wrap:anywhere}
+.meet-row .muted,.meet-next .muted{font-size:13px}
+.meet-next{border-color:var(--accent-soft)}
+.meet-next .datebox{background:var(--accent);color:var(--accent-ink)}
+.btn.att{background:var(--surface);border:1px solid var(--line);color:var(--muted);min-height:38px;padding:6px 11px}
+.btn.att-yes[aria-pressed="true"]{background:var(--green);border-color:var(--green);color:var(--green-ink)}
+.btn.att-no[aria-pressed="true"]{background:var(--warn-soft);border-color:var(--warn);color:var(--warn)}
+@media (max-width:480px){#att-list .item{flex-wrap:wrap}#att-list .item>.row{width:100%;padding-left:52px}#att-list .item>.row .btn{flex:1}}
