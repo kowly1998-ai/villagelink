@@ -30,6 +30,7 @@ transparentes, projets, annonces, réunions et discussion.
 | `app.js` | Toute l'application (environ 1 200 lignes) |
 | `styles.css` | Styles, variables de thème |
 | `manifest.webmanifest`, `icon*` | Installation sur l'écran d'accueil |
+| `supabase/schema.sql` | Structure complète de la base à la v1.4 : référence et secours |
 
 ## Organisation de `app.js`
 
@@ -57,6 +58,8 @@ Accueil sans association → Cadre d'une association → Écrans → Formulaires
 - **Fonctions appelées par l'app** : `create_association`, `join_association`, `review_join`,
   `regenerate_invite_code`, `my_memberships`, `reverse_transaction`, `hide_message`.
 - **Stockage** : bucket privé `proofs` (justificatifs de paiement, 5 Mo maximum).
+- **Définition exacte** de chaque table, fonction et règle : `supabase/schema.sql`. Le lire avant
+  de toucher à la base.
 
 ## Rôles et droits
 
@@ -91,8 +94,10 @@ Rôles : `president`, `vice_president`, `secretaire`, `tresorier`, `projets`, `m
 
 ## Mettre en ligne un changement
 
-1. **Base de données** : migration nommée avec `apply_migration`, au format `vX_Y_description`
-   (ex. `v1_4_reunions`). La base d'abord, le code ensuite.
+1. **Base de données** : écrire la migration dans
+   `supabase/migrations/<AAAAMMJJHHMMSS>_vX_Y_description.sql`, puis l'appliquer avec
+   `apply_migration` (même nom, même contenu, ex. `v1_5_...`). La base d'abord, le code ensuite.
+   `supabase/schema.sql` reste la photo de départ (v1.4) ; les migrations s'ajoutent après.
 2. **Cache** : augmenter le numéro `?v=` dans `index.html` pour chaque fichier modifié
    (aujourd'hui `styles.css?v=9`, `config.js?v=2`, `app.js?v=9`). Sinon les téléphones gardent
    l'ancienne version.
@@ -121,8 +126,8 @@ Rôles : `president`, `vice_president`, `secretaire`, `tresorier`, `projets`, `m
 
 ## Points d'attention connus
 
-- **Schéma non versionné** : seules 2 migrations sont enregistrées (`v1_3_2_vice_president_rights`,
-  `v1_4_reunions`). La base d'origine a été créée avant. L'en-tête de `app.js` cite
-  `supabase/schema.sql`, qui n'existe pas dans le dépôt. À exporter.
+- **Espaces parasites dans la base** : le code des fonctions stocké dans Supabase commence par des
+  centaines d'espaces sur chaque ligne. Sans effet sur le fonctionnement, mais illisible : lire
+  plutôt `supabase/schema.sql`, où il est ré-aligné.
 - **Pas de hash d'intégrité (SRI)** sur le script `supabase-js` chargé depuis jsDelivr. À ajouter.
 - `app.js` est long : faire des modifications ciblées, ne jamais le réécrire en entier.
