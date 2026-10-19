@@ -229,3 +229,9 @@ textarea.mono{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:13px}
 .btn.vote-opt{justify-content:flex-start;min-height:52px;font-size:16px}
 .btn.vote-opt[aria-pressed="true"]{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
 .btn.vote-opt[aria-pressed="true"]::after{content:"✓";margin-left:auto}
+/* --- documents (1.6) --- */
+.doc-ico{width:46px;height:46px;border-radius:12px;background:var(--accent-soft);color:var(--accent-text);display:grid;place-items:center;font-size:11.5px;font-weight:800;flex:none;letter-spacing:.02em}
+.link-plain{background:none;border:0;padding:0;text-align:left;color:var(--ink);font:inherit;font-weight:600;display:block;max-width:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.link-plain:hover{color:var(--accent-text)}
+.iconbtn.sm-del{width:38px;height:38px;color:var(--muted);font-size:15px;flex:none}
+.iconbtn.sm-del.confirm{width:auto;padding:0 10px;color:var(--danger);background:var(--danger-soft);font-weight:700;font-size:13px}

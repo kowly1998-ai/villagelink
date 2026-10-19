@@ -105,6 +105,7 @@
     mega: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round"><path d="M3 10v4h4l7 5V5L7 10z"/><path d="M18 9a4 4 0 0 1 0 6" stroke-linecap="round"/></svg>',
     clock: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>',
     vote: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round" stroke-linecap="round"><path d="M4 13h16v7H4z"/><path d="M8 13V5h8v8"/><path d="m10 9 1.5 1.5L14 8"/></svg>',
+    doc: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round" stroke-linecap="round"><path d="M6 3h8l4 4v14H6z"/><path d="M14 3v4h4M9 12h6M9 16h6"/></svg>',
     cal: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4" stroke-linecap="round"/><path d="m9 15 2 2 4-4" stroke-linecap="round"/></svg>',
     gear: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><circle cx="12" cy="12" r="3"/><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3M5.3 5.3l2.1 2.1M16.6 16.6l2.1 2.1M5.3 18.7l2.1-2.1M16.6 7.4l2.1-2.1" stroke-linecap="round"/></svg>',
     swap: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M7 7h12l-3-3M17 17H5l3 3"/></svg>',
@@ -127,6 +128,7 @@
     announce: ['president', 'vice_president', 'secretaire'],
     meetings: ['president', 'vice_president', 'secretaire'],
     polls: ['president', 'vice_president', 'secretaire'],
+    docs: ['president', 'vice_president', 'secretaire', 'tresorier'],
     settings: ['president']
   };
   const can = a => !!(S.ctx && S.ctx.me && CAN[a].includes(S.ctx.me.role));
@@ -901,6 +903,32 @@ Abstention</textarea><p class="help">Entre 2 et 10 choix.</p></div>
         ${open && can('polls') ? `<button class="btn danger sm" data-act="closepoll" data-id="${p.id}">Clore le vote</button>` : ''}</div>`;
   };
 
+  /* Documents -------------------------------------------------------- */
+  const DOC_CATS = ['Statuts', 'Règlement intérieur', 'Procès-verbal', 'Rapport', 'Reçu', 'Autre'];
+  const DOC_ACCEPT = '.pdf,.jpg,.jpeg,.png,.webp,.heic,.doc,.docx,.xls,.xlsx';
+  const fileSize = n => n >= 1048576 ? (n / 1048576).toFixed(1).replace('.', ',') + NB + 'Mo' : Math.max(1, Math.round(n / 1024)) + NB + 'Ko';
+  const docKind = (mime, name) => /pdf/.test(mime) || /\.pdf$/i.test(name) ? 'PDF' : /^image\//.test(mime) ? 'Photo' : /word|\.docx?$/i.test(mime + name) ? 'Word' : /sheet|excel|\.xlsx?$/i.test(mime + name) ? 'Excel' : 'Fichier';
+
+  V.documents = async (sub, q) => {
+    const a = S.ctx.assoc;
+    const f = DOC_CATS.includes(q.get('f')) ? q.get('f') : '';
+    let qy = sb.from('documents').select('*').eq('association_id', a.id);
+    if (f) qy = qy.eq('category', f);
+    const res = await qy.order('created_at', { ascending: false }).limit(200);
+    if (res.error) return `${subHead('Documents', B() + '/plus')}<p class="note">Les documents ne sont pas encore installés sur la base.</p>`;
+    const mg = can('docs');
+    return `${subHead('Documents', B() + '/plus')}
+      <div class="chips" role="group" aria-label="Filtrer">${[['', 'Tous'], ...DOC_CATS.map(c => [c, c])].map(([k, l]) => `<a class="chip" style="text-decoration:none" href="${B()}/documents${k ? '?f=' + encodeURIComponent(k) : ''}" aria-pressed="${f === k}">${esc(l)}</a>`).join('')}</div>
+      <div class="list">${res.data.map(d => `<div class="item"><span class="doc-ico" aria-hidden="true">${esc(docKind(d.mime, d.file_name))}</span><div class="body"><button class="t link-plain" data-act="opendoc" data-path="${esc(d.file_path)}">${esc(d.title)}</button><div class="s">${esc(d.category)} · ${dFR(d.created_at)} · ${fileSize(d.size)}</div></div>${mg ? `<button class="iconbtn sm-del" data-act="deldoc" data-id="${d.id}" data-path="${esc(d.file_path)}" aria-label="Retirer le document ${esc(d.title)}">✕</button>` : ''}</div>`).join('') || `<div class="empty">Aucun document${f ? ' dans cette catégorie' : ''}.${mg ? ' Ajoutez les statuts de l’association avec le formulaire ci-dessous.' : ''}</div>`}</div>
+      <div id="doc-open"></div>
+      ${mg ? `<form class="card stack" data-form="doc" novalidate><h2>Ajouter un document</h2>
+        <div class="field"><label for="dc-t">Titre</label><input id="dc-t" name="title" maxlength="160" placeholder="Ex. PV de l’AG du 18 octobre"></div>
+        <div class="field"><label for="dc-c">Catégorie</label><select id="dc-c" name="category">${DOC_CATS.map(c => opt(c, c, f || 'Procès-verbal')).join('')}</select></div>
+        <div class="field"><label for="dc-f">Fichier (PDF, photo, Word ou Excel, 10 Mo maximum)</label><input id="dc-f" name="file" type="file" accept="${DOC_ACCEPT}"></div>
+        <p class="err" hidden></p><button class="btn primary block" type="submit">Ajouter</button>
+        <p class="help">Tous les membres validés pourront le lire. Une photo prise avec le téléphone convient très bien.</p></form>` : ''}`;
+  };
+
   const MSG_KINDS = ['Message', 'Idée', 'Réclamation'];
   V.discussion = async (sub, q) => {
     const a = S.ctx.assoc;
@@ -937,14 +965,14 @@ Abstention</textarea><p class="help">Entre 2 et 10 choix.</p></div>
   };
 
   V.plus = async () => {
-    const items = [['discussion', 'Discussion', 'Messages, idées et réclamations des membres', I.chat.replace('width="24" height="24" ', '')], ['transparence', 'Transparence', 'Où va l’argent, en clair', I.eye], ['finances', 'Finances', 'Recettes, dépenses et justificatifs', I.list], ['reunions', 'Réunions', 'Convocations, présence et comptes rendus', I.cal], ['votes', 'Votes', 'Décisions et sondages de l’association', I.vote], ['annonces', 'Annonces', 'Nouvelles du village', I.mega], ['journal', 'Journal d’activité', 'Qui a fait quoi, et quand', I.clock], ['parametres', 'Association', 'Fiche, cotisation, code d’invitation', I.gear]];
+    const items = [['discussion', 'Discussion', 'Messages, idées et réclamations des membres', I.chat.replace('width="24" height="24" ', '')], ['transparence', 'Transparence', 'Où va l’argent, en clair', I.eye], ['finances', 'Finances', 'Recettes, dépenses et justificatifs', I.list], ['reunions', 'Réunions', 'Convocations, présence et comptes rendus', I.cal], ['votes', 'Votes', 'Décisions et sondages de l’association', I.vote], ['documents', 'Documents', 'Statuts, règlement, procès-verbaux', I.doc], ['annonces', 'Annonces', 'Nouvelles du village', I.mega], ['journal', 'Journal d’activité', 'Qui a fait quoi, et quand', I.clock], ['parametres', 'Association', 'Fiche, cotisation, code d’invitation', I.gear]];
     return `<h1>Plus</h1>
       <div class="rolebar"><span>Connecté en tant que <b>${esc(S.ctx.me.full_name)}</b>, ${esc(ROLES[S.ctx.me.role].toLowerCase())}</span></div>
       <div class="list menu">${items.map(([k, t, s, ic]) => `<a class="item" href="${B()}/${k}"><span class="ico">${ic}</span><div class="body"><div class="t">${t}</div><div class="s">${s}</div></div><span class="chev">${I.chev}</span></a>`).join('')}</div>
       <div class="list menu"><a class="item" href="#/bienvenue"><span class="ico">${I.swap}</span><div class="body"><div class="t">Mes associations</div><div class="s">Changer, rejoindre ou créer une association</div></div><span class="chev">${I.chev}</span></a>
       <button class="item" data-act="signout"><span class="ico">${I.out}</span><div class="body"><div class="t">Se déconnecter</div><div class="s">${esc(S.user.email || '')}</div></div></button></div>
       <section class="card stack"><h2>Affichage</h2><div class="seg seg3" role="group" aria-label="Thème">${THEMES.map(([k, l]) => `<button data-act="theme" data-theme="${k}" aria-pressed="${themeNow() === k}">${l}</button>`).join('')}</div><p class="help">« Auto » suit le réglage clair ou sombre de votre téléphone.</p></section>
-      <p class="muted" style="font-size:12.5px;text-align:center">VillageLink · version 1.5</p>`;
+      <p class="muted" style="font-size:12.5px;text-align:center">VillageLink · version 1.6</p>`;
   };
 
   V.parametres = async () => {
@@ -1163,6 +1191,18 @@ Abstention</textarea><p class="help">Entre 2 et 10 choix.</p></div>
       const id = must(await sb.rpc('create_poll', { p_assoc: S.ctx.assoc.id, p_question: question, p_description: val(fd, 'description'), p_options: options, p_closes_at: closes, p_anonymous: !!fd.get('anonymous') }));
       toast('Vote lancé'); go(B() + '/vote/' + id);
     },
+    async doc(fd) {
+      const title = val(fd, 'title'), category = val(fd, 'category'), file = fd.get('file');
+      if (title.length < 2) fail('Donnez un titre au document.');
+      if (!file || !file.size) fail('Choisissez un fichier.');
+      if (file.size > 10485760) fail('Le fichier dépasse 10 Mo.');
+      const ext = (String(file.name).match(/\.([a-z0-9]{1,5})$/i) || [, 'bin'])[1].toLowerCase();
+      const rnd = (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : Date.now() + '-' + Math.random().toString(36).slice(2);
+      const path = `${S.ctx.assoc.id}/${rnd}.${ext}`;
+      must(await sb.storage.from('docs').upload(path, file, { contentType: file.type || 'application/octet-stream', upsert: false }));
+      must(await sb.from('documents').insert({ association_id: S.ctx.assoc.id, title, category: DOC_CATS.includes(category) ? category : 'Autre', file_path: path, file_name: String(file.name).slice(0, 200), mime: String(file.type || '').slice(0, 120), size: file.size }));
+      toast('Document ajouté'); route();
+    },
     async announce(fd) {
       const title = val(fd, 'title'), body = val(fd, 'body');
       if (title.length < 2 || body.length < 2) fail('Ajoutez un titre et un message.');
@@ -1242,6 +1282,18 @@ Abstention</textarea><p class="help">Entre 2 et 10 choix.</p></div>
         if (b.dataset.confirm !== '1') { b.dataset.confirm = '1'; b.textContent = 'Confirmer : clore le vote'; return; }
         must(await sb.rpc('close_poll', { p_poll: b.dataset.id }));
         toast('Vote clos'); route();
+      }
+      else if (act === 'opendoc') {
+        const box = $('#doc-open'); if (box) box.innerHTML = '<p class="muted">Ouverture du document…</p>';
+        const r = must(await sb.storage.from('docs').createSignedUrl(b.dataset.path, 3600));
+        if (box) box.innerHTML = `<a class="btn primary block" target="_blank" rel="noopener" href="${esc(r.signedUrl)}">Ouvrir « ${esc(b.textContent)} »</a>`;
+        if (box) box.scrollIntoView({ block: 'center' });
+      }
+      else if (act === 'deldoc') {
+        if (b.dataset.confirm !== '1') { b.dataset.confirm = '1'; b.textContent = 'Retirer ?'; b.classList.add('confirm'); return; }
+        must(await sb.from('documents').delete().eq('id', b.dataset.id));
+        await sb.storage.from('docs').remove([b.dataset.path]);
+        toast('Document retiré'); route();
       }
       else if (act === 'review') {
         const ok = b.dataset.ok === '1';
