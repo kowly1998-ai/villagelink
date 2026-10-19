@@ -106,6 +106,7 @@
     clock: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>',
     vote: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round" stroke-linecap="round"><path d="M4 13h16v7H4z"/><path d="M8 13V5h8v8"/><path d="m10 9 1.5 1.5L14 8"/></svg>',
     doc: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round" stroke-linecap="round"><path d="M6 3h8l4 4v14H6z"/><path d="M14 3v4h4M9 12h6M9 16h6"/></svg>',
+    report: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round" stroke-linecap="round"><path d="M5 3h14v18H5z"/><path d="M9 16v-3M12 16V9M15 16v-5"/></svg>',
     cal: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4" stroke-linecap="round"/><path d="m9 15 2 2 4-4" stroke-linecap="round"/></svg>',
     gear: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><circle cx="12" cy="12" r="3"/><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3M5.3 5.3l2.1 2.1M16.6 16.6l2.1 2.1M5.3 18.7l2.1-2.1M16.6 7.4l2.1-2.1" stroke-linecap="round"/></svg>',
     swap: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M7 7h12l-3-3M17 17H5l3 3"/></svg>',
@@ -929,6 +930,54 @@ Abstention</textarea><p class="help">Entre 2 et 10 choix.</p></div>
         <p class="help">Tous les membres validés pourront le lire. Une photo prise avec le téléphone convient très bien.</p></form>` : ''}`;
   };
 
+  /* Rapport mensuel -------------------------------------------------- */
+  const addMonthYM = (p, k) => { const [y, m] = p.split('-').map(Number); const d = new Date(y, m - 1 + k, 1); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}`; };
+  V.rapport = async (sub, q) => {
+    const a = S.ctx.assoc, cur = curYM();
+    const M = /^\d{4}-\d{2}$/.test(q.get('m') || '') && q.get('m') <= cur ? q.get('m') : cur;
+    const start = M + '-01', next = addMonthYM(M, 1) + '-01';
+    const txs = await fetchAll(() => sb.from('transactions').select('id,kind,amount,category,occurred_on,member_id,period,description,project_id,reversal_of').eq('association_id', a.id).lt('occurred_on', next).order('id'));
+    const fx = t => (t.kind === 'in' ? 1 : -1) * Number(t.amount);
+    const before = txs.filter(t => t.occurred_on < start), during = txs.filter(t => t.occurred_on >= start);
+    const open = before.reduce((x, t) => x + fx(t), 0);
+    const inM = during.filter(t => t.kind === 'in').reduce((x, t) => x + Number(t.amount), 0), outM = during.filter(t => t.kind === 'out').reduce((x, t) => x + Number(t.amount), 0);
+    const close = open + inM - outM;
+    const byCat = kind => { const m = new Map(); during.filter(t => t.kind === kind).forEach(t => m.set(t.category, (m.get(t.category) || 0) + Number(t.amount))); return [...m.entries()].filter(e => e[1] !== 0).sort((x, y) => y[1] - x[1]); };
+    const deM = x => { const l = pFR(x); return /^[aeiouâéèh]/i.test(l) ? 'd’' + l : 'de ' + l; };
+    const fee = Number(a.fee_amount) || 0;
+    const dueNow = activeMembers().filter(m => [ym(a.dues_start), ym(m.joined_on)].sort().pop() <= M);
+    const paidN = dueNow.filter(m => paidFor(m.id, M) >= fee).length;
+    const collected = dueNow.reduce((x, m) => x + Math.min(paidFor(m.id, M), fee), 0), expected = dueNow.length * fee;
+    const unpaid = fee ? dueNow.filter(m => paidFor(m.id, M) < fee) : [];
+    const [meets, polls, projects, ptot] = await Promise.all([
+      sb.from('meetings').select('*').eq('association_id', a.id).gte('starts_at', new Date(start + 'T00:00:00').toISOString()).lt('starts_at', new Date(next + 'T00:00:00').toISOString()).order('starts_at').then(r => r.error ? [] : r.data, () => []),
+      sb.from('polls').select('*').eq('association_id', a.id).eq('status', 'Clos').gte('closed_at', new Date(start + 'T00:00:00').toISOString()).lt('closed_at', new Date(next + 'T00:00:00').toISOString()).then(r => r.error ? [] : r.data, () => []),
+      sb.from('projects').select('*').eq('association_id', a.id).eq('status', 'En cours').then(r => r.error ? [] : r.data, () => []),
+      sb.from('v_project_totals').select('*').then(r => r.error ? [] : r.data, () => [])
+    ]);
+    const pollRes = await Promise.all(polls.map(p => Promise.all([sb.from('poll_options').select('*').eq('poll_id', p.id).order('position').then(must), sb.rpc('poll_results', { p_poll: p.id }).then(must)])));
+    const tot = new Map(ptot.map(x => [x.project_id, x]));
+    const months = []; for (let k = 0; k < 12; k++) months.push(addMonthYM(cur, -k));
+    const title = `Rapport ${deM(M)}`;
+    const wa = `${title.toUpperCase()} · ${a.name}\n\nSolde au début du mois : ${money(open)}\nEntrées : +${money(inM)}\nSorties : −${money(outM)}\nSolde à la fin du mois : ${money(close)}${fee ? `\n\nCotisations : ${paidN} membre${paidN > 1 ? 's' : ''} sur ${dueNow.length} à jour (${money(collected)} sur ${money(expected)})` : ''}${meets.length ? `\nRéunions : ${meets.length}` : ''}${polls.length ? `\nVotes clos : ${polls.length}` : ''}\n\nDétails dans l’application :\n${appLink('/a/' + a.id + '/rapport?m=' + M)}`;
+    const catList = rows => rows.length ? `<dl class="kv num" style="margin:0">${rows.map(([c, v]) => `<dt>${esc(c)}</dt><dd>${money(v)}</dd>`).join('')}</dl>` : '<span class="muted">Aucune.</span>';
+    return `<div class="no-print">${subHead('Rapport mensuel', B() + '/plus')}</div>
+      <div class="field no-print"><label for="rp-m">Mois</label><select id="rp-m" data-nav="rapport">${months.map(x => opt(x, pFR(x).replace(/^./, c => c.toUpperCase()), M)).join('')}</select></div>
+      <div class="row no-print" style="flex-wrap:wrap"><button class="btn primary sm" data-act="print">Télécharger en PDF</button><a class="btn wa sm" target="_blank" rel="noopener" href="${waShare(wa)}">${I.wa} Partager le résumé</a></div>
+      <article class="report stack">
+        <header class="report-head"><span class="eyebrow">${esc(a.name)}</span><h1>${esc(title)}</h1><span class="muted" style="font-size:13px">Établi le ${dFR(todayISO())} avec VillageLink</span></header>
+        <section class="card stack"><h2>Caisse</h2><dl class="kv num" style="margin:0"><dt>Solde au début du mois</dt><dd>${money(open)}</dd><dt>Entrées du mois</dt><dd style="color:var(--green)">${inM ? '+' : ''}${money(inM)}</dd><dt>Sorties du mois</dt><dd style="color:var(--danger)">${outM ? '−' : ''}${money(outM)}</dd><dt><b>Solde à la fin du mois</b></dt><dd><b>${money(close)}</b></dd></dl></section>
+        ${fee ? `<section class="card stack"><div class="between"><h2>Cotisations ${esc(deM(M))}</h2><span class="pill p-blue num">${paidN}/${dueNow.length} à jour</span></div>
+          <div class="bar"><i style="width:${pct(collected, expected)}%"></i></div><span class="muted num">${money(collected)} encaissés sur ${money(expected)} attendus</span>
+          ${unpaid.length ? `<span class="eyebrow">Pas encore payé (${unpaid.length})</span><p style="margin:0">${unpaid.map(m => esc(m.full_name)).join(', ')}</p>` : '<span class="ok-msg">Tout le monde a payé ce mois-ci.</span>'}</section>` : ''}
+        <section class="card stack"><h2>Entrées par catégorie</h2>${catList(byCat('in'))}</section>
+        <section class="card stack"><h2>Dépenses par catégorie</h2>${catList(byCat('out'))}</section>
+        ${meets.length ? `<section class="card stack"><h2>Réunions</h2>${meets.map(m => `<div><b>${esc(m.title)}</b> · ${esc(dLong(m.starts_at))} · <span class="pill ${MEET_PILL[m.status]}">${esc(m.status)}</span>${m.minutes ? `<p class="muted" style="margin:4px 0 0;white-space:pre-line">${esc(m.minutes.slice(0, 600))}${m.minutes.length > 600 ? '…' : ''}</p>` : ''}</div>`).join('')}</section>` : ''}
+        ${polls.length ? `<section class="card stack"><h2>Décisions votées</h2>${polls.map((p, i) => { const [opts, res] = pollRes[i]; const c = new Map(res.map(r => [r.option_id, Number(r.votes)])); return `<div><b>${esc(p.question)}</b><p class="muted" style="margin:2px 0 0">${opts.map(o => `${esc(o.label)} : ${c.get(o.id) || 0}`).join(' · ')}</p></div>`; }).join('')}</section>` : ''}
+        ${projects.length ? `<section class="card stack"><h2>Projets en cours</h2>${projects.map(p => { const t = tot.get(p.id) || { collected: 0 }; const pc = pct(t.collected, p.goal); return `<div class="stack" style="gap:4px"><div class="between"><b>${esc(p.name)}</b><span class="num">${pc}${NB}%</span></div><div class="bar thin"><i style="width:${pc}%"></i></div><span class="muted num" style="font-size:13px">${money(t.collected)} sur ${money(p.goal)}</span></div>`; }).join('')}</section>` : ''}
+      </article>`;
+  };
+
   const MSG_KINDS = ['Message', 'Idée', 'Réclamation'];
   V.discussion = async (sub, q) => {
     const a = S.ctx.assoc;
@@ -965,14 +1014,14 @@ Abstention</textarea><p class="help">Entre 2 et 10 choix.</p></div>
   };
 
   V.plus = async () => {
-    const items = [['discussion', 'Discussion', 'Messages, idées et réclamations des membres', I.chat.replace('width="24" height="24" ', '')], ['transparence', 'Transparence', 'Où va l’argent, en clair', I.eye], ['finances', 'Finances', 'Recettes, dépenses et justificatifs', I.list], ['reunions', 'Réunions', 'Convocations, présence et comptes rendus', I.cal], ['votes', 'Votes', 'Décisions et sondages de l’association', I.vote], ['documents', 'Documents', 'Statuts, règlement, procès-verbaux', I.doc], ['annonces', 'Annonces', 'Nouvelles du village', I.mega], ['journal', 'Journal d’activité', 'Qui a fait quoi, et quand', I.clock], ['parametres', 'Association', 'Fiche, cotisation, code d’invitation', I.gear]];
+    const items = [['discussion', 'Discussion', 'Messages, idées et réclamations des membres', I.chat.replace('width="24" height="24" ', '')], ['transparence', 'Transparence', 'Où va l’argent, en clair', I.eye], ['finances', 'Finances', 'Recettes, dépenses et justificatifs', I.list], ['reunions', 'Réunions', 'Convocations, présence et comptes rendus', I.cal], ['votes', 'Votes', 'Décisions et sondages de l’association', I.vote], ['documents', 'Documents', 'Statuts, règlement, procès-verbaux', I.doc], ['rapport', 'Rapport mensuel', 'Le bilan du mois, en PDF ou sur WhatsApp', I.report], ['annonces', 'Annonces', 'Nouvelles du village', I.mega], ['journal', 'Journal d’activité', 'Qui a fait quoi, et quand', I.clock], ['parametres', 'Association', 'Fiche, cotisation, code d’invitation', I.gear]];
     return `<h1>Plus</h1>
       <div class="rolebar"><span>Connecté en tant que <b>${esc(S.ctx.me.full_name)}</b>, ${esc(ROLES[S.ctx.me.role].toLowerCase())}</span></div>
       <div class="list menu">${items.map(([k, t, s, ic]) => `<a class="item" href="${B()}/${k}"><span class="ico">${ic}</span><div class="body"><div class="t">${t}</div><div class="s">${s}</div></div><span class="chev">${I.chev}</span></a>`).join('')}</div>
       <div class="list menu"><a class="item" href="#/bienvenue"><span class="ico">${I.swap}</span><div class="body"><div class="t">Mes associations</div><div class="s">Changer, rejoindre ou créer une association</div></div><span class="chev">${I.chev}</span></a>
       <button class="item" data-act="signout"><span class="ico">${I.out}</span><div class="body"><div class="t">Se déconnecter</div><div class="s">${esc(S.user.email || '')}</div></div></button></div>
       <section class="card stack"><h2>Affichage</h2><div class="seg seg3" role="group" aria-label="Thème">${THEMES.map(([k, l]) => `<button data-act="theme" data-theme="${k}" aria-pressed="${themeNow() === k}">${l}</button>`).join('')}</div><p class="help">« Auto » suit le réglage clair ou sombre de votre téléphone.</p></section>
-      <p class="muted" style="font-size:12.5px;text-align:center">VillageLink · version 1.6</p>`;
+      <p class="muted" style="font-size:12.5px;text-align:center">VillageLink · version 1.7</p>`;
   };
 
   V.parametres = async () => {
@@ -1295,6 +1344,7 @@ Abstention</textarea><p class="help">Entre 2 et 10 choix.</p></div>
         await sb.storage.from('docs').remove([b.dataset.path]);
         toast('Document retiré'); route();
       }
+      else if (act === 'print') { window.print(); }
       else if (act === 'review') {
         const ok = b.dataset.ok === '1';
         if (!ok && b.dataset.confirm !== '1') { b.dataset.confirm = '1'; b.textContent = 'Confirmer le refus'; return; }
@@ -1316,6 +1366,7 @@ Abstention</textarea><p class="help">Entre 2 et 10 choix.</p></div>
 
   const setOnline = () => $('#offline').classList.toggle('hidden', navigator.onLine);
   window.addEventListener('online', setOnline); window.addEventListener('offline', setOnline); setOnline();
+  document.addEventListener('change', e => { const el = e.target; if (el && el.dataset && el.dataset.nav === 'rapport' && /^\d{4}-\d{2}$/.test(el.value)) go(B() + '/rapport?m=' + el.value); });
   window.addEventListener('hashchange', route);
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState !== 'visible' || !S.session) return;

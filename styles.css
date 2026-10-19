@@ -235,3 +235,16 @@ textarea.mono{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:13px}
 .link-plain:hover{color:var(--accent-text)}
 .iconbtn.sm-del{width:38px;height:38px;color:var(--muted);font-size:15px;flex:none}
 .iconbtn.sm-del.confirm{width:auto;padding:0 10px;color:var(--danger);background:var(--danger-soft);font-weight:700;font-size:13px}
+/* --- rapport mensuel (1.7) --- */
+.report-head{display:flex;flex-direction:column;gap:2px;padding-top:4px}
+.report-head h1{margin:0}
+@media print{
+  @page{margin:14mm}
+  body{background:#fff!important;color:#111}
+  .top,.tabs,.no-print,#toast,#offline{display:none!important}
+  main{padding:0!important}
+  .report .card{border:1px solid #ccc!important;box-shadow:none!important;break-inside:avoid;background:#fff!important}
+  .bar{border:1px solid #bbb;background:#eee!important;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+  .bar>i{-webkit-print-color-adjust:exact;print-color-adjust:exact}
+  .pill{border:1px solid #bbb}
+}

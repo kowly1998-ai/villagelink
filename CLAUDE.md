@@ -10,7 +10,7 @@ transparentes, projets, annonces, réunions et discussion.
   Claude écrit, vérifie et met en ligne le code.
 - Répondre en français simple, sans jargon. À la fin de chaque changement, dire précisément
   quoi tester sur le téléphone.
-- Version actuelle : **1.6** (documents).
+- Version actuelle : **1.7** (rapport mensuel).
 
 ## Stack
 
@@ -103,7 +103,7 @@ Rôles : `president`, `vice_president`, `secretaire`, `tresorier`, `projets`, `m
    `apply_migration` (même nom, même contenu, ex. `v1_5_...`). La base d'abord, le code ensuite.
    `supabase/schema.sql` reste la photo de départ (v1.4) ; les migrations s'ajoutent après.
 2. **Cache** : augmenter le numéro `?v=` dans `index.html` pour chaque fichier modifié
-   (aujourd'hui `styles.css?v=12`, `config.js?v=2`, `app.js?v=12`). Sinon les téléphones gardent
+   (aujourd'hui `styles.css?v=13`, `config.js?v=2`, `app.js?v=13`). Sinon les téléphones gardent
    l'ancienne version.
 3. **Commit** sur `main`, en français : `Version X.Y : <ce qui change>`.
 4. **Push** : GitHub Pages met en ligne en quelques minutes.
@@ -125,7 +125,8 @@ Rôles : `president`, `vice_president`, `secretaire`, `tresorier`, `projets`, `m
 
 - **Fait** : v1.4 réunions (convocation, appel, compte rendu, partage WhatsApp) ; v1.4.1 bouton « Retirer de l'association » / « Réintégrer » sur la fiche membre (`active = false` : plus d'accès, plus de cotisation due, historique conservé) ; v1.4.2 sécurité (search_path, droits EXECUTE retirés sur les fonctions de trigger) ; v1.5 votes (secret ou à main levée, changement d'avis possible tant que le vote est ouvert).
 - v1.6 documents (statuts, règlement, PV, rapports, reçus ; lecture par tous les membres).
-- **En cours** : rapport mensuel PDF, notifications dans l'appli, mode hors ligne.
+- v1.7 rapport mensuel (écran `rapport?m=AAAA-MM`, PDF par l'impression du navigateur, résumé WhatsApp ; styles `@media print`).
+- **En cours** : notifications dans l'appli, mode hors ligne.
 - **Mis de côté** : paiement mobile directement dans l'app (agrégateurs type SasPay).
 - **Plus tard** : publication sur le Play Store.
 - La colonne `associations.plan` existe déjà pour de futures offres.
