@@ -104,6 +104,7 @@
     list: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M8 6h13M8 12h13M8 18h13M3.5 6h.01M3.5 12h.01M3.5 18h.01"/></svg>',
     mega: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round"><path d="M3 10v4h4l7 5V5L7 10z"/><path d="M18 9a4 4 0 0 1 0 6" stroke-linecap="round"/></svg>',
     clock: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>',
+    vote: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round" stroke-linecap="round"><path d="M4 13h16v7H4z"/><path d="M8 13V5h8v8"/><path d="m10 9 1.5 1.5L14 8"/></svg>',
     cal: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4" stroke-linecap="round"/><path d="m9 15 2 2 4-4" stroke-linecap="round"/></svg>',
     gear: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><circle cx="12" cy="12" r="3"/><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3M5.3 5.3l2.1 2.1M16.6 16.6l2.1 2.1M5.3 18.7l2.1-2.1M16.6 7.4l2.1-2.1" stroke-linecap="round"/></svg>',
     swap: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M7 7h12l-3-3M17 17H5l3 3"/></svg>',
@@ -125,6 +126,7 @@
     projects: ['president', 'vice_president', 'projets'],
     announce: ['president', 'vice_president', 'secretaire'],
     meetings: ['president', 'vice_president', 'secretaire'],
+    polls: ['president', 'vice_president', 'secretaire'],
     settings: ['president']
   };
   const can = a => !!(S.ctx && S.ctx.me && CAN[a].includes(S.ctx.me.role));
@@ -365,6 +367,9 @@
 
   V.home = async () => {
     const a = S.ctx.assoc, fee = Number(a.fee_amount) || 0, cur = curYM();
+    const openPolls = await sb.from('polls').select('*').eq('association_id', a.id).eq('status', 'Ouvert').order('created_at', { ascending: false }).limit(5).then(r => (r.error ? [] : r.data || []), () => []);
+    const myVotes = openPolls.length && S.ctx.me ? await sb.from('poll_votes').select('poll_id').eq('member_id', S.ctx.me.id).then(r => (r.error ? [] : r.data || []), () => []) : [];
+    const toVote = openPolls.filter(p => pollOpen(p) && !myVotes.some(v => v.poll_id === p.id));
     const nextMeet = await sb.from('meetings').select('*').eq('association_id', a.id).eq('status', 'Prévue').gte('starts_at', new Date(Date.now() - 6 * 3600e3).toISOString()).order('starts_at', { ascending: true }).limit(1).then(r => (r.error ? [] : r.data || []), () => []);
     const [lastOps, projects, logs] = await Promise.all([
       sb.from('transactions').select('*').eq('association_id', a.id).order('created_at', { ascending: false }).order('id', { ascending: false }).limit(5).then(must),
@@ -394,6 +399,7 @@
         <div class="boxes num"><div><small>Collecté</small><b>${money(bal.in)}</b></div><div><small>Dépensé</small><b>${money(bal.out)}</b></div></div>
         ${can('collect') ? `<a class="btn gold block" href="${B()}/encaisser">${I.plus} Encaisser une cotisation</a>` : ''}
         <div><a class="link" href="${B()}/transparence">Voir où va l’argent</a></div></section>
+      ${toVote.length && S.ctx.me.user_id ? `<a class="card poll-next" href="${B()}/vote/${toVote[0].id}"><span class="ico">${I.vote}</span><span class="body"><span class="eyebrow">Vote en cours${toVote.length > 1 ? ' · ' + toVote.length + ' votes' : ''}</span><b>${esc(toVote[0].question)}</b><span class="muted">Donnez votre avis</span></span><span class="chev">${I.chev}</span></a>` : ''}
       ${nextMeet.length ? `<a class="card meet-next" href="${B()}/r/${nextMeet[0].id}">${dateBox(nextMeet[0].starts_at)}<span class="body"><span class="eyebrow">Prochaine réunion</span><b>${esc(nextMeet[0].title)}</b><span class="muted">${esc(hm(nextMeet[0].starts_at))}${nextMeet[0].place ? ' · ' + esc(nextMeet[0].place) : ''}</span></span><span class="chev">${I.chev}</span></a>` : ''}
       <div class="grid2">
         ${fee ? `<a class="stat" href="${B()}/cotisations"><div class="ring num" style="--p:${pct(paidCount, dueNow.length)}"><span>${pct(paidCount, dueNow.length)}${NB}%</span></div><span class="t">${esc(pFR(cur).replace(/^./, c => c.toUpperCase()))}</span><span class="l num">${paidCount} sur ${dueNow.length} ont payé · ${money(collected)} sur ${money(expected)}</span></a>`
@@ -835,6 +841,66 @@
         <p class="help">Tous les membres pourront le lire dans l’application.</p></form>`;
   }
 
+  /* Votes ------------------------------------------------------------ */
+  const pollOpen = p => p.status === 'Ouvert' && (!p.closes_at || new Date(p.closes_at).getTime() > Date.now());
+  const pollItem = p => `<a class="card meet-row" href="${B()}/vote/${p.id}"><span class="ico-box">${I.vote}</span><span class="body"><b>${esc(p.question)}</b><span class="muted">${pollOpen(p) ? (p.closes_at ? 'Jusqu’au ' + esc(dLong(p.closes_at)) : 'Ouvert') : 'Clos le ' + esc(dFR(p.closed_at || p.closes_at))}${p.anonymous ? ' · secret' : ''}</span></span><span class="pill ${pollOpen(p) ? 'p-ok' : 'p-blue'}">${pollOpen(p) ? 'Ouvert' : 'Clos'}</span></a>`;
+
+  V.votes = async (sub) => {
+    if (sub[1] === 'nouveau') return pollForm();
+    const res = await sb.from('polls').select('*').eq('association_id', S.ctx.assoc.id).order('created_at', { ascending: false }).limit(100);
+    if (res.error) return `${subHead('Votes', B() + '/plus')}<p class="note">Les votes ne sont pas encore installés sur la base.</p>`;
+    const open = res.data.filter(pollOpen), closed = res.data.filter(p => !pollOpen(p));
+    return `<div class="subhead between" style="margin-left:-8px"><span class="row" style="gap:6px"><a class="iconbtn" href="${B()}/plus" aria-label="Retour">${I.back}</a><h1>Votes</h1></span>${can('polls') ? `<a class="btn primary sm" href="${B()}/votes/nouveau">+ Nouveau vote</a>` : ''}</div>
+      <section class="stack"><h2>En cours</h2>${open.map(pollItem).join('') || `<div class="empty">Aucun vote en cours.${can('polls') ? ' Lancez-en un avec « + Nouveau vote ».' : ''}</div>`}</section>
+      ${closed.length ? `<section class="stack"><h2>Terminés</h2>${closed.map(pollItem).join('')}</section>` : ''}`;
+  };
+
+  function pollForm() {
+    if (!can('polls')) return `${subHead('Nouveau vote', B() + '/votes')}<p class="note">Réservé au président, au vice-président et au secrétaire général.</p>`;
+    return `${subHead('Nouveau vote', B() + '/votes')}
+      <form class="stack" data-form="poll" novalidate>
+        <div class="field"><label for="pl-q">Question</label><input id="pl-q" name="question" maxlength="300" placeholder="Ex. Augmenter la cotisation à 2 000 FCFA ?" required></div>
+        <div class="field"><label for="pl-o">Choix possibles (un par ligne)</label><textarea id="pl-o" name="options" rows="4">Oui
+Non
+Abstention</textarea><p class="help">Entre 2 et 10 choix.</p></div>
+        <div class="field"><label for="pl-d">Explication (facultatif)</label><textarea id="pl-d" name="description" rows="3" maxlength="2000" placeholder="Ce qu’il faut savoir avant de voter"></textarea></div>
+        <div class="row2"><div class="field"><label for="pl-cd">Fin du vote (facultatif)</label><input id="pl-cd" name="close_date" type="date"></div><div class="field"><label for="pl-ch">Heure</label><input id="pl-ch" name="close_time" type="time" value="20:00"></div></div>
+        <div class="field"><label class="check"><input type="checkbox" name="anonymous" checked> Vote secret</label><p class="help">Secret : personne ne voit qui a voté quoi, seulement le total. Sinon, chaque membre voit les noms par choix.</p></div>
+        <p class="err" hidden></p><button class="btn primary block" type="submit">Lancer le vote</button></form>`;
+  }
+
+  V.vote = async (sub) => {
+    const a = S.ctx.assoc;
+    const p = must(await sb.from('polls').select('*').eq('association_id', a.id).eq('id', sub[1]).maybeSingle());
+    if (!p) return `${subHead('Vote introuvable', B() + '/votes')}`;
+    const [opts, res, ballots] = await Promise.all([
+      sb.from('poll_options').select('*').eq('poll_id', p.id).order('position').then(must),
+      sb.rpc('poll_results', { p_poll: p.id }).then(must),
+      sb.from('poll_votes').select('*').eq('poll_id', p.id).then(must)
+    ]);
+    const count = new Map(res.map(r => [r.option_id, Number(r.votes)])), total = res.reduce((x, r) => x + Number(r.votes), 0);
+    const mine = ballots.find(v => v.member_id === S.ctx.me.id), open = pollOpen(p);
+    const voters = activeMembers().filter(m => m.user_id).length;
+    const showRes = !!mine || !open || can('polls');
+    const best = Math.max(0, ...res.map(r => Number(r.votes)));
+    const canVote = open && S.ctx.me.user_id && S.ctx.me.active && !S.ctx.me.pending;
+    const link = appLink('/a/' + a.id + '/vote/' + p.id);
+    const share = open ? `VOTE · ${a.name}\n\n${p.question}\nChoix : ${opts.map(o => o.label).join(' / ')}${p.closes_at ? '\nJusqu’au ' + dLong(p.closes_at) : ''}\n\nVotez dans l’application :\n${link}`
+      : `RÉSULTAT DU VOTE · ${a.name}\n\n${p.question}\n${opts.map(o => `${o.label} : ${count.get(o.id) || 0}`).join('\n')}\n\n${total} votant${total > 1 ? 's' : ''}`;
+    return `${subHead('Vote', B() + '/votes')}
+      <section class="card stack"><div class="between"><span class="pill ${open ? 'p-ok' : 'p-blue'}">${open ? 'Ouvert' : 'Clos'}</span><span class="muted" style="font-size:13px">${p.anonymous ? 'Vote secret' : 'Vote à main levée'}</span></div>
+        <h2 style="font-size:21px">${esc(p.question)}</h2>${p.description ? `<p style="margin:0;white-space:pre-line" class="muted">${esc(p.description)}</p>` : ''}
+        <span class="muted" style="font-size:13px">Lancé par ${esc(String(p.created_label || '').replace(/\s*\(.*\)$/, '') || '—')} · ${open ? (p.closes_at ? 'jusqu’au ' + esc(dLong(p.closes_at)) : 'sans date de fin') : 'clos le ' + esc(dFR(p.closed_at || p.closes_at))}</span></section>
+      ${canVote ? `<section class="stack"><h2>${mine ? 'Votre vote (vous pouvez changer)' : 'Votre vote'}</h2><div class="stack" style="gap:8px">${opts.map(o => `<button class="btn ghost block vote-opt" data-act="vote" data-poll="${p.id}" data-opt="${o.id}" aria-pressed="${mine && mine.option_id === o.id}">${esc(o.label)}</button>`).join('')}</div></section>` : ''}
+      ${!canVote && open && !S.ctx.me.user_id ? '<p class="note">Il faut un compte sur l’application pour voter.</p>' : ''}
+      <section class="card stack"><div class="between"><h2>Résultats</h2><span class="muted num" style="font-size:13px">${total} votant${total > 1 ? 's' : ''} sur ${voters}</span></div>
+        ${showRes ? opts.map(o => { const n = count.get(o.id) || 0, pc = pct(n, total); const names = !p.anonymous ? ballots.filter(v => v.option_id === o.id).map(v => memberName(v.member_id)) : [];
+          return `<div class="stack" style="gap:4px"><div class="between"><b>${esc(o.label)}${!open && n === best && n > 0 ? ' ✓' : ''}</b><span class="num">${n} · ${pc}${NB}%</span></div><div class="bar"><i style="width:${pc}%"></i></div>${names.length ? `<span class="muted" style="font-size:12.5px">${names.map(esc).join(', ')}</span>` : ''}</div>`; }).join('')
+          : '<span class="muted">Votez pour voir les résultats.</span>'}</section>
+      <div class="row" style="flex-wrap:wrap"><a class="btn wa sm" target="_blank" rel="noopener" href="${waShare(share)}">${I.wa} ${open ? 'Partager le vote' : 'Partager le résultat'}</a>
+        ${open && can('polls') ? `<button class="btn danger sm" data-act="closepoll" data-id="${p.id}">Clore le vote</button>` : ''}</div>`;
+  };
+
   const MSG_KINDS = ['Message', 'Idée', 'Réclamation'];
   V.discussion = async (sub, q) => {
     const a = S.ctx.assoc;
@@ -871,14 +937,14 @@
   };
 
   V.plus = async () => {
-    const items = [['discussion', 'Discussion', 'Messages, idées et réclamations des membres', I.chat.replace('width="24" height="24" ', '')], ['transparence', 'Transparence', 'Où va l’argent, en clair', I.eye], ['finances', 'Finances', 'Recettes, dépenses et justificatifs', I.list], ['reunions', 'Réunions', 'Convocations, présence et comptes rendus', I.cal], ['annonces', 'Annonces', 'Nouvelles du village', I.mega], ['journal', 'Journal d’activité', 'Qui a fait quoi, et quand', I.clock], ['parametres', 'Association', 'Fiche, cotisation, code d’invitation', I.gear]];
+    const items = [['discussion', 'Discussion', 'Messages, idées et réclamations des membres', I.chat.replace('width="24" height="24" ', '')], ['transparence', 'Transparence', 'Où va l’argent, en clair', I.eye], ['finances', 'Finances', 'Recettes, dépenses et justificatifs', I.list], ['reunions', 'Réunions', 'Convocations, présence et comptes rendus', I.cal], ['votes', 'Votes', 'Décisions et sondages de l’association', I.vote], ['annonces', 'Annonces', 'Nouvelles du village', I.mega], ['journal', 'Journal d’activité', 'Qui a fait quoi, et quand', I.clock], ['parametres', 'Association', 'Fiche, cotisation, code d’invitation', I.gear]];
     return `<h1>Plus</h1>
       <div class="rolebar"><span>Connecté en tant que <b>${esc(S.ctx.me.full_name)}</b>, ${esc(ROLES[S.ctx.me.role].toLowerCase())}</span></div>
       <div class="list menu">${items.map(([k, t, s, ic]) => `<a class="item" href="${B()}/${k}"><span class="ico">${ic}</span><div class="body"><div class="t">${t}</div><div class="s">${s}</div></div><span class="chev">${I.chev}</span></a>`).join('')}</div>
       <div class="list menu"><a class="item" href="#/bienvenue"><span class="ico">${I.swap}</span><div class="body"><div class="t">Mes associations</div><div class="s">Changer, rejoindre ou créer une association</div></div><span class="chev">${I.chev}</span></a>
       <button class="item" data-act="signout"><span class="ico">${I.out}</span><div class="body"><div class="t">Se déconnecter</div><div class="s">${esc(S.user.email || '')}</div></div></button></div>
       <section class="card stack"><h2>Affichage</h2><div class="seg seg3" role="group" aria-label="Thème">${THEMES.map(([k, l]) => `<button data-act="theme" data-theme="${k}" aria-pressed="${themeNow() === k}">${l}</button>`).join('')}</div><p class="help">« Auto » suit le réglage clair ou sombre de votre téléphone.</p></section>
-      <p class="muted" style="font-size:12.5px;text-align:center">VillageLink · version 1.4.1</p>`;
+      <p class="muted" style="font-size:12.5px;text-align:center">VillageLink · version 1.5</p>`;
   };
 
   V.parametres = async () => {
@@ -1087,6 +1153,16 @@
       must(await sb.from('meetings').update(row).eq('id', form.dataset.id).select('id').single());
       toast('Compte rendu publié'); go(B() + '/r/' + form.dataset.id);
     },
+    async poll(fd) {
+      const question = val(fd, 'question');
+      const options = String(fd.get('options') || '').split('\n').map(x => x.trim()).filter(Boolean);
+      if (question.length < 3) fail('Écrivez la question.');
+      if (options.length < 2 || options.length > 10) fail('Mettez entre 2 et 10 choix, un par ligne.');
+      let closes = null; const cd = val(fd, 'close_date');
+      if (cd) { const [y, mo, d] = cd.split('-').map(Number), [h, mi] = (val(fd, 'close_time') || '20:00').split(':').map(Number); closes = new Date(y, mo - 1, d, h, mi); if (closes <= new Date()) fail('La fin du vote doit être dans le futur.'); closes = closes.toISOString(); }
+      const id = must(await sb.rpc('create_poll', { p_assoc: S.ctx.assoc.id, p_question: question, p_description: val(fd, 'description'), p_options: options, p_closes_at: closes, p_anonymous: !!fd.get('anonymous') }));
+      toast('Vote lancé'); go(B() + '/vote/' + id);
+    },
     async announce(fd) {
       const title = val(fd, 'title'), body = val(fd, 'body');
       if (title.length < 2 || body.length < 2) fail('Ajoutez un titre et un message.');
@@ -1156,6 +1232,16 @@
         b.disabled = true;
         must(await sb.from('members').update({ active: on }).eq('id', b.dataset.id).select('id').single());
         await refresh(); toast(on ? 'Membre réintégré' : 'Membre retiré de l’association'); go(B() + (on ? '/m/' + b.dataset.id : '/membres'));
+      }
+      else if (act === 'vote') {
+        b.disabled = true;
+        must(await sb.rpc('cast_vote', { p_poll: b.dataset.poll, p_option: b.dataset.opt }));
+        toast('Vote enregistré'); route();
+      }
+      else if (act === 'closepoll') {
+        if (b.dataset.confirm !== '1') { b.dataset.confirm = '1'; b.textContent = 'Confirmer : clore le vote'; return; }
+        must(await sb.rpc('close_poll', { p_poll: b.dataset.id }));
+        toast('Vote clos'); route();
       }
       else if (act === 'review') {
         const ok = b.dataset.ok === '1';

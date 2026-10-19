@@ -10,7 +10,7 @@ transparentes, projets, annonces, réunions et discussion.
   Claude écrit, vérifie et met en ligne le code.
 - Répondre en français simple, sans jargon. À la fin de chaque changement, dire précisément
   quoi tester sur le téléphone.
-- Version actuelle : **1.4.1** (réunions + retirer/réintégrer un membre).
+- Version actuelle : **1.5** (votes).
 
 ## Stack
 
@@ -52,11 +52,13 @@ Accueil sans association → Cadre d'une association → Écrans → Formulaires
 ## Données (Supabase, schéma `public`)
 
 - **Tables** : `associations`, `members`, `transactions`, `projects`, `project_updates`,
-  `announcements`, `meetings`, `meeting_attendance`, `messages`, `activity_log`.
+  `announcements`, `meetings`, `meeting_attendance`, `polls`, `poll_options`, `poll_votes`,
+  `messages`, `activity_log`.
 - **Vues** (toutes en `security_invoker = true`) : `v_balances`, `v_member_paid`,
   `v_project_totals`, `v_category_totals`.
 - **Fonctions appelées par l'app** : `create_association`, `join_association`, `review_join`,
-  `regenerate_invite_code`, `my_memberships`, `reverse_transaction`, `hide_message`.
+  `regenerate_invite_code`, `my_memberships`, `reverse_transaction`, `hide_message`,
+  `create_poll`, `cast_vote`, `close_poll`, `poll_results` (votes : aucune écriture directe dans les tables).
 - **Stockage** : bucket privé `proofs` (justificatifs de paiement, 5 Mo maximum).
 - **Définition exacte** de chaque table, fonction et règle : `supabase/schema.sql`. Le lire avant
   de toucher à la base.
@@ -72,7 +74,7 @@ Rôles : `president`, `vice_president`, `secretaire`, `tresorier`, `projets`, `m
 | Encaisser des cotisations | trésorier, président, vice-président |
 | Dépenser, annuler une opération | trésorier |
 | Projets | président, vice-président, responsable des projets |
-| Annonces, réunions | président, vice-président, secrétaire |
+| Annonces, réunions, votes | président, vice-président, secrétaire |
 
 ## Règles de sécurité — non négociables
 
@@ -99,7 +101,7 @@ Rôles : `president`, `vice_president`, `secretaire`, `tresorier`, `projets`, `m
    `apply_migration` (même nom, même contenu, ex. `v1_5_...`). La base d'abord, le code ensuite.
    `supabase/schema.sql` reste la photo de départ (v1.4) ; les migrations s'ajoutent après.
 2. **Cache** : augmenter le numéro `?v=` dans `index.html` pour chaque fichier modifié
-   (aujourd'hui `styles.css?v=9`, `config.js?v=2`, `app.js?v=10`). Sinon les téléphones gardent
+   (aujourd'hui `styles.css?v=11`, `config.js?v=2`, `app.js?v=11`). Sinon les téléphones gardent
    l'ancienne version.
 3. **Commit** sur `main`, en français : `Version X.Y : <ce qui change>`.
 4. **Push** : GitHub Pages met en ligne en quelques minutes.
@@ -119,7 +121,8 @@ Rôles : `president`, `vice_president`, `secretaire`, `tresorier`, `projets`, `m
 
 ## Feuille de route
 
-- **Fait** : v1.4 réunions (convocation, appel, compte rendu, partage WhatsApp) ; v1.4.1 bouton « Retirer de l'association » / « Réintégrer » sur la fiche membre (`active = false` : plus d'accès, plus de cotisation due, historique conservé).
+- **Fait** : v1.4 réunions (convocation, appel, compte rendu, partage WhatsApp) ; v1.4.1 bouton « Retirer de l'association » / « Réintégrer » sur la fiche membre (`active = false` : plus d'accès, plus de cotisation due, historique conservé) ; v1.4.2 sécurité (search_path, droits EXECUTE retirés sur les fonctions de trigger) ; v1.5 votes (secret ou à main levée, changement d'avis possible tant que le vote est ouvert).
+- **En cours** : documents, rapport mensuel PDF, notifications dans l'appli, mode hors ligne.
 - **Mis de côté** : paiement mobile directement dans l'app (agrégateurs type SasPay).
 - **Plus tard** : publication sur le Play Store.
 - La colonne `associations.plan` existe déjà pour de futures offres.

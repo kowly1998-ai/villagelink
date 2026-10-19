@@ -218,3 +218,14 @@ textarea.mono{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:13px}
 .btn.att-yes[aria-pressed="true"]{background:var(--green);border-color:var(--green);color:var(--green-ink)}
 .btn.att-no[aria-pressed="true"]{background:var(--warn-soft);border-color:var(--warn);color:var(--warn)}
 @media (max-width:480px){#att-list .item{flex-wrap:wrap}#att-list .item>.row{width:100%;padding-left:52px}#att-list .item>.row .btn{flex:1}}
+/* --- votes (1.5) --- */
+.ico-box{width:52px;height:56px;border-radius:14px;background:var(--accent-soft);color:var(--accent-text);display:grid;place-items:center;flex:none}
+.ico-box svg,.poll-next .ico svg{width:26px;height:26px}
+.poll-next{display:flex;align-items:center;gap:12px;padding:12px 14px;background:var(--gold);border-color:transparent;color:var(--gold-ink)}
+.poll-next .ico{width:46px;height:46px;border-radius:14px;background:rgba(255,255,255,.35);display:grid;place-items:center;flex:none}
+.poll-next .body{flex:1;min-width:0;display:flex;flex-direction:column;gap:1px}
+.poll-next .eyebrow,.poll-next .muted,.poll-next .chev{color:var(--gold-ink);opacity:.8}
+.poll-next b{font-weight:700;overflow-wrap:anywhere}
+.btn.vote-opt{justify-content:flex-start;min-height:52px;font-size:16px}
+.btn.vote-opt[aria-pressed="true"]{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
+.btn.vote-opt[aria-pressed="true"]::after{content:"✓";margin-left:auto}
