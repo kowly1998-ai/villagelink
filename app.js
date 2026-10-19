@@ -154,10 +154,22 @@
     if (!a) { S.ctx = null; return null; }
     let lastMsg = 0;
     try { const r = await sb.from('messages').select('id').eq('association_id', id).order('id', { ascending: false }).limit(1); if (!r.error && r.data[0]) lastMsg = r.data[0].id; } catch (e) { /* discussion pas encore installée */ }
+    let notif = 0, lastLog = 0;
+    try {
+      const r = await sb.from('activity_log').select('id').eq('association_id', id).order('id', { ascending: false }).limit(1);
+      if (!r.error && r.data[0]) lastLog = r.data[0].id;
+      const seenKey = 'vl:notif:' + id, seen = Number(store.get(seenKey) || 0);
+      if (!store.get(seenKey)) store.set(seenKey, String(lastLog));
+      else if (lastLog > seen) {
+        const n = await sb.from('activity_log').select('id').eq('association_id', id).gt('id', seen).neq('actor_id', S.user.id).limit(99);
+        if (!n.error) notif = n.data.length;
+      }
+    } catch (e) { /* pas bloquant */ }
+    try { if (navigator.setAppBadge) { if (notif) navigator.setAppBadge(notif); else navigator.clearAppBadge(); } } catch (e) { /* non pris en charge */ }
     const paidMap = new Map();
     paid.forEach(r => paidMap.set(r.member_id + '|' + r.period, Number(r.paid)));
     const me = members.find(m => m.user_id === S.user.id) || null;
-    S.ctx = { loadedAt: Date.now(), lastMsg, assoc: a, me, members, byId: new Map(members.map(m => [m.id, m])), paidMap,
+    S.ctx = { loadedAt: Date.now(), lastMsg, notif, lastLog, assoc: a, me, members, byId: new Map(members.map(m => [m.id, m])), paidMap,
       bal: { in: Number(bal ? bal.total_in : 0), out: Number(bal ? bal.total_out : 0) } };
     store.set('vl:last', id);
     return S.ctx;
@@ -328,7 +340,7 @@
       <header class="top"><a class="org" href="${base}"><div class="logo" aria-hidden="true">${esc(initials(a.name).slice(0, 1))}</div>
         <div style="min-width:0"><b>${esc(a.name)}</b><small>${esc([a.village, a.region, a.origin_country].filter(Boolean).join(' · '))}</small></div></a>
         <a class="iconbtn" href="${base}/discussion" aria-label="Discussion">${I.chat}${S.ctx.lastMsg > Number(store.get('vl:seen:' + a.id) || 0) ? '<span class="badge-dot">•</span>' : ''}</a>
-        <a class="iconbtn" href="${base}/annonces" aria-label="Annonces">${I.bell}</a></header>
+        <a class="iconbtn" href="${base}/notifications" aria-label="Notifications${S.ctx.notif ? ' : ' + S.ctx.notif + ' nouvelle' + (S.ctx.notif > 1 ? 's' : '') : ''}">${I.bell}${S.ctx.notif ? `<span class="badge-dot num">${S.ctx.notif > 9 ? '9+' : S.ctx.notif}</span>` : ''}</a></header>
       <main id="view"><div class="loading">Chargement…</div></main>
       <nav class="tabs" aria-label="Navigation principale"><div class="tabs-in">${TABS.map(([k, l, ic]) => `<a class="tab" href="${base}${k ? '/' + k : ''}" ${tab === k ? 'aria-current="page"' : ''}><span class="ic">${ic}</span>${l}</a>`).join('')}</div></nav></div>`;
     const key = sub[0] || 'home';
@@ -978,6 +990,23 @@ Abstention</textarea><p class="help">Entre 2 et 10 choix.</p></div>
       </article>`;
   };
 
+  /* Notifications ---------------------------------------------------- */
+  const NOTIF_LINKS = [[/annonce/i, 'annonces', I.mega], [/réunion|compte rendu|convocation/i, 'reunions', I.cal], [/vote/i, 'votes', I.vote], [/document/i, 'documents', I.doc],
+    [/cotisation|recette|dépense|opération|contre-écriture/i, 'finances', I.list], [/projet|mise à jour/i, 'projets', I.drop], [/membre|adhésion|rôle|retiré|réintégré|bureau|rejoindre|demande de/i, 'membres', I.users], [/message|discussion/i, 'discussion', I.chat]];
+  V.notifications = async () => {
+    const a = S.ctx.assoc, seenKey = 'vl:notif:' + a.id, seen = Number(store.get(seenKey) || 0);
+    const rows = must(await sb.from('activity_log').select('*').eq('association_id', a.id).order('id', { ascending: false }).limit(40));
+    if (rows[0]) store.set(seenKey, String(Math.max(rows[0].id, seen)));
+    S.ctx.notif = 0;
+    try { if (navigator.clearAppBadge) navigator.clearAppBadge(); } catch (e) { /* non pris en charge */ }
+    const item = l => { const hit = NOTIF_LINKS.find(([re]) => re.test(l.message)) || [null, 'journal', I.clock]; const fresh = l.id > seen && l.actor_id !== S.user.id;
+      return `<a class="item notif ${fresh ? 'fresh' : ''}" href="${B()}/${hit[1]}"><span class="ico">${hit[2]}</span><div class="body"><div class="s wrap" style="color:var(--ink)"><b>${esc(String(l.actor_label || '').replace(/\s*\(.*\)$/, ''))}</b> ${esc(l.message)}</div><div class="s">${dFR(localDay(l.created_at))} à ${hm(l.created_at)}${fresh ? ' · <b class="new">Nouveau</b>' : ''}</div></div></a>`; };
+    return `${subHead('Notifications', B())}
+      <div class="row" style="flex-wrap:wrap"><a class="btn ghost sm" href="${B()}/annonces">${I.mega.replace('<svg ', '<svg width="18" height="18" ')} Annonces</a><a class="btn ghost sm" href="${B()}/journal">Tout le journal</a></div>
+      <div class="list menu">${rows.map(item).join('') || '<div class="empty">Rien de nouveau pour le moment.</div>'}</div>
+      <p class="help">Les nouveautés faites par les autres membres apparaissent ici : annonces, réunions, votes, documents, paiements et membres.</p>`;
+  };
+
   const MSG_KINDS = ['Message', 'Idée', 'Réclamation'];
   V.discussion = async (sub, q) => {
     const a = S.ctx.assoc;
@@ -1021,7 +1050,7 @@ Abstention</textarea><p class="help">Entre 2 et 10 choix.</p></div>
       <div class="list menu"><a class="item" href="#/bienvenue"><span class="ico">${I.swap}</span><div class="body"><div class="t">Mes associations</div><div class="s">Changer, rejoindre ou créer une association</div></div><span class="chev">${I.chev}</span></a>
       <button class="item" data-act="signout"><span class="ico">${I.out}</span><div class="body"><div class="t">Se déconnecter</div><div class="s">${esc(S.user.email || '')}</div></div></button></div>
       <section class="card stack"><h2>Affichage</h2><div class="seg seg3" role="group" aria-label="Thème">${THEMES.map(([k, l]) => `<button data-act="theme" data-theme="${k}" aria-pressed="${themeNow() === k}">${l}</button>`).join('')}</div><p class="help">« Auto » suit le réglage clair ou sombre de votre téléphone.</p></section>
-      <p class="muted" style="font-size:12.5px;text-align:center">VillageLink · version 1.7</p>`;
+      <p class="muted" style="font-size:12.5px;text-align:center">VillageLink · version 1.8</p>`;
   };
 
   V.parametres = async () => {

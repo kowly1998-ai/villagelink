@@ -248,3 +248,7 @@ textarea.mono{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:13px}
   .bar>i{-webkit-print-color-adjust:exact;print-color-adjust:exact}
   .pill{border:1px solid #bbb}
 }
+/* --- notifications (1.8) --- */
+.badge-dot.num{font-size:10.5px;min-width:18px;height:18px;top:3px;right:2px}
+.item.notif.fresh{background:var(--accent-soft)}
+.item.notif .new{color:var(--accent-text)}
