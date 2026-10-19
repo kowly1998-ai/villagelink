@@ -239,8 +239,11 @@
   }
 
   async function goHome() {
-    const list = must(await sb.rpc('my_memberships')).filter(a => a.active && !a.pending).map(a => ({ id: a.association_id, name: a.name }));
     const last = store.get('vl:last');
+    let rows;
+    try { rows = must(await sb.rpc('my_memberships')); }
+    catch (e) { if (last) return go('#/a/' + last); throw e; }   // hors ligne : on rouvre la dernière association
+    const list = rows.filter(a => a.active && !a.pending).map(a => ({ id: a.association_id, name: a.name }));
     if (list.length === 1) return go('#/a/' + list[0].id);
     if (last && list.some(a => a.id === last)) return go('#/a/' + last);
     return go('#/bienvenue');
@@ -1050,7 +1053,7 @@ Abstention</textarea><p class="help">Entre 2 et 10 choix.</p></div>
       <div class="list menu"><a class="item" href="#/bienvenue"><span class="ico">${I.swap}</span><div class="body"><div class="t">Mes associations</div><div class="s">Changer, rejoindre ou créer une association</div></div><span class="chev">${I.chev}</span></a>
       <button class="item" data-act="signout"><span class="ico">${I.out}</span><div class="body"><div class="t">Se déconnecter</div><div class="s">${esc(S.user.email || '')}</div></div></button></div>
       <section class="card stack"><h2>Affichage</h2><div class="seg seg3" role="group" aria-label="Thème">${THEMES.map(([k, l]) => `<button data-act="theme" data-theme="${k}" aria-pressed="${themeNow() === k}">${l}</button>`).join('')}</div><p class="help">« Auto » suit le réglage clair ou sombre de votre téléphone.</p></section>
-      <p class="muted" style="font-size:12.5px;text-align:center">VillageLink · version 1.8</p>`;
+      <p class="muted" style="font-size:12.5px;text-align:center">VillageLink · version 1.9</p>`;
   };
 
   V.parametres = async () => {
@@ -1319,7 +1322,7 @@ Abstention</textarea><p class="help">Entre 2 et 10 choix.</p></div>
     const act = b.dataset.act;
     try {
       if (act === 'auth-mode') { S.authMode = b.dataset.mode; S.authMsg = ''; renderAuth(); }
-      else if (act === 'signout') { await sb.auth.signOut(); S.ctx = null; S.authMode = 'login'; S.authMsg = ''; S.session = null; S.user = null; location.hash = '#/'; renderAuth(); }
+      else if (act === 'signout') { clearOfflineData(); await sb.auth.signOut(); S.ctx = null; S.authMode = 'login'; S.authMsg = ''; S.session = null; S.user = null; location.hash = '#/'; renderAuth(); }
       else if (act === 'reload') location.reload();
       else if (act === 'theme') { store.set('vl:theme', b.dataset.theme); applyTheme(); document.querySelectorAll('[data-act=theme]').forEach(x => x.setAttribute('aria-pressed', String(x === b))); }
       else if (act === 'hidemsg') {
@@ -1393,6 +1396,14 @@ Abstention</textarea><p class="help">Entre 2 et 10 choix.</p></div>
     } catch (x) { console.error(x); toast(errMsg(x)); }
   });
 
+  /* Mode hors ligne : un service worker garde une copie de l'application et des dernières données lues. */
+  function clearOfflineData() {
+    try { if (navigator.serviceWorker && navigator.serviceWorker.controller) navigator.serviceWorker.controller.postMessage('vl-clear'); } catch (e) { /* rien */ }
+    try { if (window.caches) caches.delete('vl-data-v1'); } catch (e) { /* rien */ }
+  }
+  if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === '127.0.0.1')) {
+    window.addEventListener('load', () => { navigator.serviceWorker.register('sw.js').catch(() => { /* hors ligne indisponible */ }); });
+  }
   const setOnline = () => $('#offline').classList.toggle('hidden', navigator.onLine);
   window.addEventListener('online', setOnline); window.addEventListener('offline', setOnline); setOnline();
   document.addEventListener('change', e => { const el = e.target; if (el && el.dataset && el.dataset.nav === 'rapport' && /^\d{4}-\d{2}$/.test(el.value)) go(B() + '/rapport?m=' + el.value); });
@@ -1415,7 +1426,7 @@ Abstention</textarea><p class="help">Entre 2 et 10 choix.</p></div>
     if (!started) return;
     if (event === 'SIGNED_IN' && !had) route();
     // Ne pas réafficher l'écran de connexion s'il est déjà là : la saisie en cours serait effacée.
-    if (event === 'SIGNED_OUT') { S.ctx = null; if (!document.querySelector('form[data-form=auth]')) renderAuth(); }
+    if (event === 'SIGNED_OUT') { clearOfflineData(); S.ctx = null; if (!document.querySelector('form[data-form=auth]')) renderAuth(); }
   });
   (async () => {
     try {

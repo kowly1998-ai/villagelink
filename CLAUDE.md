@@ -10,7 +10,7 @@ transparentes, projets, annonces, réunions et discussion.
   Claude écrit, vérifie et met en ligne le code.
 - Répondre en français simple, sans jargon. À la fin de chaque changement, dire précisément
   quoi tester sur le téléphone.
-- Version actuelle : **1.8** (notifications dans l'appli).
+- Version actuelle : **1.9** (mode hors ligne).
 
 ## Stack
 
@@ -30,6 +30,7 @@ transparentes, projets, annonces, réunions et discussion.
 | `app.js` | Toute l'application (environ 1 200 lignes) |
 | `styles.css` | Styles, variables de thème |
 | `manifest.webmanifest`, `icon*` | Installation sur l'écran d'accueil |
+| `sw.js` | Service worker du mode hors ligne (réseau d'abord, copie de secours) |
 | `supabase/schema.sql` | Structure complète de la base à la v1.4 : référence et secours |
 
 ## Organisation de `app.js`
@@ -47,7 +48,8 @@ Accueil sans association → Cadre d'une association → Écrans → Formulaires
 - **Contexte** : `loadCtx(id)` charge l'association, les membres, les paiements et les soldes
   dans `S.ctx`. Rechargé si les données ont plus de 15 secondes.
 - Barre du bas : Accueil, Membres, Cotisations, Projets, Plus.
-- Pas de temps réel Supabase et pas de service worker pour l'instant.
+- Pas de temps réel Supabase.
+- **Service worker** `sw.js` : réseau d'abord pour tout ; sans connexion, renvoie la dernière copie. Données : seulement les lectures `/rest/v1/` (GET) et les fonctions de lecture `my_memberships`, `poll_results` ; jamais les écritures. Cache des données vidé à la déconnexion (`clearOfflineData`). Changer `SHELL`/`DATA` dans `sw.js` pour forcer un nouveau cache.
 
 ## Données (Supabase, schéma `public`)
 
@@ -103,7 +105,7 @@ Rôles : `president`, `vice_president`, `secretaire`, `tresorier`, `projets`, `m
    `apply_migration` (même nom, même contenu, ex. `v1_5_...`). La base d'abord, le code ensuite.
    `supabase/schema.sql` reste la photo de départ (v1.4) ; les migrations s'ajoutent après.
 2. **Cache** : augmenter le numéro `?v=` dans `index.html` pour chaque fichier modifié
-   (aujourd'hui `styles.css?v=14`, `config.js?v=2`, `app.js?v=14`). Sinon les téléphones gardent
+   (aujourd'hui `styles.css?v=14`, `config.js?v=2`, `app.js?v=15`). Sinon les téléphones gardent
    l'ancienne version.
 3. **Commit** sur `main`, en français : `Version X.Y : <ce qui change>`.
 4. **Push** : GitHub Pages met en ligne en quelques minutes.
@@ -127,7 +129,8 @@ Rôles : `president`, `vice_president`, `secretaire`, `tresorier`, `projets`, `m
 - v1.6 documents (statuts, règlement, PV, rapports, reçus ; lecture par tous les membres).
 - v1.7 rapport mensuel (écran `rapport?m=AAAA-MM`, PDF par l'impression du navigateur, résumé WhatsApp ; styles `@media print`).
 - v1.8 notifications dans l'appli : la cloche (en-tête) compte les lignes de `activity_log` faites par les autres depuis la dernière visite (`localStorage vl:notif:<asso>`), écran `notifications`, pastille d'icône (`navigator.setAppBadge`). Les vraies notifications push viendront avec la version Play Store.
-- **En cours** : mode hors ligne.
+- v1.9 mode hors ligne (`sw.js`).
+- **Ensuite** : pilote réel avec Kansaghel, politique de confidentialité, page de présentation, Play Store.
 - **Mis de côté** : paiement mobile directement dans l'app (agrégateurs type SasPay).
 - **Plus tard** : publication sur le Play Store.
 - La colonne `associations.plan` existe déjà pour de futures offres.
