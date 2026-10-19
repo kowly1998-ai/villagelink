@@ -185,7 +185,7 @@
   const memberName = id => (S.ctx.byId.get(id) || {}).full_name || 'Membre retiré';
   const statusPill = m => {
     if (m.pending) return '<span class="pill p-late">Demande en attente</span>';
-    if (!m.active) return '<span class="pill p-blue">Inactif</span>';
+    if (!m.active) return '<span class="pill p-blue">Retiré</span>';
     if (!Number(S.ctx.assoc.fee_amount)) return '';
     const d = dues(m);
     if (d.isLate) return `<span class="pill p-late">${d.late.length > 1 ? d.late.length + ' mois de retard' : 'En retard'}</span>`;
@@ -417,7 +417,7 @@
     const f = q.get('f') || 'all';
     const late = lateMembers().length, noApp = activeMembers().filter(m => !m.user_id).length, inactive = S.ctx.members.filter(m => !m.active && !m.pending).length;
     const chips = [['all', 'Tous (' + activeMembers().length + ')'], ['bureau', 'Bureau'], ['late', 'En retard (' + late + ')'], ['noapp', 'Sans application (' + noApp + ')']];
-    if (inactive) chips.push(['inactive', 'Inactifs (' + inactive + ')']);
+    if (inactive) chips.push(['inactive', 'Retirés (' + inactive + ')']);
     if (pendingMembers().length) chips.unshift(['pending', 'Demandes (' + pendingMembers().length + ')']);
     return `<div class="between"><h1>Membres</h1>${can('members') ? `<a class="btn primary sm" href="${B()}/membres/nouveau">+ Ajouter</a>` : ''}</div>
       <input class="search" id="msearch" type="search" placeholder="Rechercher un nom, une ville ou un numéro" aria-label="Rechercher un membre">
@@ -466,6 +466,9 @@
         ${can('collect') && m.active && !m.pending ? `<a class="btn primary block" href="${B()}/encaisser?m=${m.id}">Enregistrer un paiement</a>` : ''}
         ${d.owed.length ? `<a class="btn wa block" target="_blank" rel="noopener" href="${waTo(m.phone, relance)}">${I.wa} Relancer sur WhatsApp</a>` : ''}
         ${can('members') && (m.role === 'membre' || can('roles')) && !m.pending ? `<a class="btn ghost block" href="${B()}/m/${m.id}/modifier">Modifier la fiche</a>` : ''}
+        ${can('members') && (m.role === 'membre' || can('roles')) && !m.pending && m.id !== S.ctx.me.id ? (m.active
+          ? `<button class="btn danger block" data-act="memberactive" data-id="${m.id}" data-v="0">Retirer de l’association</button><p class="help">${esc(m.full_name)} n’aura plus accès à l’application et n’aura plus de cotisation due. Ses paiements restent dans l’historique, pour la transparence.</p>`
+          : `<button class="btn ghost block" data-act="memberactive" data-id="${m.id}" data-v="1">Réintégrer dans l’association</button>`) : ''}
       </div>
       ${hist.length ? `<section class="stack"><span class="eyebrow">Historique des paiements</span><div class="list">${hist.map(t => txItem(t, rset)).join('')}</div></section>` : ''}`;
   };
@@ -488,7 +491,7 @@
         <div class="field"><label for="mb-email">Email (facultatif)</label><input id="mb-email" name="email" type="email" value="${esc(m && m.email)}"></div>
         <div class="field"><label for="mb-joined">Date d’adhésion</label><input id="mb-joined" name="joined_on" type="date" value="${esc(m ? m.joined_on : todayISO())}"><p class="help">Les cotisations sont dues à partir de ce mois.</p></div>
         ${can('roles') ? `<div class="field"><label for="mb-role">Fonction dans l’association</label><select id="mb-role" name="role">${Object.entries(ROLES).map(([k, l]) => opt(k, l, r)).join('')}</select></div>` : ''}
-        ${!isNew ? `<div class="field"><label class="check"><input type="checkbox" name="active" ${m.active ? 'checked' : ''}> Membre actif</label><p class="help">Un membre inactif n’a plus de cotisation due. Son historique est conservé.</p></div>` : ''}
+        ${!isNew ? `<div class="field"><label class="check"><input type="checkbox" name="active" ${m.active ? 'checked' : ''}> Membre actif</label><p class="help">Décocher revient à retirer le membre de l’association : il perd l’accès et n’a plus de cotisation due. Son historique est conservé.</p></div>` : ''}
         <p class="err" hidden></p><button class="btn primary block" type="submit">${isNew ? 'Ajouter' : 'Enregistrer'}</button></form>`;
   }
 
@@ -875,7 +878,7 @@
       <div class="list menu"><a class="item" href="#/bienvenue"><span class="ico">${I.swap}</span><div class="body"><div class="t">Mes associations</div><div class="s">Changer, rejoindre ou créer une association</div></div><span class="chev">${I.chev}</span></a>
       <button class="item" data-act="signout"><span class="ico">${I.out}</span><div class="body"><div class="t">Se déconnecter</div><div class="s">${esc(S.user.email || '')}</div></div></button></div>
       <section class="card stack"><h2>Affichage</h2><div class="seg seg3" role="group" aria-label="Thème">${THEMES.map(([k, l]) => `<button data-act="theme" data-theme="${k}" aria-pressed="${themeNow() === k}">${l}</button>`).join('')}</div><p class="help">« Auto » suit le réglage clair ou sombre de votre téléphone.</p></section>
-      <p class="muted" style="font-size:12.5px;text-align:center">VillageLink · version 1.4</p>`;
+      <p class="muted" style="font-size:12.5px;text-align:center">VillageLink · version 1.4.1</p>`;
   };
 
   V.parametres = async () => {
@@ -1146,6 +1149,13 @@
           const att = must(await sb.from('meeting_attendance').select('*').eq('meeting_id', b.dataset.meet));
           const c = $('#att-count'); if (c) c.innerHTML = attCount(att);
         } finally { row.querySelectorAll('[data-act=attend]').forEach(x => { x.disabled = false; }); }
+      }
+      else if (act === 'memberactive') {
+        const on = b.dataset.v === '1';
+        if (!on && b.dataset.confirm !== '1') { b.dataset.confirm = '1'; b.textContent = 'Confirmer : retirer ce membre'; return; }
+        b.disabled = true;
+        must(await sb.from('members').update({ active: on }).eq('id', b.dataset.id).select('id').single());
+        await refresh(); toast(on ? 'Membre réintégré' : 'Membre retiré de l’association'); go(B() + (on ? '/m/' + b.dataset.id : '/membres'));
       }
       else if (act === 'review') {
         const ok = b.dataset.ok === '1';
