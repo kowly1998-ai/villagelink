@@ -270,6 +270,7 @@
         ${m === 'reset' ? '<button class="link" type="button" data-act="auth-mode" data-mode="login">Retour à la connexion</button>' : ''}
       </form>
       <p class="help">Les membres sans smartphone n’ont pas besoin de compte : le trésorier enregistre leurs paiements.</p>
+      <p class="help">En continuant, vous acceptez les <a class="link" href="conditions.html">conditions d’utilisation</a> et la <a class="link" href="confidentialite.html">politique de confidentialité</a>.</p>
     </div>`;
   }
 
@@ -1055,7 +1056,7 @@ Abstention</textarea><p class="help">Entre 2 et 10 choix.</p></div>
       <div class="list menu"><a class="item" href="#/bienvenue"><span class="ico">${I.swap}</span><div class="body"><div class="t">Mes associations</div><div class="s">Changer, rejoindre ou créer une association</div></div><span class="chev">${I.chev}</span></a>
       <button class="item" data-act="signout"><span class="ico">${I.out}</span><div class="body"><div class="t">Se déconnecter</div><div class="s">${esc(S.user.email || '')}</div></div></button></div>
       <section class="card stack"><h2>Affichage</h2><div class="seg seg3" role="group" aria-label="Thème">${THEMES.map(([k, l]) => `<button data-act="theme" data-theme="${k}" aria-pressed="${themeNow() === k}">${l}</button>`).join('')}</div><p class="help">« Auto » suit le réglage clair ou sombre de votre téléphone.</p></section>
-      <p class="muted" style="font-size:12.5px;text-align:center">VillageLink · version 1.10</p>`;
+      <p class="muted" style="font-size:12.5px;text-align:center">VillageLink · version 1.10.1 · <a class="link" href="confidentialite.html">Confidentialité</a> · <a class="link" href="conditions.html">Conditions</a></p>`;
   };
 
   V.parametres = async () => {
