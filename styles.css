@@ -252,3 +252,7 @@ textarea.mono{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:13px}
 .badge-dot.num{font-size:10.5px;min-width:18px;height:18px;top:3px;right:2px}
 .item.notif.fresh{background:var(--accent-soft)}
 .item.notif .new{color:var(--accent-text)}
+/* --- connexion Google (1.10) --- */
+.google-btn{background:var(--surface);border:1px solid var(--line);color:var(--ink);font-weight:600;min-height:50px}
+.or{display:flex;align-items:center;gap:10px;color:var(--muted);font-size:13px}
+.or::before,.or::after{content:"";flex:1;height:1px;background:var(--line)}

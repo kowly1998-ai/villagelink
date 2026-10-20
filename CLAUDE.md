@@ -10,12 +10,12 @@ transparentes, projets, annonces, réunions et discussion.
   Claude écrit, vérifie et met en ligne le code.
 - Répondre en français simple, sans jargon. À la fin de chaque changement, dire précisément
   quoi tester sur le téléphone.
-- Version actuelle : **1.9** (mode hors ligne).
+- Version actuelle : **1.10** (connexion avec Google).
 
 ## Stack
 
 - HTML, CSS et JavaScript **sans compilation** : pas de npm, pas de framework, pas de build.
-- **Supabase** (projet `ncghmfwfnzgdddnqgnnl`) : connexion email + mot de passe, Postgres avec
+- **Supabase** (projet `ncghmfwfnzgdddnqgnnl`) : connexion email + mot de passe ou Google (client OAuth du projet Google Cloud `villagelink-512200`, `signInWithOAuth`), Postgres avec
   RLS, stockage de fichiers.
 - `supabase-js` **2.45.4** chargé depuis jsDelivr (version figée).
 - Hébergement : **GitHub Pages** depuis la branche `main`. Un push sur `main` = mise en ligne.
@@ -105,7 +105,7 @@ Rôles : `president`, `vice_president`, `secretaire`, `tresorier`, `projets`, `m
    `apply_migration` (même nom, même contenu, ex. `v1_5_...`). La base d'abord, le code ensuite.
    `supabase/schema.sql` reste la photo de départ (v1.4) ; les migrations s'ajoutent après.
 2. **Cache** : augmenter le numéro `?v=` dans `index.html` pour chaque fichier modifié
-   (aujourd'hui `styles.css?v=14`, `config.js?v=2`, `app.js?v=15`). Sinon les téléphones gardent
+   (aujourd'hui `styles.css?v=16`, `config.js?v=2`, `app.js?v=16`). Sinon les téléphones gardent
    l'ancienne version.
 3. **Commit** sur `main`, en français : `Version X.Y : <ce qui change>`.
 4. **Push** : GitHub Pages met en ligne en quelques minutes.
@@ -130,6 +130,7 @@ Rôles : `president`, `vice_president`, `secretaire`, `tresorier`, `projets`, `m
 - v1.7 rapport mensuel (écran `rapport?m=AAAA-MM`, PDF par l'impression du navigateur, résumé WhatsApp ; styles `@media print`).
 - v1.8 notifications dans l'appli : la cloche (en-tête) compte les lignes de `activity_log` faites par les autres depuis la dernière visite (`localStorage vl:notif:<asso>`), écran `notifications`, pastille d'icône (`navigator.setAppBadge`). Les vraies notifications push viendront avec la version Play Store.
 - v1.9 mode hors ligne (`sw.js`).
+- v1.10 bouton « Continuer avec Google » sur l'écran de connexion (masquable avec `google: false` dans `config.js`).
 - **Ensuite** : pilote réel avec Kansaghel, politique de confidentialité, page de présentation, Play Store.
 - **Mis de côté** : paiement mobile directement dans l'app (agrégateurs type SasPay).
 - **Plus tard** : publication sur le Play Store.
