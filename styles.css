@@ -256,3 +256,9 @@ textarea.mono{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:13px}
 .google-btn{background:var(--surface);border:1px solid var(--line);color:var(--ink);font-weight:600;min-height:50px}
 .or{display:flex;align-items:center;gap:10px;color:var(--muted);font-size:13px}
 .or::before,.or::after{content:"";flex:1;height:1px;background:var(--line)}
+/* --- montants sur petits écrans (1.10.2) --- */
+.hero .boxes b{white-space:nowrap;overflow-wrap:normal;font-size:clamp(13px,3.9vw,16px)}
+.kv.num{grid-template-columns:minmax(0,1fr) auto}
+.kv.num dd{white-space:nowrap;overflow-wrap:normal}
+.kv.num dt{min-width:0}
+.hero .big{font-size:clamp(28px,9vw,38px)}

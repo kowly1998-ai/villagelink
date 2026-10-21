@@ -1,16 +1,20 @@
 {
+  "id": "./",
   "name": "VillageLink",
   "short_name": "VillageLink",
-  "description": "Membres, cotisations, finances et projets de votre association de ressortissants.",
+  "description": "Membres, cotisations, finances, réunions et votes de votre association de ressortissants, visibles par tous les membres.",
   "lang": "fr",
+  "dir": "ltr",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
+  "orientation": "portrait",
   "background_color": "#F5F2FA",
   "theme_color": "#4A2380",
+  "categories": ["finance", "productivity", "social"],
   "icons": [
-    {"src": "icon-192.png", "sizes": "192x192", "type": "image/png"},
-    {"src": "icon-512.png", "sizes": "512x512", "type": "image/png"},
-    {"src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable"}
+    {"src": "icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any"},
+    {"src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any"},
+    {"src": "icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable"}
   ]
 }
