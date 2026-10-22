@@ -138,9 +138,15 @@
     polls: ['president', 'vice_president', 'secretaire'],
     docs: ['president', 'vice_president', 'secretaire', 'tresorier'],
     collections: ['president', 'vice_president', 'secretaire', 'tresorier'],
+    sections: ['president', 'vice_president', 'secretaire'],
     settings: ['president']
   };
   const can = a => !!(S.ctx && S.ctx.me && CAN[a].includes(S.ctx.me.role));
+  // Trésorier de section : encaisse les cotisations des membres de sa section seulement.
+  const mySections = () => (S.ctx.sections || []).filter(x => S.ctx.me && x.treasurer_member_id === S.ctx.me.id).map(x => x.id);
+  const canCollectFor = m => can('collect') || !!(m && m.section_id && mySections().includes(m.section_id));
+  const canCollectAny = () => can('collect') || mySections().length > 0;
+  const secName = id => ((S.ctx.sections || []).find(x => x.id === id) || {}).name || '';
   const CAT_IN = ['Dons', 'Contributions exceptionnelles', 'Autres'];
   const CAT_OUT = ['Projet', 'Transport', 'Réunion', 'Communication', 'Administration', 'Autres'];
   const MODES = ['Espèces', 'Wave', 'Orange Money', 'Free Money', 'MTN Mobile Money', 'Virement', 'Autre'];
@@ -174,13 +180,15 @@
         if (!n.error) notif = n.data.length;
       }
     } catch (e) { /* pas bloquant */ }
+    let sections = [];
+    try { const r = await sb.from('sections').select('*').eq('association_id', id).order('name'); if (!r.error) sections = r.data || []; } catch (e) { /* sections pas encore installées */ }
     let expPending = 0;
     try { const r = await sb.from('expense_requests').select('id').eq('association_id', id).eq('status', 'En attente').limit(99); if (!r.error) expPending = r.data.length; } catch (e) { /* double validation pas encore installée */ }
     try { if (navigator.setAppBadge) { if (notif) navigator.setAppBadge(notif); else navigator.clearAppBadge(); } } catch (e) { /* non pris en charge */ }
     const paidMap = new Map();
     paid.forEach(r => paidMap.set(r.member_id + '|' + r.period, Number(r.paid)));
     const me = members.find(m => m.user_id === S.user.id) || null;
-    S.ctx = { loadedAt: Date.now(), lastMsg, notif, expPending, lastLog, assoc: a, me, members, byId: new Map(members.map(m => [m.id, m])), paidMap,
+    S.ctx = { loadedAt: Date.now(), lastMsg, notif, expPending, sections, lastLog, assoc: a, me, members, byId: new Map(members.map(m => [m.id, m])), paidMap,
       bal: { in: Number(bal ? bal.total_in : 0), out: Number(bal ? bal.total_out : 0) } };
     store.set('vl:last', id);
     return S.ctx;
@@ -430,7 +438,7 @@
     return `
       <section class="card hero"><div class="eyebrow">Solde de la caisse</div><div class="big num">${num(bal.in - bal.out)} <span class="cur">${esc(CUR_LABEL[a.currency] || 'FCFA')}</span></div>
         <div class="boxes num"><div><small>Collecté</small><b>${money(bal.in)}</b></div><div><small>Dépensé</small><b>${money(bal.out)}</b></div></div>
-        ${can('collect') ? `<a class="btn gold block" href="${B()}/encaisser">${I.plus} Encaisser une cotisation</a>` : ''}
+        ${canCollectAny() ? `<a class="btn gold block" href="${B()}/encaisser">${I.plus} Encaisser une cotisation</a>` : ''}
         <div><a class="link" href="${B()}/transparence">Voir où va l’argent</a></div></section>
       ${openCols.map(c => colCard(c, colTot.get(c.id), true)).join('')}
       ${toVote.length && S.ctx.me.user_id ? `<a class="card poll-next" href="${B()}/vote/${toVote[0].id}"><span class="ico">${I.vote}</span><span class="body"><span class="eyebrow">Vote en cours${toVote.length > 1 ? ' · ' + toVote.length + ' votes' : ''}</span><b>${esc(toVote[0].question)}</b><span class="muted">Donnez votre avis</span></span><span class="chev">${I.chev}</span></a>` : ''}
@@ -458,6 +466,7 @@
     const f = q.get('f') || 'all';
     const late = lateMembers().length, noApp = activeMembers().filter(m => !m.user_id).length, inactive = S.ctx.members.filter(m => !m.active && !m.pending).length;
     const chips = [['all', 'Tous (' + activeMembers().length + ')'], ['bureau', 'Bureau'], ['late', 'En retard (' + late + ')'], ['noapp', 'Sans application (' + noApp + ')']];
+    (S.ctx.sections || []).forEach(x => chips.push(['s:' + x.id, x.name + ' (' + activeMembers().filter(m => m.section_id === x.id).length + ')']));
     if (inactive) chips.push(['inactive', 'Retirés (' + inactive + ')']);
     if (pendingMembers().length) chips.unshift(['pending', 'Demandes (' + pendingMembers().length + ')']);
     return `<div class="between"><h1>Membres</h1>${can('members') ? `<a class="btn primary sm" href="${B()}/membres/nouveau">+ Ajouter</a>` : ''}</div>
@@ -477,13 +486,14 @@
       if (f === 'bureau') l = l.filter(m => m.role !== 'membre');
       if (f === 'late') l = l.filter(m => dues(m).isLate);
       if (f === 'noapp') l = l.filter(m => !m.user_id);
+      if (f.startsWith('s:')) l = l.filter(m => m.section_id === f.slice(2));
       if (s) l = l.filter(m => (m.full_name + ' ' + m.city + ' ' + m.phone).toLowerCase().includes(s));
       l.sort((x, y) => (x.role === 'membre') - (y.role === 'membre') || x.full_name.localeCompare(y.full_name, 'fr'));
       if (f === 'pending') {
         $('#mlist').innerHTML = l.map(m => `<div class="item"><div class="av">${esc(initials(m.full_name))}</div><div class="body"><div class="t">${esc(m.full_name)}</div><div class="s">${esc(m.phone || 'Sans numéro')} · demande du ${dFR(m.created_at)}</div>${can('members') ? `<div class="row" style="margin-top:8px;flex-wrap:wrap"><button class="btn primary sm" data-act="review" data-id="${m.id}" data-ok="1">Valider</button><button class="btn danger sm" data-act="review" data-id="${m.id}" data-ok="0">Refuser</button></div>` : ''}</div></div>`).join('') || '<div class="empty">Aucune demande en attente.</div>';
         return;
       }
-      $('#mlist').innerHTML = l.slice(0, 400).map(m => `<a class="item" href="${B()}/m/${m.id}"><div class="av">${esc(initials(m.full_name))}</div><div class="body"><div class="t">${esc(m.full_name)}</div><div class="s">${m.role !== 'membre' ? esc(ROLES[m.role]) + ' · ' : ''}${esc(m.city || m.phone || '—')}${m.user_id ? '' : ' · sans application'}</div></div>${statusPill(m)}</a>`).join('') || '<div class="empty">Aucun membre ne correspond.</div>';
+      $('#mlist').innerHTML = l.slice(0, 400).map(m => `<a class="item" href="${B()}/m/${m.id}"><div class="av">${esc(initials(m.full_name))}</div><div class="body"><div class="t">${esc(m.full_name)}</div><div class="s">${m.role !== 'membre' ? esc(ROLES[m.role]) + ' · ' : ''}${m.section_id ? esc(secName(m.section_id)) + ' · ' : ''}${esc(m.city || m.phone || '—')}${m.user_id ? '' : ' · sans application'}</div></div>${statusPill(m)}</a>`).join('') || '<div class="empty">Aucun membre ne correspond.</div>';
     };
     input.addEventListener('input', draw); draw();
   };
@@ -500,11 +510,11 @@
     const relance = relanceText(m, d);
     return `${subHead('Fiche membre', B() + '/membres')}
       <div class="row"><div class="av lg">${esc(initials(m.full_name))}</div><div style="min-width:0"><h2 style="font-size:20px">${esc(m.full_name)}</h2><div class="row" style="flex-wrap:wrap;gap:6px;margin-top:4px"><span class="pill p-blue">${esc(ROLES[m.role])}</span>${statusPill(m)}</div></div></div>
-      <section class="card"><dl class="kv num" style="margin:0"><dt>Téléphone</dt><dd>${esc(m.phone) || '<span class="muted">—</span>'}</dd><dt>Email</dt><dd>${esc(m.email) || '<span class="muted">—</span>'}</dd><dt>Résidence</dt><dd>${esc([m.city, m.country].filter(Boolean).join(', ')) || '<span class="muted">—</span>'}</dd><dt>Adhésion</dt><dd>${dFR(m.joined_on)}</dd><dt>Application</dt><dd>${m.user_id ? 'Oui' : 'Non, suivi par le trésorier'}</dd></dl></section>
+      <section class="card"><dl class="kv num" style="margin:0"><dt>Téléphone</dt><dd>${esc(m.phone) || '<span class="muted">—</span>'}</dd><dt>Email</dt><dd>${esc(m.email) || '<span class="muted">—</span>'}</dd><dt>Résidence</dt><dd>${esc([m.city, m.country].filter(Boolean).join(', ')) || '<span class="muted">—</span>'}</dd>${m.section_id ? `<dt>Section</dt><dd>${esc(secName(m.section_id))}${(S.ctx.sections || []).some(x => x.treasurer_member_id === m.id) ? ' · trésorier de section' : ''}</dd>` : ''}<dt>Adhésion</dt><dd>${dFR(m.joined_on)}</dd><dt>Application</dt><dd>${m.user_id ? 'Oui' : 'Non, suivi par le trésorier'}</dd></dl></section>
       ${periods.length ? `<section class="card stack"><h2>Cotisations</h2>${periods.map(p => { const pd = paidFor(m.id, p); return `<div class="between num"><span>${pFR(p)}</span>${pd >= fee ? `<span class="pill p-ok">${money(pd)} payé</span>` : `<span class="pill ${d.late.includes(p) ? 'p-late' : 'p-blue'}">Reste ${money(fee - pd)}</span>`}</div>`; }).join('')}
         ${d.remaining ? `<div class="between num" style="border-top:1px solid var(--line);padding-top:10px"><b>Total dû</b><b style="color:var(--warn)">${money(d.remaining)}</b></div>` : ''}</section>` : ''}
       <div class="stack">
-        ${can('collect') && m.active && !m.pending ? `<a class="btn primary block" href="${B()}/encaisser?m=${m.id}">Enregistrer un paiement</a>` : ''}
+        ${canCollectFor(m) && m.active && !m.pending ? `<a class="btn primary block" href="${B()}/encaisser?m=${m.id}">Enregistrer un paiement</a>` : ''}
         ${d.owed.length ? `<a class="btn wa block" target="_blank" rel="noopener" href="${waTo(m.phone, relance)}">${I.wa} Relancer sur WhatsApp</a>` : ''}
         ${can('members') && (m.role === 'membre' || can('roles')) && !m.pending ? `<a class="btn ghost block" href="${B()}/m/${m.id}/modifier">Modifier la fiche</a>` : ''}
         ${can('members') && (m.role === 'membre' || can('roles')) && !m.pending && m.id !== S.ctx.me.id ? (m.active
@@ -529,6 +539,7 @@
         <div class="field"><label for="mb-name">Nom complet</label><input id="mb-name" name="full_name" value="${esc(m && m.full_name)}" autocomplete="off" required></div>
         <div class="field"><label for="mb-phone">Téléphone</label><input id="mb-phone" name="phone" type="tel" inputmode="tel" value="${esc(m && m.phone)}" placeholder="+221 77 000 00 00"><p class="help">Avec l’indicatif (+221, +224, +33…) pour pouvoir relancer directement sur WhatsApp.</p></div>
         <div class="row2"><div class="field"><label for="mb-city">Ville de résidence</label><input id="mb-city" name="city" value="${esc(m && m.city)}"></div><div class="field"><label for="mb-country">Pays</label><input id="mb-country" name="country" value="${esc(m ? m.country : S.ctx.assoc.residence_country)}"></div></div>
+        ${(S.ctx.sections || []).length ? `<div class="field"><label for="mb-sec">Section</label><select id="mb-sec" name="section_id"><option value="">Aucune section</option>${S.ctx.sections.map(x => opt(x.id, x.name, m ? m.section_id : '')).join('')}</select></div>` : ''}
         <div class="field"><label for="mb-email">Email (facultatif)</label><input id="mb-email" name="email" type="email" value="${esc(m && m.email)}"></div>
         <div class="field"><label for="mb-joined">Date d’adhésion</label><input id="mb-joined" name="joined_on" type="date" value="${esc(m ? m.joined_on : todayISO())}"><p class="help">Les cotisations sont dues à partir de ce mois.</p></div>
         ${can('roles') ? `<div class="field"><label for="mb-role">Fonction dans l’association</label><select id="mb-role" name="role">${Object.entries(ROLES).map(([k, l]) => opt(k, l, r)).join('')}</select></div>` : ''}
@@ -576,28 +587,33 @@
     const paidCount = dueNow.filter(m => paidFor(m.id, cur) >= fee).length;
     let list = '';
     if (f === 'late') {
-      list = `<div class="list">${late.map(m => { const d = dues(m); return `<div class="item"><div class="av">${esc(initials(m.full_name))}</div><div class="body"><a class="t" href="${B()}/m/${m.id}" style="display:block;text-decoration:none">${esc(m.full_name)}</a><div class="s wrap num">${d.late.map(pFR).join(', ')} · reste ${money(d.remaining)}</div><div class="row" style="margin-top:8px;flex-wrap:wrap">${can('collect') ? `<a class="btn primary sm" href="${B()}/encaisser?m=${m.id}">Encaisser</a>` : ''}<a class="btn wa sm" target="_blank" rel="noopener" href="${waTo(m.phone, relanceText(m, d))}">${I.wa} Relancer</a></div></div></div>`; }).join('') || '<div class="empty">Tout le monde est à jour.</div>'}</div>`;
+      list = `<div class="list">${late.map(m => { const d = dues(m); return `<div class="item"><div class="av">${esc(initials(m.full_name))}</div><div class="body"><a class="t" href="${B()}/m/${m.id}" style="display:block;text-decoration:none">${esc(m.full_name)}</a><div class="s wrap num">${d.late.map(pFR).join(', ')} · reste ${money(d.remaining)}</div><div class="row" style="margin-top:8px;flex-wrap:wrap">${canCollectFor(m) ? `<a class="btn primary sm" href="${B()}/encaisser?m=${m.id}">Encaisser</a>` : ''}<a class="btn wa sm" target="_blank" rel="noopener" href="${waTo(m.phone, relanceText(m, d))}">${I.wa} Relancer</a></div></div></div>`; }).join('') || '<div class="empty">Tout le monde est à jour.</div>'}</div>`;
     } else {
       const recent = must(await sb.from('transactions').select('*').eq('association_id', a.id).eq('category', 'Cotisations').order('id', { ascending: false }).limit(40));
       const rset = await reversedSet(recent);
       list = `<div class="list">${recent.map(t => txItem(t, rset)).join('') || '<div class="empty">Aucun paiement enregistré.</div>'}</div>`;
     }
-    return `<div class="between"><h1>Cotisations</h1>${can('collect') ? `<a class="btn primary sm" href="${B()}/encaisser">+ Paiement</a>` : ''}</div>
+    const secs = S.ctx.sections || [];
+    const secRows = secs.map(x => { const ms = dueNow.filter(m => m.section_id === x.id); return { x, n: ms.length, paid: ms.filter(m => paidFor(m.id, cur) >= fee).length, got: ms.reduce((t, m) => t + Math.min(paidFor(m.id, cur), fee), 0), late: ms.filter(m => dues(m).isLate).length }; });
+    const noSec = dueNow.filter(m => !m.section_id);
+    const secCard = secs.length ? `<section class="card stack"><div class="between"><h2>Par section</h2><a class="link" href="${B()}/sections">Gérer</a></div>${secRows.map(r => `<a class="between num" href="${B()}/membres?f=s:${r.x.id}" style="text-decoration:none;color:inherit;gap:10px"><span style="min-width:0"><b>${esc(r.x.name)}</b><br><span class="muted" style="font-size:13px">${r.paid}/${r.n} à jour${r.late ? ' · ' + r.late + ' en retard' : ''}</span></span><b>${money(r.got)}</b></a>`).join('')}${noSec.length ? `<span class="muted" style="font-size:13px">${noSec.length} membre${noSec.length > 1 ? 's' : ''} sans section</span>` : ''}</section>` : '';
+    return `<div class="between"><h1>Cotisations</h1>${canCollectAny() ? `<a class="btn primary sm" href="${B()}/encaisser">+ Paiement</a>` : ''}</div>
       <section class="card stack"><span class="eyebrow">Règle en vigueur</span><dl class="kv num" style="margin:0"><dt>Montant</dt><dd>${money(fee)}</dd><dt>Fréquence</dt><dd>Mensuelle</dd><dt>Échéance</dt><dd>Le ${a.fee_due_day} de chaque mois</dd><dt>Suivi depuis</dt><dd>${pFR(ym(a.dues_start))}</dd></dl></section>
       <section class="card stack"><div class="between"><span class="eyebrow">${pFR(cur)}</span><span class="pill p-blue num">${paidCount}/${dueNow.length} membres</span></div>
         <div class="num" style="font-family:var(--f-display);font-size:24px;font-weight:700">${money(collected)} <span class="muted" style="font-size:14px;font-family:var(--f-body);font-weight:500">sur ${money(expected)}</span></div>
         <div class="bar"><i style="width:${pct(collected, expected)}%"></i></div>
         <span class="muted num" style="font-size:13px">Reste à encaisser, arriérés compris : ${money(activeMembers().reduce((s, m) => s + dues(m).remaining, 0))}</span></section>
+      ${secCard}
       <div class="chips" role="group" aria-label="Filtrer"><a class="chip" style="text-decoration:none" href="${B()}/cotisations?f=late" aria-pressed="${f === 'late'}">En retard (${late.length})</a><a class="chip" style="text-decoration:none" href="${B()}/cotisations?f=recent" aria-pressed="${f === 'recent'}">Derniers paiements</a></div>
       ${list}`;
   };
 
   V.encaisser = async (sub, q) => {
-    if (!can('collect')) return `${subHead('Encaisser', B() + '/cotisations')}<p class="note">Seuls le trésorier et le président enregistrent les cotisations.</p>`;
+    if (!canCollectAny()) return `${subHead('Encaisser', B() + '/cotisations')}<p class="note">Seuls le trésorier, le président, le vice-président et les trésoriers de section enregistrent les cotisations.</p>`;
     const a = S.ctx.assoc;
     if (!Number(a.fee_amount)) return `${subHead('Encaisser', B() + '/cotisations')}<p class="note">Définissez d’abord le montant de la cotisation dans les paramètres.</p>`;
-    const sel = q.get('m') || (lateMembers()[0] || activeMembers()[0] || {}).id || '';
-    const list = activeMembers().slice().sort((x, y) => x.full_name.localeCompare(y.full_name, 'fr'));
+    const list = activeMembers().filter(canCollectFor).sort((x, y) => x.full_name.localeCompare(y.full_name, 'fr'));
+    const sel = q.get('m') || (list.find(m => dues(m).isLate) || list[0] || {}).id || '';
     if (!list.length) return `${subHead('Encaisser', B() + '/cotisations')}<p class="note">Ajoutez d’abord des membres.</p>`;
     return `${subHead('Enregistrer un paiement', B() + '/cotisations')}
       <form class="stack" data-form="pay" novalidate>
@@ -823,6 +839,34 @@
     const a = S.ctx.assoc;
     return `Reçu ${txRef(t.id)}\n${a.name}\n\n${m ? 'Membre : ' + m.full_name + '\n' : ''}${t.description}\nMontant : ${money(t.amount)}${t.orig_currency ? ' (' + origTag(t) + ')' : ''}\nMode : ${t.payment_method || '—'}\nDate : ${whenTx(t)}\nEnregistré par : ${author ? author.full_name : S.ctx.me.full_name}\n\nMerci pour votre contribution au développement de ${a.village || 'notre village'}.`;
   }
+
+  /* Sections ------------------------------------------------------- */
+  V.sections = async (sub) => {
+    const secs = S.ctx.sections || [], mg = can('sections');
+    if (sub[1] === 'nouvelle' || (sub[1] && sub[2] === 'modifier')) {
+      if (!mg) return `${subHead('Section', B() + '/sections')}<p class="note">Réservé au président, au vice-président et au secrétaire général.</p>`;
+      const x = sub[1] === 'nouvelle' ? null : secs.find(y => y.id === sub[1]);
+      if (sub[1] !== 'nouvelle' && !x) return subHead('Section introuvable', B() + '/sections');
+      const inSec = x ? activeMembers().filter(m => m.section_id === x.id) : [];
+      return `${subHead(x ? 'Modifier la section' : 'Nouvelle section', B() + '/sections')}
+        <form class="stack" data-form="section" data-id="${x ? x.id : ''}" novalidate>
+          <div class="field"><label for="sc-n">Nom</label><input id="sc-n" name="name" maxlength="80" value="${esc(x && x.name)}" placeholder="Ex. Section de Dakar" required></div>
+          <div class="row2"><div class="field"><label for="sc-c">Ville</label><input id="sc-c" name="city" value="${esc(x && x.city)}"></div><div class="field"><label for="sc-p">Pays</label><input id="sc-p" name="country" value="${esc(x && x.country)}"></div></div>
+          ${x ? `<div class="field"><label for="sc-t">Trésorier de la section</label><select id="sc-t" name="treasurer_member_id"><option value="">Aucun</option>${inSec.map(m => opt(m.id, m.full_name, x.treasurer_member_id)).join('')}</select><p class="help">Il encaisse les cotisations des membres de cette section, et rien d’autre. Rangez d’abord les membres dans la section (fiche du membre).</p></div>` : '<p class="help">Après la création, rangez les membres dans la section depuis leur fiche, puis choisissez le trésorier de la section.</p>'}
+          <p class="err" hidden></p><button class="btn primary block" type="submit">${x ? 'Enregistrer' : 'Créer la section'}</button>
+          ${x ? `<button class="btn danger block" type="button" data-act="delsection" data-id="${x.id}">Supprimer la section</button><p class="help">Les membres restent dans l’association, sans section.</p>` : ''}</form>`;
+    }
+    const act = activeMembers(), fee = Number(S.ctx.assoc.fee_amount) || 0, cur = curYM();
+    return `${subHead('Sections', B() + '/plus')}
+      ${mg ? `<a class="btn primary block" href="${B()}/sections/nouvelle">${I.plus} Nouvelle section</a>` : ''}
+      <p class="note">Une section regroupe les membres d’une même ville ou d’un même pays. Son trésorier encaisse les cotisations de sa section ; le bureau central voit toutes les sections.</p>
+      ${secs.map(x => { const ms = act.filter(m => m.section_id === x.id), tr = x.treasurer_member_id ? S.ctx.byId.get(x.treasurer_member_id) : null, paid = fee ? ms.filter(m => paidFor(m.id, cur) >= fee).length : 0;
+        return `<section class="card stack"><div class="between"><h2>${esc(x.name)}</h2>${mg ? `<a class="link" href="${B()}/sections/${x.id}/modifier">Modifier</a>` : ''}</div>
+          <span class="muted" style="font-size:13.5px">${esc([x.city, x.country].filter(Boolean).join(', ') || '—')}</span>
+          <dl class="kv num" style="margin:0"><dt>Membres</dt><dd>${ms.length}</dd>${fee ? `<dt>À jour ce mois</dt><dd>${paid}/${ms.length}</dd><dt>En retard</dt><dd>${ms.filter(m => dues(m).isLate).length}</dd>` : ''}<dt>Trésorier</dt><dd>${tr ? esc(tr.full_name) : '<span class="muted">Aucun</span>'}</dd></dl>
+          <a class="btn ghost sm" href="${B()}/membres?f=s:${x.id}">Voir les membres</a></section>`; }).join('') || '<div class="empty">Aucune section. Une seule association suffit souvent ; créez des sections si vos membres vivent dans plusieurs villes ou pays.</div>'}
+      ${secs.length ? `<p class="muted" style="font-size:13px">${act.filter(m => !m.section_id).length} membre(s) sans section.</p>` : ''}`;
+  };
 
   /* Collectes de solidarité ----------------------------------------- */
   async function colTotals(ids) {
@@ -1235,7 +1279,7 @@ Abstention</textarea><p class="help">Entre 2 et 10 choix.</p></div>
 
   /* Notifications ---------------------------------------------------- */
   const NOTIF_LINKS = [[/annonce/i, 'annonces', I.mega], [/réunion|compte rendu|convocation/i, 'reunions', I.cal], [/vote/i, 'votes', I.vote], [/document/i, 'documents', I.doc],
-    [/collecte/i, 'collectes', I.heart], [/approbation|approuvé la dépense|refusé la dépense|demande de dépense|double validation/i, 'depenses', I.list], [/cotisation|recette|dépense|opération|contre-écriture/i, 'finances', I.list], [/projet|mise à jour/i, 'projets', I.drop], [/membre|adhésion|rôle|retiré|réintégré|bureau|rejoindre|demande de/i, 'membres', I.users], [/message|discussion/i, 'discussion', I.chat]];
+    [/collecte/i, 'collectes', I.heart], [/section/i, 'sections', I.users], [/approbation|approuvé la dépense|refusé la dépense|demande de dépense|double validation/i, 'depenses', I.list], [/cotisation|recette|dépense|opération|contre-écriture/i, 'finances', I.list], [/projet|mise à jour/i, 'projets', I.drop], [/membre|adhésion|rôle|retiré|réintégré|bureau|rejoindre|demande de/i, 'membres', I.users], [/message|discussion/i, 'discussion', I.chat]];
   V.notifications = async () => {
     const a = S.ctx.assoc, seenKey = 'vl:notif:' + a.id, seen = Number(store.get(seenKey) || 0);
     const rows = must(await sb.from('activity_log').select('*').eq('association_id', a.id).order('id', { ascending: false }).limit(40));
@@ -1286,14 +1330,14 @@ Abstention</textarea><p class="help">Entre 2 et 10 choix.</p></div>
   };
 
   V.plus = async () => {
-    const items = [['discussion', 'Discussion', 'Messages, idées et réclamations des membres', I.chat.replace('width="24" height="24" ', '')], ['collectes', 'Collectes de solidarité', 'Décès, maladie, mariage : s’entraider', I.heart], ['transparence', 'Transparence', 'Où va l’argent, en clair', I.eye], ['finances', 'Finances', 'Recettes, dépenses et justificatifs', I.list], ['reunions', 'Réunions', 'Convocations, présence et comptes rendus', I.cal], ['votes', 'Votes', 'Décisions et sondages de l’association', I.vote], ['documents', 'Documents', 'Statuts, règlement, procès-verbaux', I.doc], ['rapport', 'Rapport mensuel', 'Le bilan du mois, en PDF ou sur WhatsApp', I.report], ['annonces', 'Annonces', 'Nouvelles du village', I.mega], ['journal', 'Journal d’activité', 'Qui a fait quoi, et quand', I.clock], ['parametres', 'Association', 'Fiche, cotisation, code d’invitation', I.gear]];
+    const items = [['discussion', 'Discussion', 'Messages, idées et réclamations des membres', I.chat.replace('width="24" height="24" ', '')], ['sections', 'Sections', 'Dakar, Conakry, France… et leurs trésoriers', I.users], ['collectes', 'Collectes de solidarité', 'Décès, maladie, mariage : s’entraider', I.heart], ['transparence', 'Transparence', 'Où va l’argent, en clair', I.eye], ['finances', 'Finances', 'Recettes, dépenses et justificatifs', I.list], ['reunions', 'Réunions', 'Convocations, présence et comptes rendus', I.cal], ['votes', 'Votes', 'Décisions et sondages de l’association', I.vote], ['documents', 'Documents', 'Statuts, règlement, procès-verbaux', I.doc], ['rapport', 'Rapport mensuel', 'Le bilan du mois, en PDF ou sur WhatsApp', I.report], ['annonces', 'Annonces', 'Nouvelles du village', I.mega], ['journal', 'Journal d’activité', 'Qui a fait quoi, et quand', I.clock], ['parametres', 'Association', 'Fiche, cotisation, code d’invitation', I.gear]];
     return `<h1>Plus</h1>
       <div class="rolebar"><span>Connecté en tant que <b>${esc(S.ctx.me.full_name)}</b>, ${esc(ROLES[S.ctx.me.role].toLowerCase())}</span></div>
       <div class="list menu">${items.map(([k, t, s, ic]) => `<a class="item" href="${B()}/${k}"><span class="ico">${ic}</span><div class="body"><div class="t">${t}</div><div class="s">${s}</div></div><span class="chev">${I.chev}</span></a>`).join('')}</div>
       <div class="list menu"><a class="item" href="#/bienvenue"><span class="ico">${I.swap}</span><div class="body"><div class="t">Mes associations</div><div class="s">Changer, rejoindre ou créer une association</div></div><span class="chev">${I.chev}</span></a>
       <button class="item" data-act="signout"><span class="ico">${I.out}</span><div class="body"><div class="t">Se déconnecter</div><div class="s">${esc(S.user.email || '')}</div></div></button></div>
       <section class="card stack"><h2>Affichage</h2><div class="seg seg3" role="group" aria-label="Thème">${THEMES.map(([k, l]) => `<button data-act="theme" data-theme="${k}" aria-pressed="${themeNow() === k}">${l}</button>`).join('')}</div><p class="help">« Auto » suit le réglage clair ou sombre de votre téléphone.</p></section>
-      <p class="muted" style="font-size:12.5px;text-align:center">VillageLink · version 1.14 · <a class="link" href="confidentialite.html">Confidentialité</a> · <a class="link" href="conditions.html">Conditions</a></p>`;
+      <p class="muted" style="font-size:12.5px;text-align:center">VillageLink · version 1.15 · <a class="link" href="confidentialite.html">Confidentialité</a> · <a class="link" href="conditions.html">Conditions</a></p>`;
   };
 
   V.parametres = async () => {
@@ -1399,6 +1443,7 @@ Abstention</textarea><p class="help">Entre 2 et 10 choix.</p></div>
       const email = val(fd, 'email');
       if (email && !/^\S+@\S+\.\S+$/.test(email)) fail('Adresse email invalide.');
       const row = { full_name: name, phone: val(fd, 'phone'), city: val(fd, 'city'), country: val(fd, 'country'), email, joined_on: val(fd, 'joined_on') || todayISO() };
+      if (fd.has('section_id')) row.section_id = val(fd, 'section_id') || null;
       if (can('roles') && fd.get('role')) row.role = val(fd, 'role');
       let mid = id;
       if (id) {
@@ -1472,6 +1517,15 @@ Abstention</textarea><p class="help">Entre 2 et 10 choix.</p></div>
       if (reason.length < 4) fail('Indiquez le motif de l’annulation.');
       const nid = must(await sb.rpc('reverse_transaction', { p_id: Number(form.dataset.id), p_reason: reason }));
       await refresh(); toast('Contre-écriture enregistrée'); go(B() + '/op/' + nid);
+    },
+    async section(fd, form) {
+      const id = form.dataset.id, name = val(fd, 'name');
+      if (name.length < 2) fail('Donnez un nom à la section.');
+      if ((S.ctx.sections || []).some(x => x.id !== id && x.name.toLowerCase() === name.toLowerCase())) fail('Une section porte déjà ce nom.');
+      const row = { name, city: val(fd, 'city'), country: val(fd, 'country') };
+      if (id) { row.treasurer_member_id = val(fd, 'treasurer_member_id') || null; must(await sb.from('sections').update(row).eq('id', id).select('id').single()); }
+      else { row.association_id = S.ctx.assoc.id; must(await sb.from('sections').insert(row).select('id').single()); }
+      await refresh(); toast(id ? 'Section enregistrée' : 'Section créée'); go(B() + '/sections');
     },
     async collection(fd, form) {
       const id = form.dataset.id, title = val(fd, 'title'), goal = intVal(fd, 'goal'), sug = intVal(fd, 'suggested');
@@ -1652,6 +1706,11 @@ Abstention</textarea><p class="help">Entre 2 et 10 choix.</p></div>
         toast('Document retiré'); route();
       }
       else if (act === 'print') { window.print(); }
+      else if (act === 'delsection') {
+        if (b.dataset.confirm !== '1') { b.dataset.confirm = '1'; b.textContent = 'Confirmer la suppression'; return; }
+        must(await sb.from('sections').delete().eq('id', b.dataset.id));
+        await refresh(); toast('Section supprimée'); go(B() + '/sections');
+      }
       else if (act === 'colstatus') {
         const st = b.dataset.status;
         if (st === 'Close' && b.dataset.confirm !== '1') { b.dataset.confirm = '1'; b.textContent = 'Confirmer : clore la collecte'; return; }
