@@ -1445,8 +1445,10 @@ Abstention</textarea><p class="help">Entre 2 et 10 choix.</p></div>
       <div class="list menu"><a class="item" href="#/bienvenue"><span class="ico">${I.swap}</span><div class="body"><div class="t">Mes associations</div><div class="s">Changer, rejoindre ou créer une association</div></div><span class="chev">${I.chev}</span></a>
       <button class="item" data-act="signout"><span class="ico">${I.out}</span><div class="body"><div class="t">Se déconnecter</div><div class="s">${esc(S.user.email || '')}</div></div></button></div>
       <section class="card stack" id="push-card"><h2>Rappels sur ce téléphone</h2><p class="muted" style="margin:0;font-size:13.5px">Recevez une notification 3 jours avant l’échéance de votre cotisation, le jour même, et en cas de retard.</p><div id="push-state" class="stack"><span class="muted">Vérification…</span></div></section>
-      <section class="card stack"><h2>Affichage</h2><div class="seg seg3" role="group" aria-label="Thème">${THEMES.map(([k, l]) => `<button data-act="theme" data-theme="${k}" aria-pressed="${themeNow() === k}">${l}</button>`).join('')}</div><p class="help">« Auto » suit le réglage clair ou sombre de votre téléphone.</p></section>
-      <p class="muted" style="font-size:12.5px;text-align:center">VillageLink · version 1.19 · <a class="link" href="confidentialite.html">Confidentialité</a> · <a class="link" href="conditions.html">Conditions</a></p>`;
+      <section class="card stack"><h2>Affichage</h2><div class="seg seg3" role="group" aria-label="Thème">${THEMES.map(([k, l]) => `<button data-act="theme" data-theme="${k}" aria-pressed="${themeNow() === k}">${l}</button>`).join('')}</div><p class="help">« Auto » suit le réglage clair ou sombre de votre téléphone.</p>
+        <span class="eyebrow">Langue</span><div class="seg" role="group" aria-label="Langue">${LANGS.map(([k, l]) => `<button data-act="lang" data-lang="${k}" aria-pressed="${langNow() === k}">${l}</button>`).join('')}</div>
+        <p class="help">Le pular est en essai : certains textes restent en français.</p></section>
+      <p class="muted" style="font-size:12.5px;text-align:center">VillageLink · version 1.20 · <a class="link" href="confidentialite.html">Confidentialité</a> · <a class="link" href="conditions.html">Conditions</a></p>`;
   };
 
   /* Notifications sur le téléphone ----------------------------------- */
@@ -1486,6 +1488,31 @@ Abstention</textarea><p class="help">Entre 2 et 10 choix.</p></div>
     if (!j.sent) fail('Ce téléphone n’est plus inscrit. Désactivez puis réactivez les rappels.');
   }
   AFTER.plus = () => { drawPush(); };
+
+  /* Langue : français ou pular (traduction des textes affichés) -------- */
+  const LANGS = [['fr', 'Français'], ['ff', 'Pular (essai)']];
+  const langNow = () => (store.get('vl:lang') === 'ff' && window.VL_FF ? 'ff' : 'fr');
+  const FF_ATTRS = ['placeholder', 'aria-label', 'title'];
+  function translateTree(node) {
+    if (langNow() !== 'ff' || !node) return;
+    const D = window.VL_FF;
+    const tr = txt => { const k = txt.trim(); return k && Object.prototype.hasOwnProperty.call(D, k) ? txt.replace(k, D[k]) : null; };
+    if (node.nodeType === 3) { const v = tr(node.nodeValue); if (v != null) node.nodeValue = v; return; }
+    if (node.nodeType !== 1) return;
+    const w = document.createTreeWalker(node, NodeFilter.SHOW_TEXT, { acceptNode: n => (n.parentNode && /^(SCRIPT|STYLE|TEXTAREA)$/.test(n.parentNode.nodeName) ? 2 : 1) });
+    const list = []; while (w.nextNode()) list.push(w.currentNode);
+    list.forEach(n => { const v = tr(n.nodeValue); if (v != null) n.nodeValue = v; });
+    [node, ...node.querySelectorAll('[placeholder],[aria-label],[title]')].forEach(el => FF_ATTRS.forEach(a => { if (el.hasAttribute && el.hasAttribute(a)) { const v = tr(el.getAttribute(a)); if (v != null) el.setAttribute(a, v); } }));
+  }
+  function applyLang() {
+    document.documentElement.lang = langNow() === 'ff' ? 'ff' : 'fr';
+    if (applyLang.obs) { applyLang.obs.disconnect(); applyLang.obs = null; }
+    if (langNow() !== 'ff') return;
+    translateTree(document.body);
+    applyLang.obs = new MutationObserver(ms => ms.forEach(m => { if (m.type === 'characterData') translateTree(m.target); else m.addedNodes.forEach(translateTree); }));
+    applyLang.obs.observe(document.body, { childList: true, subtree: true, characterData: true });
+  }
+  applyLang();
 
   V.parametres = async () => {
     const a = S.ctx.assoc, pres = can('settings');
@@ -1815,6 +1842,7 @@ Abstention</textarea><p class="help">Entre 2 et 10 choix.</p></div>
       }
       else if (act === 'signout') { await pushOff(true).catch(() => {}); clearOfflineData(); await sb.auth.signOut(); S.ctx = null; S.authMode = 'login'; S.authMsg = ''; S.session = null; S.user = null; location.hash = '#/'; renderAuth(); }
       else if (act === 'reload') location.reload();
+      else if (act === 'lang') { store.set('vl:lang', b.dataset.lang); if (b.dataset.lang === 'fr' && langNow() === 'fr') { location.reload(); return; } applyLang(); route(); }
       else if (act === 'theme') { store.set('vl:theme', b.dataset.theme); applyTheme(); document.querySelectorAll('[data-act=theme]').forEach(x => x.setAttribute('aria-pressed', String(x === b))); }
       else if (act === 'hidemsg') {
         if (b.dataset.confirm !== '1') { b.dataset.confirm = '1'; b.textContent = 'Confirmer le masquage'; return; }
