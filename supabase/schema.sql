@@ -1,1108 +1,1366 @@
--- ============================================================================
--- VillageLink : structure complète de la base Supabase
--- ============================================================================
--- Exportée le 11 octobre 2026 depuis le projet ncghmfwfnzgdddnqgnnl
--- (PostgreSQL 17), à jour après la migration v1_4_reunions.
+-- =====================================================================
+-- VillageLink — schéma de base de données (Supabase / PostgreSQL 15+)
+-- À coller une seule fois dans Supabase > SQL Editor > New query > Run.
 --
--- Contenu : tables, contraintes, index, fonctions, vues, déclencheurs,
--- règles RLS, droits d'accès et stockage des justificatifs.
--- Aucune donnée, aucun secret.
---
--- À quoi sert ce fichier :
---   1. Référence : la vraie définition de chaque règle de sécurité.
---   2. Secours : recréer la base sur un projet Supabase neuf, en collant
---      ce fichier dans l'éditeur SQL (projet vide uniquement).
---
--- À tenir à jour : après chaque nouvelle migration, régénérer ce fichier.
---
--- Note : le code des fonctions a été ré-aligné à gauche (la base contenait
--- des centaines d'espaces parasites en début de ligne). Le code lui-même est
--- identique à celui de la base.
--- ============================================================================
+-- Principes :
+--  * chaque ligne appartient à une association ; un utilisateur ne voit
+--    que les associations dont il est membre (Row Level Security) ;
+--  * le registre financier ne se modifie jamais : on ajoute, on n'efface
+--    pas ; une erreur se corrige par une contre-écriture ;
+--  * chaque action importante écrit une ligne dans le journal d'activité.
+-- =====================================================================
 
-begin;
+create extension if not exists pgcrypto;
 
-set local check_function_bodies = off;
-set local search_path = public;
+-- ---------------------------------------------------------------------
+-- Tables
+-- ---------------------------------------------------------------------
 
--- 1. Tables
-
-create table public.associations (
-  id uuid not null default gen_random_uuid(),
-  name text not null,
-  origin_country text not null default ''::text,
-  region text not null default ''::text,
-  prefecture text not null default ''::text,
-  village text not null default ''::text,
-  residence_country text not null default ''::text,
-  residence_city text not null default ''::text,
-  description text not null default ''::text,
-  founded_on date,
-  currency text not null default 'XOF'::text,
-  fee_amount bigint not null default 0,
-  fee_due_day integer not null default 5,
-  dues_start date not null default (date_trunc('month'::text, now()))::date,
-  invite_code text not null default upper(substr(replace((gen_random_uuid())::text, '-'::text, ''::text), 1, 8)),
-  plan text not null default 'decouverte'::text,
-  created_by uuid,
-  created_at timestamp with time zone not null default now(),
-  constraint associations_pkey PRIMARY KEY (id),
-  constraint associations_invite_code_key UNIQUE (invite_code),
-  constraint associations_currency_check CHECK ((currency = ANY (ARRAY['XOF'::text, 'GNF'::text, 'EUR'::text, 'USD'::text, 'XAF'::text, 'CAD'::text, 'GBP'::text]))),
-  constraint associations_fee_amount_check CHECK ((fee_amount >= 0)),
-  constraint associations_fee_due_day_check CHECK (((fee_due_day >= 1) AND (fee_due_day <= 28))),
-  constraint associations_len CHECK (((length(origin_country) <= 80) AND (length(region) <= 80) AND (length(prefecture) <= 80) AND (length(village) <= 120) AND (length(residence_country) <= 80) AND (length(residence_city) <= 80) AND (length(description) <= 2000) AND (fee_amount <= 1000000000))) NOT VALID,
-  constraint associations_name_check CHECK (((length(TRIM(BOTH FROM name)) >= 3) AND (length(TRIM(BOTH FROM name)) <= 140))),
-  constraint associations_plan_check CHECK ((plan = ANY (ARRAY['decouverte'::text, 'association'::text, 'federation'::text])))
+create table if not exists public.associations (
+  id                uuid primary key default gen_random_uuid(),
+  name              text not null check (length(trim(name)) between 3 and 140),
+  origin_country    text not null default '',
+  region            text not null default '',
+  prefecture        text not null default '',
+  village           text not null default '',
+  residence_country text not null default '',
+  residence_city    text not null default '',
+  description       text not null default '',
+  founded_on        date,
+  currency          text not null default 'XOF' check (currency in ('XOF','GNF','EUR','USD','XAF','CAD','GBP')),
+  fee_amount        bigint not null default 0 check (fee_amount >= 0),
+  fee_due_day       int not null default 5 check (fee_due_day between 1 and 28),
+  dues_start        date not null default date_trunc('month', now())::date,
+  invite_code       text not null unique default upper(substr(replace(gen_random_uuid()::text,'-',''),1,8)),
+  plan              text not null default 'decouverte' check (plan in ('decouverte','association','federation')),
+  created_by        uuid references auth.users(id) on delete set null,
+  created_at        timestamptz not null default now()
 );
 
-create table public.members (
-  id uuid not null default gen_random_uuid(),
-  association_id uuid not null,
-  user_id uuid,
-  full_name text not null,
-  phone text not null default ''::text,
-  email text not null default ''::text,
-  city text not null default ''::text,
-  country text not null default ''::text,
-  role text not null default 'membre'::text,
-  joined_on date not null default CURRENT_DATE,
-  active boolean not null default true,
-  created_at timestamp with time zone not null default now(),
-  pending boolean not null default false,
-  created_by_join boolean not null default false,
-  constraint members_pkey PRIMARY KEY (id),
-  constraint members_full_name_check CHECK (((length(TRIM(BOTH FROM full_name)) >= 2) AND (length(TRIM(BOTH FROM full_name)) <= 120))),
-  constraint members_len CHECK (((length(phone) <= 40) AND (length(email) <= 160) AND (length(city) <= 80) AND (length(country) <= 80))) NOT VALID,
-  constraint members_role_check CHECK ((role = ANY (ARRAY['president'::text, 'vice_president'::text, 'secretaire'::text, 'tresorier'::text, 'projets'::text, 'membre'::text])))
+create table if not exists public.members (
+  id              uuid primary key default gen_random_uuid(),
+  association_id  uuid not null references public.associations(id) on delete cascade,
+  user_id         uuid references auth.users(id) on delete set null,
+  full_name       text not null check (length(trim(full_name)) between 2 and 120),
+  phone           text not null default '',
+  email           text not null default '',
+  city            text not null default '',
+  country         text not null default '',
+  role            text not null default 'membre'
+                  check (role in ('president','vice_president','secretaire','tresorier','projets','membre')),
+  joined_on       date not null default current_date,
+  active          boolean not null default true,
+  created_at      timestamptz not null default now()
+);
+create unique index if not exists members_assoc_user_uniq
+  on public.members(association_id, user_id) where user_id is not null;
+create index if not exists members_assoc_idx on public.members(association_id);
+
+create table if not exists public.projects (
+  id              uuid primary key default gen_random_uuid(),
+  association_id  uuid not null references public.associations(id) on delete cascade,
+  name            text not null check (length(trim(name)) between 3 and 140),
+  type            text not null default 'Autre',
+  description     text not null default '',
+  goal            bigint not null check (goal > 0),
+  lead_member_id  uuid references public.members(id) on delete set null,
+  status          text not null default 'En préparation'
+                  check (status in ('En préparation','En cours','Suspendu','Terminé')),
+  start_on        date not null default current_date,
+  end_on          date,
+  created_by      uuid references auth.users(id) on delete set null default auth.uid(),
+  created_at      timestamptz not null default now()
+);
+create index if not exists projects_assoc_idx on public.projects(association_id);
+
+create table if not exists public.transactions (
+  id              bigint generated always as identity primary key,
+  association_id  uuid not null references public.associations(id) on delete cascade,
+  kind            text not null check (kind in ('in','out')),
+  category        text not null check (category in (
+                    'Cotisations','Dons','Contributions exceptionnelles',
+                    'Projet','Transport','Réunion','Communication','Administration','Autres')),
+  amount          bigint not null check (amount <> 0),
+  occurred_on     date not null default current_date,
+  description     text not null check (length(trim(description)) between 2 and 300),
+  member_id       uuid references public.members(id) on delete restrict,
+  period          text check (period ~ '^\d{4}-(0[1-9]|1[0-2])$'),
+  project_id      uuid references public.projects(id) on delete restrict,
+  payment_method  text not null default '',
+  comment         text not null default '',
+  proof_path      text not null default '',
+  reversal_of     bigint unique references public.transactions(id) on delete restrict,
+  created_by      uuid references auth.users(id) on delete set null default auth.uid(),
+  created_at      timestamptz not null default now(),
+  constraint cotisation_has_member check (category <> 'Cotisations' or (member_id is not null and period is not null))
+);
+create index if not exists tx_assoc_idx on public.transactions(association_id, occurred_on desc, id desc);
+create index if not exists tx_member_idx on public.transactions(member_id, period);
+create index if not exists tx_project_idx on public.transactions(project_id);
+
+create table if not exists public.project_updates (
+  id              uuid primary key default gen_random_uuid(),
+  association_id  uuid not null references public.associations(id) on delete cascade,
+  project_id      uuid not null references public.projects(id) on delete cascade,
+  body            text not null check (length(trim(body)) between 2 and 2000),
+  created_by      uuid references auth.users(id) on delete set null default auth.uid(),
+  created_at      timestamptz not null default now()
 );
 
-create table public.projects (
-  id uuid not null default gen_random_uuid(),
-  association_id uuid not null,
-  name text not null,
-  type text not null default 'Autre'::text,
-  description text not null default ''::text,
-  goal bigint not null,
-  lead_member_id uuid,
-  status text not null default 'En préparation'::text,
-  start_on date not null default CURRENT_DATE,
-  end_on date,
-  created_by uuid default auth.uid(),
-  created_at timestamp with time zone not null default now(),
-  constraint projects_pkey PRIMARY KEY (id),
-  constraint projects_goal_check CHECK ((goal > 0)),
-  constraint projects_len CHECK (((length(type) <= 60) AND (length(description) <= 4000) AND (goal <= '1000000000000'::bigint))) NOT VALID,
-  constraint projects_name_check CHECK (((length(TRIM(BOTH FROM name)) >= 3) AND (length(TRIM(BOTH FROM name)) <= 140))),
-  constraint projects_status_check CHECK ((status = ANY (ARRAY['En préparation'::text, 'En cours'::text, 'Suspendu'::text, 'Terminé'::text])))
+create table if not exists public.announcements (
+  id              uuid primary key default gen_random_uuid(),
+  association_id  uuid not null references public.associations(id) on delete cascade,
+  kind            text not null default 'Annonce'
+                  check (kind in ('Annonce','Information','Convocation','Nouvelles du village','Urgence')),
+  title           text not null check (length(trim(title)) between 2 and 160),
+  body            text not null check (length(trim(body)) between 2 and 4000),
+  created_by      uuid references auth.users(id) on delete set null default auth.uid(),
+  created_at      timestamptz not null default now()
 );
 
-create table public.transactions (
-  id bigint generated always as identity not null,
-  association_id uuid not null,
-  kind text not null,
-  category text not null,
-  amount bigint not null,
-  occurred_on date not null default CURRENT_DATE,
-  description text not null,
-  member_id uuid,
-  period text,
-  project_id uuid,
-  payment_method text not null default ''::text,
-  comment text not null default ''::text,
-  proof_path text not null default ''::text,
-  reversal_of bigint,
-  created_by uuid default auth.uid(),
-  created_at timestamp with time zone not null default now(),
-  constraint transactions_pkey PRIMARY KEY (id),
-  constraint transactions_reversal_of_key UNIQUE (reversal_of),
-  constraint cotisation_has_member CHECK (((category <> 'Cotisations'::text) OR ((member_id IS NOT NULL) AND (period IS NOT NULL)))),
-  constraint transactions_amount_check CHECK ((amount <> 0)),
-  constraint transactions_category_check CHECK ((category = ANY (ARRAY['Cotisations'::text, 'Dons'::text, 'Contributions exceptionnelles'::text, 'Projet'::text, 'Transport'::text, 'Réunion'::text, 'Communication'::text, 'Administration'::text, 'Autres'::text]))),
-  constraint transactions_description_check CHECK (((length(TRIM(BOTH FROM description)) >= 2) AND (length(TRIM(BOTH FROM description)) <= 300))),
-  constraint transactions_kind_category CHECK ((((kind = 'in'::text) AND (category = ANY (ARRAY['Cotisations'::text, 'Dons'::text, 'Contributions exceptionnelles'::text, 'Autres'::text]))) OR ((kind = 'out'::text) AND (category = ANY (ARRAY['Projet'::text, 'Transport'::text, 'Réunion'::text, 'Communication'::text, 'Administration'::text, 'Autres'::text]))))) NOT VALID,
-  constraint transactions_kind_check CHECK ((kind = ANY (ARRAY['in'::text, 'out'::text]))),
-  constraint transactions_len CHECK (((length(payment_method) <= 40) AND (length(comment) <= 500) AND (length(proof_path) <= 300) AND (abs(amount) <= '1000000000000'::bigint))) NOT VALID,
-  constraint transactions_period_check CHECK ((period ~ '^\d{4}-(0[1-9]|1[0-2])$'::text))
+create table if not exists public.activity_log (
+  id              bigint generated always as identity primary key,
+  association_id  uuid not null references public.associations(id) on delete cascade,
+  actor_id        uuid,
+  actor_label     text not null default '',
+  message         text not null,
+  created_at      timestamptz not null default now()
 );
+create index if not exists log_assoc_idx on public.activity_log(association_id, id desc);
 
-create table public.project_updates (
-  id uuid not null default gen_random_uuid(),
-  association_id uuid not null,
-  project_id uuid not null,
-  body text not null,
-  created_by uuid default auth.uid(),
-  created_at timestamp with time zone not null default now(),
-  constraint project_updates_pkey PRIMARY KEY (id),
-  constraint project_updates_body_check CHECK (((length(TRIM(BOTH FROM body)) >= 2) AND (length(TRIM(BOTH FROM body)) <= 2000)))
-);
+-- ---------------------------------------------------------------------
+-- Durcissement (version 1.1). Rejouable sur une base déjà créée.
+-- ---------------------------------------------------------------------
 
-create table public.announcements (
-  id uuid not null default gen_random_uuid(),
-  association_id uuid not null,
-  kind text not null default 'Annonce'::text,
-  title text not null,
-  body text not null,
-  created_by uuid default auth.uid(),
-  created_at timestamp with time zone not null default now(),
-  constraint announcements_pkey PRIMARY KEY (id),
-  constraint announcements_body_check CHECK (((length(TRIM(BOTH FROM body)) >= 2) AND (length(TRIM(BOTH FROM body)) <= 4000))),
-  constraint announcements_kind_check CHECK ((kind = ANY (ARRAY['Annonce'::text, 'Information'::text, 'Convocation'::text, 'Nouvelles du village'::text, 'Urgence'::text]))),
-  constraint announcements_title_check CHECK (((length(TRIM(BOTH FROM title)) >= 2) AND (length(TRIM(BOTH FROM title)) <= 160)))
-);
+-- Une adhésion par code reste « en attente » jusqu'à validation par le bureau.
+alter table public.members add column if not exists pending boolean not null default false;
+alter table public.members add column if not exists created_by_join boolean not null default false;
 
-create table public.activity_log (
-  id bigint generated always as identity not null,
-  association_id uuid not null,
-  actor_id uuid,
-  actor_label text not null default ''::text,
-  message text not null,
-  created_at timestamp with time zone not null default now(),
-  constraint activity_log_pkey PRIMARY KEY (id)
-);
+-- Tailles maximales (évite qu'on remplisse la base de textes géants).
+alter table public.associations drop constraint if exists associations_len;
+alter table public.associations add constraint associations_len check (
+  length(origin_country) <= 80 and length(region) <= 80 and length(prefecture) <= 80 and length(village) <= 120
+  and length(residence_country) <= 80 and length(residence_city) <= 80 and length(description) <= 2000
+  and fee_amount <= 1000000000) not valid;
+alter table public.members drop constraint if exists members_len;
+alter table public.members add constraint members_len check (
+  length(phone) <= 40 and length(email) <= 160 and length(city) <= 80 and length(country) <= 80) not valid;
+alter table public.projects drop constraint if exists projects_len;
+alter table public.projects add constraint projects_len check (
+  length(type) <= 60 and length(description) <= 4000 and goal <= 1000000000000) not valid;
+alter table public.transactions drop constraint if exists transactions_len;
+alter table public.transactions add constraint transactions_len check (
+  length(payment_method) <= 40 and length(comment) <= 500 and length(proof_path) <= 300
+  and abs(amount) <= 1000000000000) not valid;
 
-create table public.messages (
-  id bigint generated always as identity not null,
-  association_id uuid not null,
-  kind text not null default 'Message'::text,
-  body text not null,
-  author_id uuid default auth.uid(),
-  author_label text not null default ''::text,
-  hidden boolean not null default false,
-  hidden_by text not null default ''::text,
-  created_at timestamp with time zone not null default now(),
-  constraint messages_pkey PRIMARY KEY (id),
-  constraint messages_body_check CHECK (((length(TRIM(BOTH FROM body)) >= 1) AND (length(TRIM(BOTH FROM body)) <= 1000))),
-  constraint messages_kind_check CHECK ((kind = ANY (ARRAY['Message'::text, 'Idée'::text, 'Réclamation'::text])))
-);
+-- Une recette n'a que des catégories de recette, une dépense que des catégories de dépense.
+-- (Sinon une « dépense » classée Cotisations compterait comme une cotisation payée.)
+alter table public.transactions drop constraint if exists transactions_kind_category;
+alter table public.transactions add constraint transactions_kind_category check (
+  (kind = 'in'  and category in ('Cotisations','Dons','Contributions exceptionnelles','Autres')) or
+  (kind = 'out' and category in ('Projet','Transport','Réunion','Communication','Administration','Autres'))) not valid;
 
-create table public.meetings (
-  id uuid not null default gen_random_uuid(),
-  association_id uuid not null,
-  title text not null,
-  starts_at timestamp with time zone not null,
-  place text not null default ''::text,
-  agenda text not null default ''::text,
-  status text not null default 'Prévue'::text,
-  minutes text not null default ''::text,
-  created_by uuid default auth.uid(),
-  created_label text not null default ''::text,
-  created_at timestamp with time zone not null default now(),
-  updated_at timestamp with time zone not null default now(),
-  constraint meetings_pkey PRIMARY KEY (id),
-  constraint meetings_agenda_check CHECK ((length(agenda) <= 4000)),
-  constraint meetings_minutes_check CHECK ((length(minutes) <= 20000)),
-  constraint meetings_place_check CHECK ((length(place) <= 200)),
-  constraint meetings_status_check CHECK ((status = ANY (ARRAY['Prévue'::text, 'Tenue'::text, 'Annulée'::text]))),
-  constraint meetings_title_check CHECK (((length(TRIM(BOTH FROM title)) >= 2) AND (length(TRIM(BOTH FROM title)) <= 160)))
-);
+-- ---------------------------------------------------------------------
+-- Fonctions d'aide (SECURITY DEFINER : elles lisent members sans RLS)
+-- ---------------------------------------------------------------------
 
-create table public.meeting_attendance (
-  meeting_id uuid not null,
-  member_id uuid not null,
-  association_id uuid not null,
-  present boolean not null,
-  marked_by text not null default ''::text,
-  marked_at timestamp with time zone not null default now(),
-  constraint meeting_attendance_pkey PRIMARY KEY (meeting_id, member_id)
-);
+create or replace function public.is_member(assoc uuid) returns boolean
+language sql stable security definer set search_path = public as $$
+  select exists (select 1 from members m
+                 where m.association_id = assoc and m.user_id = auth.uid() and m.active and not m.pending);
+$$;
 
--- 2. Clés étrangères
+create or replace function public.has_role(assoc uuid, roles text[]) returns boolean
+language sql stable security definer set search_path = public as $$
+  select exists (select 1 from members m
+                 where m.association_id = assoc and m.user_id = auth.uid()
+                   and m.active and not m.pending and m.role = any(roles));
+$$;
 
-alter table only public.activity_log add constraint activity_log_association_id_fkey FOREIGN KEY (association_id) REFERENCES associations(id) ON DELETE CASCADE;
+create or replace function public.actor_label(assoc uuid) returns text
+language sql stable security definer set search_path = public as $$
+  select coalesce(
+    (select m.full_name || ' (' || case m.role
+        when 'president' then 'président'
+        when 'vice_president' then 'vice-président'
+        when 'secretaire' then 'secrétaire général'
+        when 'tresorier' then 'trésorier'
+        when 'projets' then 'responsable des projets'
+        else 'membre' end || ')'
+     from members m where m.association_id = assoc and m.user_id = auth.uid() limit 1),
+    'Système');
+$$;
 
-alter table only public.announcements add constraint announcements_association_id_fkey FOREIGN KEY (association_id) REFERENCES associations(id) ON DELETE CASCADE;
+create or replace function public.fmt_money(amount bigint, cur text) returns text
+language sql immutable as $$
+  select replace(to_char(abs(amount), 'FM999,999,999,999,990'), ',', ' ') || ' ' ||
+         case cur when 'XOF' then 'FCFA' when 'XAF' then 'FCFA' when 'GNF' then 'GNF' else cur end;
+$$;
 
-alter table only public.announcements add constraint announcements_created_by_fkey FOREIGN KEY (created_by) REFERENCES auth.users(id) ON DELETE SET NULL;
+create or replace function public.write_log(assoc uuid, msg text) returns void
+language sql security definer set search_path = public as $$
+  insert into activity_log(association_id, actor_id, actor_label, message)
+  values (assoc, auth.uid(), actor_label(assoc), msg);
+$$;
+revoke execute on function public.write_log(uuid, text) from public, anon, authenticated;
 
-alter table only public.associations add constraint associations_created_by_fkey FOREIGN KEY (created_by) REFERENCES auth.users(id) ON DELETE SET NULL;
+-- ---------------------------------------------------------------------
+-- Règles d'intégrité (triggers)
+-- ---------------------------------------------------------------------
 
-alter table only public.meeting_attendance add constraint meeting_attendance_association_id_fkey FOREIGN KEY (association_id) REFERENCES associations(id) ON DELETE CASCADE;
-
-alter table only public.meeting_attendance add constraint meeting_attendance_meeting_id_fkey FOREIGN KEY (meeting_id) REFERENCES meetings(id) ON DELETE CASCADE;
-
-alter table only public.meeting_attendance add constraint meeting_attendance_member_id_fkey FOREIGN KEY (member_id) REFERENCES members(id) ON DELETE CASCADE;
-
-alter table only public.meetings add constraint meetings_association_id_fkey FOREIGN KEY (association_id) REFERENCES associations(id) ON DELETE CASCADE;
-
-alter table only public.members add constraint members_association_id_fkey FOREIGN KEY (association_id) REFERENCES associations(id) ON DELETE CASCADE;
-
-alter table only public.members add constraint members_user_id_fkey FOREIGN KEY (user_id) REFERENCES auth.users(id) ON DELETE SET NULL;
-
-alter table only public.messages add constraint messages_association_id_fkey FOREIGN KEY (association_id) REFERENCES associations(id) ON DELETE CASCADE;
-
-alter table only public.project_updates add constraint project_updates_association_id_fkey FOREIGN KEY (association_id) REFERENCES associations(id) ON DELETE CASCADE;
-
-alter table only public.project_updates add constraint project_updates_created_by_fkey FOREIGN KEY (created_by) REFERENCES auth.users(id) ON DELETE SET NULL;
-
-alter table only public.project_updates add constraint project_updates_project_id_fkey FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE;
-
-alter table only public.projects add constraint projects_association_id_fkey FOREIGN KEY (association_id) REFERENCES associations(id) ON DELETE CASCADE;
-
-alter table only public.projects add constraint projects_created_by_fkey FOREIGN KEY (created_by) REFERENCES auth.users(id) ON DELETE SET NULL;
-
-alter table only public.projects add constraint projects_lead_member_id_fkey FOREIGN KEY (lead_member_id) REFERENCES members(id) ON DELETE SET NULL;
-
-alter table only public.transactions add constraint transactions_association_id_fkey FOREIGN KEY (association_id) REFERENCES associations(id) ON DELETE CASCADE;
-
-alter table only public.transactions add constraint transactions_created_by_fkey FOREIGN KEY (created_by) REFERENCES auth.users(id) ON DELETE SET NULL;
-
-alter table only public.transactions add constraint transactions_member_id_fkey FOREIGN KEY (member_id) REFERENCES members(id) ON DELETE RESTRICT;
-
-alter table only public.transactions add constraint transactions_project_id_fkey FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE RESTRICT;
-
-alter table only public.transactions add constraint transactions_reversal_of_fkey FOREIGN KEY (reversal_of) REFERENCES transactions(id) ON DELETE RESTRICT;
-
--- 3. Index
-
-CREATE INDEX attendance_assoc_idx ON public.meeting_attendance USING btree (association_id);
-
-CREATE INDEX log_assoc_idx ON public.activity_log USING btree (association_id, id DESC);
-
-CREATE INDEX meetings_assoc_idx ON public.meetings USING btree (association_id, starts_at DESC);
-
-CREATE INDEX members_assoc_idx ON public.members USING btree (association_id);
-
-CREATE UNIQUE INDEX members_assoc_user_uniq ON public.members USING btree (association_id, user_id) WHERE (user_id IS NOT NULL);
-
-CREATE INDEX messages_assoc_idx ON public.messages USING btree (association_id, id DESC);
-
-CREATE INDEX projects_assoc_idx ON public.projects USING btree (association_id);
-
-CREATE INDEX tx_assoc_idx ON public.transactions USING btree (association_id, occurred_on DESC, id DESC);
-
-CREATE INDEX tx_member_idx ON public.transactions USING btree (member_id, period);
-
-CREATE INDEX tx_project_idx ON public.transactions USING btree (project_id);
-
--- 4. Fonctions
-
-CREATE OR REPLACE FUNCTION public.actor_label(assoc uuid)
- RETURNS text
- LANGUAGE sql
- STABLE SECURITY DEFINER
- SET search_path TO 'public'
-AS $function$
-select coalesce(
-(select m.full_name || ' (' || case m.role
-when 'president' then 'président'
-when 'vice_president' then 'vice-président'
-when 'secretaire' then 'secrétaire général'
-when 'tresorier' then 'trésorier'
-when 'projets' then 'responsable des projets'
-else 'membre' end || ')'
-from members m where m.association_id = assoc and m.user_id = auth.uid() limit 1),
-'Système');
-$function$;
-
-CREATE OR REPLACE FUNCTION public.associations_guard()
- RETURNS trigger
- LANGUAGE plpgsql
-AS $function$
+-- Registre et journal : jamais de modification ni de suppression.
+create or replace function public.forbid_change() returns trigger
+language plpgsql as $$
 begin
-if new.invite_code <> old.invite_code and coalesce(current_setting('vl.system', true), '') <> 'on' then
-raise exception 'Le code d''invitation se change avec la fonction prévue.';
-end if;
-if new.plan <> old.plan and coalesce(current_setting('vl.system', true), '') <> 'on' then
-raise exception 'L''offre se change par VillageLink.';
-end if;
-return new;
-end
-$function$;
+  raise exception 'Cette ligne est définitive. Corrigez par une contre-écriture.' using errcode = '42501';
+end $$;
 
-CREATE OR REPLACE FUNCTION public.attendance_check()
- RETURNS trigger
- LANGUAGE plpgsql
- SECURITY DEFINER
- SET search_path TO 'public'
-AS $function$
-declare assoc uuid;
+drop trigger if exists tx_no_update on public.transactions;
+create trigger tx_no_update before update or delete on public.transactions
+  for each row execute function public.forbid_change();
+drop trigger if exists log_no_update on public.activity_log;
+create trigger log_no_update before update or delete on public.activity_log
+  for each row execute function public.forbid_change();
+
+-- Une opération ne peut viser qu'un membre ou un projet de la même association,
+-- et une contre-écriture ne passe que par reverse_transaction().
+create or replace function public.tx_check() returns trigger
+language plpgsql security definer set search_path = public as $$
 begin
-select association_id into assoc from meetings where id = new.meeting_id;
-if assoc is null then raise exception 'Réunion introuvable.'; end if;
-if not exists (select 1 from members where id = new.member_id and association_id = assoc) then
-raise exception 'Membre inconnu dans cette association.';
-end if;
-new.association_id := assoc;
-new.marked_by := actor_label(assoc);
-new.marked_at := now();
-return new;
-end
-$function$;
+  if new.member_id is not null and not exists
+     (select 1 from members where id = new.member_id and association_id = new.association_id) then
+    raise exception 'Membre inconnu dans cette association.';
+  end if;
+  if new.project_id is not null and not exists
+     (select 1 from projects where id = new.project_id and association_id = new.association_id) then
+    raise exception 'Projet inconnu dans cette association.';
+  end if;
+  if new.proof_path <> '' and (new.proof_path not like new.association_id::text || '/%' or new.proof_path like '%..%') then
+    raise exception 'Justificatif invalide.';
+  end if;
+  if new.reversal_of is null and new.amount <= 0 then
+    raise exception 'Le montant doit être supérieur à 0.';
+  end if;
+  if new.reversal_of is not null and coalesce(current_setting('vl.reversing', true), '') <> 'on' then
+    raise exception 'Une contre-écriture passe par la fonction prévue.';
+  end if;
+  new.created_by := auth.uid();
+  new.created_at := now();
+  return new;
+end $$;
+drop trigger if exists tx_check on public.transactions;
+create trigger tx_check before insert on public.transactions
+  for each row execute function public.tx_check();
 
-CREATE OR REPLACE FUNCTION public.content_log()
- RETURNS trigger
- LANGUAGE plpgsql
- SECURITY DEFINER
- SET search_path TO 'public'
-AS $function$
-declare cur text; pname text;
-begin
-if tg_table_name = 'projects' then
-select currency into cur from associations where id = new.association_id;
-if tg_op = 'INSERT' then
-perform write_log(new.association_id, format('a créé le projet « %s » (objectif %s).', new.name, fmt_money(new.goal, cur)));
-elsif new.status <> old.status then
-perform write_log(new.association_id, format('a changé le statut de « %s » : %s → %s.', new.name, old.status, new.status));
-end if;
-elsif tg_table_name = 'project_updates' then
-select name into pname from projects where id = new.project_id;
-perform write_log(new.association_id, format('a publié une mise à jour sur « %s ».', pname));
-elsif tg_table_name = 'announcements' then
-perform write_log(new.association_id, format('a publié l''annonce « %s ».', new.title));
-end if;
-return null;
-end
-$function$;
-
-CREATE OR REPLACE FUNCTION public.create_association(p_name text, p_full_name text, p_phone text, p_origin_country text, p_region text, p_prefecture text, p_village text, p_residence_country text, p_residence_city text, p_currency text, p_fee_amount bigint, p_fee_due_day integer)
- RETURNS uuid
- LANGUAGE plpgsql
- SECURITY DEFINER
- SET search_path TO 'public'
-AS $function$
-declare a uuid;
-begin
-if auth.uid() is null then raise exception 'Connexion requise.'; end if;
-if (select count(*) from associations where created_by = auth.uid()) >= 10 then
-raise exception 'Limite de 10 associations créées par compte.';
-end if;
-insert into associations(name, origin_country, region, prefecture, village,
-residence_country, residence_city, currency, fee_amount, fee_due_day, created_by)
-values (trim(p_name), trim(p_origin_country), trim(p_region), trim(p_prefecture), trim(p_village),
-trim(p_residence_country), trim(p_residence_city), p_currency, greatest(p_fee_amount, 0),
-least(greatest(p_fee_due_day, 1), 28), auth.uid())
-returning id into a;
-perform set_config('vl.system', 'on', true);
-insert into members(association_id, user_id, full_name, phone, city, country, role)
-values (a, auth.uid(), trim(p_full_name), trim(p_phone), trim(p_residence_city), trim(p_residence_country), 'president');
-perform set_config('vl.system', 'off', true);
-perform write_log(a, format('a créé l''association « %s ».', trim(p_name)));
-return a;
-end
-$function$;
-
-CREATE OR REPLACE FUNCTION public.fmt_money(amount bigint, cur text)
- RETURNS text
- LANGUAGE sql
- IMMUTABLE
-AS $function$
-select replace(to_char(abs(amount), 'FM999,999,999,999,990'), ',', ' ') || ' ' ||
-case cur when 'XOF' then 'FCFA' when 'XAF' then 'FCFA' when 'GNF' then 'GNF' else cur end;
-$function$;
-
-CREATE OR REPLACE FUNCTION public.forbid_change()
- RETURNS trigger
- LANGUAGE plpgsql
-AS $function$
-begin
-raise exception 'Cette ligne est définitive. Corrigez par une contre-écriture.' using errcode = '42501';
-end
-$function$;
-
-CREATE OR REPLACE FUNCTION public.force_creator()
- RETURNS trigger
- LANGUAGE plpgsql
-AS $function$
-begin
-new.created_by := auth.uid();
-return new;
-end
-$function$;
-
-CREATE OR REPLACE FUNCTION public.has_role(assoc uuid, roles text[])
- RETURNS boolean
- LANGUAGE sql
- STABLE SECURITY DEFINER
- SET search_path TO 'public'
-AS $function$
-select exists (select 1 from members m
-where m.association_id = assoc and m.user_id = auth.uid()
-and m.active and not m.pending and m.role = any(roles));
-$function$;
-
-CREATE OR REPLACE FUNCTION public.hide_message(p_id bigint)
- RETURNS void
- LANGUAGE plpgsql
- SECURITY DEFINER
- SET search_path TO 'public'
-AS $function$
-declare m messages;
-begin
-select * into m from messages where id = p_id;
-if m.id is null or not is_member(m.association_id) then raise exception 'Message introuvable.'; end if;
-if m.author_id is distinct from auth.uid() and not has_role(m.association_id, array['president','vice_president','secretaire']) then
-raise exception 'Seuls l''auteur, le président, le vice-président ou le secrétaire peuvent masquer un message.';
-end if;
-update messages set hidden = true, body = 'Message masqué', hidden_by = actor_label(m.association_id) where id = p_id;
-if m.author_id is distinct from auth.uid() then
-perform write_log(m.association_id, format('a masqué un message de %s dans la discussion.', m.author_label));
-end if;
-end
-$function$;
-
-CREATE OR REPLACE FUNCTION public.is_member(assoc uuid)
- RETURNS boolean
- LANGUAGE sql
- STABLE SECURITY DEFINER
- SET search_path TO 'public'
-AS $function$
-select exists (select 1 from members m
-where m.association_id = assoc and m.user_id = auth.uid() and m.active and not m.pending);
-$function$;
-
-CREATE OR REPLACE FUNCTION public.join_association(p_code text, p_full_name text, p_phone text)
- RETURNS uuid
- LANGUAGE plpgsql
- SECURITY DEFINER
- SET search_path TO 'public'
-AS $function$
-declare a uuid; m uuid; digits text := regexp_replace(coalesce(p_phone,''), '\D', '', 'g');
-begin
-if auth.uid() is null then raise exception 'Connexion requise.'; end if;
-if length(trim(coalesce(p_full_name,''))) < 2 then raise exception 'Saisissez votre nom complet.'; end if;
-select id into a from associations where invite_code = upper(trim(p_code));
-if a is null then raise exception 'Code d''invitation inconnu. Vérifiez-le auprès du bureau.'; end if;
-if exists (select 1 from members where association_id = a and user_id = auth.uid()) then
-return a;
-end if;
-perform set_config('vl.system', 'on', true);
-if length(digits) >= 8 then
-select id into m from members
-where association_id = a and user_id is null and role = 'membre' and active
-and right(regexp_replace(phone, '\D', '', 'g'), 9) = right(digits, 9)
-limit 1;
-end if;
-if m is not null then
-update members set user_id = auth.uid(), pending = true where id = m;
-else
-insert into members(association_id, user_id, full_name, phone, role, pending, created_by_join)
-values (a, auth.uid(), left(trim(p_full_name), 120), left(trim(p_phone), 40), 'membre', true, true);
-end if;
-perform set_config('vl.system', 'off', true);
-perform write_log(a, format('a demandé à rejoindre l''association (%s).', left(trim(p_full_name), 120)));
-return a;
-end
-$function$;
-
-CREATE OR REPLACE FUNCTION public.meetings_guard()
- RETURNS trigger
- LANGUAGE plpgsql
- SECURITY DEFINER
- SET search_path TO 'public'
-AS $function$
-begin
-if tg_op = 'INSERT' then
-new.created_by := auth.uid();
-new.created_label := actor_label(new.association_id);
-new.created_at := now();
-else
-new.association_id := old.association_id;
-new.created_by := old.created_by;
-new.created_label := old.created_label;
-new.created_at := old.created_at;
-end if;
-new.updated_at := now();
-return new;
-end
-$function$;
-
-CREATE OR REPLACE FUNCTION public.meetings_log()
- RETURNS trigger
- LANGUAGE plpgsql
- SECURITY DEFINER
- SET search_path TO 'public'
-AS $function$
-declare d text := to_char(new.starts_at at time zone 'UTC', 'DD/MM/YYYY');
-begin
-if tg_op = 'INSERT' then
-perform write_log(new.association_id, format('a convoqué la réunion « %s » du %s.', new.title, d));
-return new;
-end if;
-if new.status <> old.status then
-perform write_log(new.association_id, format('a marqué la réunion « %s » comme %s.', new.title,
-case new.status when 'Tenue' then 'tenue' when 'Annulée' then 'annulée' else 'prévue' end));
-end if;
-if new.minutes <> old.minutes and new.minutes <> '' then
-perform write_log(new.association_id, format('a %s le compte rendu de la réunion « %s ».',
-case when old.minutes = '' then 'publié' else 'modifié' end, new.title));
-end if;
-if new.starts_at <> old.starts_at or new.place <> old.place or new.title <> old.title or new.agenda <> old.agenda then
-perform write_log(new.association_id, format('a modifié la convocation de la réunion « %s » (nouvelle date : %s).', new.title, d));
-end if;
-return new;
-end
-$function$;
-
-CREATE OR REPLACE FUNCTION public.members_guard()
- RETURNS trigger
- LANGUAGE plpgsql
- SECURITY DEFINER
- SET search_path TO 'public'
-AS $function$
-begin
-if coalesce(current_setting('vl.system', true), '') = 'on' then
-return new;
-end if;
-if tg_op = 'INSERT' then
-if new.role <> 'membre' and not has_role(new.association_id, array['president']) then
-raise exception 'Seul le président attribue un rôle du bureau.';
-end if;
-new.user_id := null;           -- un compte se relie par le code d'invitation, pas à la main
-new.pending := false;
-new.created_by_join := false;
-return new;
-end if;
-if new.association_id <> old.association_id then
-raise exception 'Un membre ne change pas d''association.';
-end if;
-if new.user_id is distinct from old.user_id or new.pending <> old.pending
-or new.created_by_join <> old.created_by_join then
-raise exception 'Le compte lié et l''adhésion se gèrent avec les fonctions prévues.';
-end if;
-if (old.role <> 'membre' or new.role <> 'membre') and not has_role(new.association_id, array['president']) then
-raise exception 'Seul le président modifie la fiche d''un membre du bureau.';
-end if;
-if new.role <> old.role and old.role = 'president' and not exists (
-select 1 from members where association_id = old.association_id
-and role = 'president' and active and not pending and id <> old.id) then
-raise exception 'L''association doit garder un président. Nommez-en un autre d''abord.';
-end if;
-if old.role = 'president' and old.active and not new.active and not exists (
-select 1 from members where association_id = old.association_id
-and role = 'president' and active and not pending and id <> old.id) then
-raise exception 'L''association doit garder un président actif.';
-end if;
-return new;
-end
-$function$;
-
-CREATE OR REPLACE FUNCTION public.members_log()
- RETURNS trigger
- LANGUAGE plpgsql
- SECURITY DEFINER
- SET search_path TO 'public'
-AS $function$
-begin
-if coalesce(current_setting('vl.system', true), '') = 'on' then return null; end if;
-if tg_op = 'INSERT' then
-perform write_log(new.association_id, format('a ajouté %s comme membre.', new.full_name));
-elsif new.role <> old.role then
-perform write_log(new.association_id, format('a changé le rôle de %s.', new.full_name));
-elsif new.active <> old.active then
-perform write_log(new.association_id, format('a %s %s.',
-case when new.active then 'réactivé' else 'désactivé' end, new.full_name));
-end if;
-return null;
-end
-$function$;
-
-CREATE OR REPLACE FUNCTION public.messages_check()
- RETURNS trigger
- LANGUAGE plpgsql
- SECURITY DEFINER
- SET search_path TO 'public'
-AS $function$
-begin
-new.author_id := auth.uid();
-new.author_label := actor_label(new.association_id);
-new.hidden := false;
-new.hidden_by := '';
-new.created_at := now();
-return new;
-end
-$function$;
-
-CREATE OR REPLACE FUNCTION public.my_memberships()
- RETURNS TABLE(association_id uuid, name text, village text, residence_city text, pending boolean, active boolean)
- LANGUAGE sql
- STABLE SECURITY DEFINER
- SET search_path TO 'public'
-AS $function$
-select a.id, a.name, a.village, a.residence_city, m.pending, m.active
-from members m join associations a on a.id = m.association_id
-where m.user_id = auth.uid()
-order by a.created_at;
-$function$;
-
-CREATE OR REPLACE FUNCTION public.project_update_check()
- RETURNS trigger
- LANGUAGE plpgsql
- SECURITY DEFINER
- SET search_path TO 'public'
-AS $function$
-begin
-if not exists (select 1 from projects where id = new.project_id and association_id = new.association_id) then
-raise exception 'Projet inconnu dans cette association.';
-end if;
-new.created_by := auth.uid();
-return new;
-end
-$function$;
-
-CREATE OR REPLACE FUNCTION public.projects_guard()
- RETURNS trigger
- LANGUAGE plpgsql
- SECURITY DEFINER
- SET search_path TO 'public'
-AS $function$
-begin
-if tg_op = 'UPDATE' and new.association_id <> old.association_id then
-raise exception 'Un projet ne change pas d''association.';
-end if;
-if new.lead_member_id is not null and not exists
-(select 1 from members where id = new.lead_member_id and association_id = new.association_id) then
-raise exception 'Responsable inconnu dans cette association.';
-end if;
-return new;
-end
-$function$;
-
-CREATE OR REPLACE FUNCTION public.regenerate_invite_code(p_assoc uuid)
- RETURNS text
- LANGUAGE plpgsql
- SECURITY DEFINER
- SET search_path TO 'public'
-AS $function$
-declare c text := upper(substr(replace(gen_random_uuid()::text,'-',''),1,8));
-begin
-if not has_role(p_assoc, array['president']) then raise exception 'Réservé au président.'; end if;
-perform set_config('vl.system', 'on', true);
-update associations set invite_code = c where id = p_assoc;
-perform set_config('vl.system', 'off', true);
-return c;
-end
-$function$;
-
-CREATE OR REPLACE FUNCTION public.reverse_transaction(p_id bigint, p_reason text)
- RETURNS bigint
- LANGUAGE plpgsql
- SECURITY DEFINER
- SET search_path TO 'public'
-AS $function$
-declare t transactions; new_id bigint;
-begin
-select * into t from transactions where id = p_id;
-if t.id is null then raise exception 'Opération introuvable.'; end if;
-if not has_role(t.association_id, array['tresorier']) then
-raise exception 'Seul le trésorier peut annuler une opération.';
-end if;
-if t.reversal_of is not null then raise exception 'Une contre-écriture ne s''annule pas.'; end if;
-if exists (select 1 from transactions where reversal_of = p_id) then
-raise exception 'Cette opération est déjà annulée.';
-end if;
-if length(trim(coalesce(p_reason,''))) < 4 then raise exception 'Indiquez le motif de l''annulation.'; end if;
-perform set_config('vl.reversing', 'on', true);
-insert into transactions(association_id, kind, category, amount, occurred_on, description,
-member_id, period, project_id, payment_method, comment, reversal_of)
-values (t.association_id, t.kind, t.category, -t.amount, current_date,
-'Contre-écriture de TX-' || lpad(t.id::text, 5, '0'),
-t.member_id, t.period, t.project_id, '', trim(p_reason), t.id)
-returning id into new_id;
-perform set_config('vl.reversing', 'off', true);
-return new_id;
-end
-$function$;
-
-CREATE OR REPLACE FUNCTION public.review_join(p_member uuid, p_accept boolean)
- RETURNS void
- LANGUAGE plpgsql
- SECURITY DEFINER
- SET search_path TO 'public'
-AS $function$
-declare m members;
-begin
-select * into m from members where id = p_member;
-if m.id is null or not has_role(m.association_id, array['president','vice_president','secretaire','tresorier']) then
-raise exception 'Réservé au bureau.';
-end if;
-if not m.pending then raise exception 'Cette demande a déjà été traitée.'; end if;
-perform set_config('vl.system', 'on', true);
-if p_accept then
-update members set pending = false where id = m.id;
-elsif m.created_by_join then
-update members set pending = false, active = false, user_id = null where id = m.id;
-else
-update members set pending = false, user_id = null where id = m.id;
-end if;
-perform set_config('vl.system', 'off', true);
-perform write_log(m.association_id, format('a %s la demande d''adhésion de %s.',
-case when p_accept then 'validé' else 'refusé' end, m.full_name));
-end
-$function$;
-
-CREATE OR REPLACE FUNCTION public.tx_check()
- RETURNS trigger
- LANGUAGE plpgsql
- SECURITY DEFINER
- SET search_path TO 'public'
-AS $function$
-begin
-if new.member_id is not null and not exists
-(select 1 from members where id = new.member_id and association_id = new.association_id) then
-raise exception 'Membre inconnu dans cette association.';
-end if;
-if new.project_id is not null and not exists
-(select 1 from projects where id = new.project_id and association_id = new.association_id) then
-raise exception 'Projet inconnu dans cette association.';
-end if;
-if new.proof_path <> '' and (new.proof_path not like new.association_id::text || '/%' or new.proof_path like '%..%') then
-raise exception 'Justificatif invalide.';
-end if;
-if new.reversal_of is null and new.amount <= 0 then
-raise exception 'Le montant doit être supérieur à 0.';
-end if;
-if new.reversal_of is not null and coalesce(current_setting('vl.reversing', true), '') <> 'on' then
-raise exception 'Une contre-écriture passe par la fonction prévue.';
-end if;
-new.created_by := auth.uid();
-new.created_at := now();
-return new;
-end
-$function$;
-
-CREATE OR REPLACE FUNCTION public.tx_log()
- RETURNS trigger
- LANGUAGE plpgsql
- SECURITY DEFINER
- SET search_path TO 'public'
-AS $function$
+create or replace function public.tx_log() returns trigger
+language plpgsql security definer set search_path = public as $$
 declare cur text; who text;
 begin
-select currency into cur from associations where id = new.association_id;
-if new.reversal_of is not null then
-perform write_log(new.association_id, format('a annulé l''opération TX-%s (%s) par contre-écriture. Motif : %s',
-lpad(new.reversal_of::text, 5, '0'), fmt_money(new.amount, cur), new.comment));
-elsif new.category = 'Cotisations' then
-select full_name into who from members where id = new.member_id;
-perform write_log(new.association_id, format('a enregistré une cotisation de %s de %s (%s).',
-fmt_money(new.amount, cur), who, new.period));
-else
-perform write_log(new.association_id, format('a enregistré %s de %s : %s.',
-case new.kind when 'in' then 'une recette' else 'une dépense' end,
-fmt_money(new.amount, cur), new.description));
-end if;
-return null;
-end
-$function$;
+  select currency into cur from associations where id = new.association_id;
+  if new.reversal_of is not null then
+    perform write_log(new.association_id, format('a annulé l''opération TX-%s (%s) par contre-écriture. Motif : %s',
+      lpad(new.reversal_of::text, 5, '0'), fmt_money(new.amount, cur), new.comment));
+  elsif new.category = 'Cotisations' then
+    select full_name into who from members where id = new.member_id;
+    perform write_log(new.association_id, format('a enregistré une cotisation de %s de %s (%s).',
+      fmt_money(new.amount, cur), who, new.period));
+  else
+    perform write_log(new.association_id, format('a enregistré %s de %s : %s.',
+      case new.kind when 'in' then 'une recette' else 'une dépense' end,
+      fmt_money(new.amount, cur), new.description));
+  end if;
+  return null;
+end $$;
+drop trigger if exists tx_log on public.transactions;
+create trigger tx_log after insert on public.transactions
+  for each row execute function public.tx_log();
 
-CREATE OR REPLACE FUNCTION public.write_log(assoc uuid, msg text)
- RETURNS void
- LANGUAGE sql
- SECURITY DEFINER
- SET search_path TO 'public'
-AS $function$
-insert into activity_log(association_id, actor_id, actor_label, message)
-values (assoc, auth.uid(), actor_label(assoc), msg);
-$function$;
+-- Membres : seul le président attribue les rôles ; on garde toujours un président ;
+-- l'association et le compte lié ne changent pas par une simple modification.
+create or replace function public.members_guard() returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  if coalesce(current_setting('vl.system', true), '') = 'on' then
+    return new;
+  end if;
+  if tg_op = 'INSERT' then
+    if new.role <> 'membre' and not has_role(new.association_id, array['president']) then
+      raise exception 'Seul le président attribue un rôle du bureau.';
+    end if;
+    new.user_id := null;           -- un compte se relie par le code d'invitation, pas à la main
+    new.pending := false;
+    new.created_by_join := false;
+    return new;
+  end if;
+  if new.association_id <> old.association_id then
+    raise exception 'Un membre ne change pas d''association.';
+  end if;
+  if new.user_id is distinct from old.user_id or new.pending <> old.pending
+     or new.created_by_join <> old.created_by_join then
+    raise exception 'Le compte lié et l''adhésion se gèrent avec les fonctions prévues.';
+  end if;
+  -- Seul le président touche à la fiche d'un membre du bureau ou donne un rôle.
+  if (old.role <> 'membre' or new.role <> 'membre') and not has_role(new.association_id, array['president']) then
+    raise exception 'Seul le président modifie la fiche d''un membre du bureau.';
+  end if;
+  if new.role <> old.role and old.role = 'president' and not exists (
+     select 1 from members where association_id = old.association_id
+       and role = 'president' and active and not pending and id <> old.id) then
+    raise exception 'L''association doit garder un président. Nommez-en un autre d''abord.';
+  end if;
+  if old.role = 'president' and old.active and not new.active and not exists (
+     select 1 from members where association_id = old.association_id
+       and role = 'president' and active and not pending and id <> old.id) then
+    raise exception 'L''association doit garder un président actif.';
+  end if;
+  return new;
+end $$;
+drop trigger if exists members_guard on public.members;
+create trigger members_guard before insert or update on public.members
+  for each row execute function public.members_guard();
 
--- 5. Vues
+create or replace function public.members_log() returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  if coalesce(current_setting('vl.system', true), '') = 'on' then return null; end if;
+  if tg_op = 'INSERT' then
+    perform write_log(new.association_id, format('a ajouté %s comme membre.', new.full_name));
+  elsif new.role <> old.role then
+    perform write_log(new.association_id, format('a changé le rôle de %s.', new.full_name));
+  elsif new.active <> old.active then
+    perform write_log(new.association_id, case when new.active
+      then format('a réintégré %s dans l''association.', new.full_name)
+      else format('a retiré %s de l''association.', new.full_name) end);
+  end if;
+  return null;
+end $$;
+drop trigger if exists members_log on public.members;
+create trigger members_log after insert or update on public.members
+  for each row execute function public.members_log();
 
-create or replace view public.v_balances with (security_invoker=true) as
-SELECT association_id,
-COALESCE(sum(amount) FILTER (WHERE kind = 'in'::text), 0::numeric) AS total_in,
-COALESCE(sum(amount) FILTER (WHERE kind = 'out'::text), 0::numeric) AS total_out
-FROM transactions
-GROUP BY association_id;
+create or replace function public.content_log() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare cur text; pname text;
+begin
+  if tg_table_name = 'projects' then
+    select currency into cur from associations where id = new.association_id;
+    if tg_op = 'INSERT' then
+      perform write_log(new.association_id, format('a créé le projet « %s » (objectif %s).', new.name, fmt_money(new.goal, cur)));
+    elsif new.status <> old.status then
+      perform write_log(new.association_id, format('a changé le statut de « %s » : %s → %s.', new.name, old.status, new.status));
+    end if;
+  elsif tg_table_name = 'project_updates' then
+    select name into pname from projects where id = new.project_id;
+    perform write_log(new.association_id, format('a publié une mise à jour sur « %s ».', pname));
+  elsif tg_table_name = 'announcements' then
+    perform write_log(new.association_id, format('a publié l''annonce « %s ».', new.title));
+  end if;
+  return null;
+end $$;
+drop trigger if exists projects_log on public.projects;
+create trigger projects_log after insert or update on public.projects
+  for each row execute function public.content_log();
+drop trigger if exists updates_log on public.project_updates;
+create trigger updates_log after insert on public.project_updates
+  for each row execute function public.content_log();
+drop trigger if exists ann_log on public.announcements;
+create trigger ann_log after insert on public.announcements
+  for each row execute function public.content_log();
 
-create or replace view public.v_member_paid with (security_invoker=true) as
-SELECT association_id,
-member_id,
-period,
-sum(amount) AS paid
-FROM transactions
-WHERE category = 'Cotisations'::text
-GROUP BY association_id, member_id, period;
+create or replace function public.project_update_check() returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  if not exists (select 1 from projects where id = new.project_id and association_id = new.association_id) then
+    raise exception 'Projet inconnu dans cette association.';
+  end if;
+  new.created_by := auth.uid();
+  return new;
+end $$;
+drop trigger if exists project_update_check on public.project_updates;
+create trigger project_update_check before insert on public.project_updates
+  for each row execute function public.project_update_check();
 
-create or replace view public.v_project_totals with (security_invoker=true) as
-SELECT project_id,
-COALESCE(sum(amount) FILTER (WHERE kind = 'in'::text), 0::numeric) AS collected,
-COALESCE(sum(amount) FILTER (WHERE kind = 'out'::text), 0::numeric) AS spent
-FROM transactions
-WHERE project_id IS NOT NULL
-GROUP BY project_id;
+create or replace function public.projects_guard() returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  if tg_op = 'UPDATE' and new.association_id <> old.association_id then
+    raise exception 'Un projet ne change pas d''association.';
+  end if;
+  if new.lead_member_id is not null and not exists
+     (select 1 from members where id = new.lead_member_id and association_id = new.association_id) then
+    raise exception 'Responsable inconnu dans cette association.';
+  end if;
+  return new;
+end $$;
+drop trigger if exists projects_guard on public.projects;
+create trigger projects_guard before insert or update on public.projects
+  for each row execute function public.projects_guard();
 
-create or replace view public.v_category_totals with (security_invoker=true) as
-SELECT association_id,
-kind,
-category,
-sum(amount) AS total
-FROM transactions
-GROUP BY association_id, kind, category;
+create or replace function public.associations_guard() returns trigger
+language plpgsql as $$
+begin
+  if new.invite_code <> old.invite_code and coalesce(current_setting('vl.system', true), '') <> 'on' then
+    raise exception 'Le code d''invitation se change avec la fonction prévue.';
+  end if;
+  if new.plan <> old.plan and coalesce(current_setting('vl.system', true), '') <> 'on' then
+    raise exception 'L''offre se change par VillageLink.';
+  end if;
+  return new;
+end $$;
+drop trigger if exists associations_guard on public.associations;
+create trigger associations_guard before update on public.associations
+  for each row execute function public.associations_guard();
 
--- 6. Déclencheurs (triggers)
+-- ---------------------------------------------------------------------
+-- Fonctions appelées par l'application
+-- ---------------------------------------------------------------------
 
-CREATE TRIGGER log_no_update BEFORE DELETE OR UPDATE ON activity_log FOR EACH ROW EXECUTE FUNCTION forbid_change();
+-- Créer une association : le créateur en devient président.
+create or replace function public.create_association(
+  p_name text, p_full_name text, p_phone text,
+  p_origin_country text, p_region text, p_prefecture text, p_village text,
+  p_residence_country text, p_residence_city text,
+  p_currency text, p_fee_amount bigint, p_fee_due_day int
+) returns uuid
+language plpgsql security definer set search_path = public as $$
+declare a uuid;
+begin
+  if auth.uid() is null then raise exception 'Connexion requise.'; end if;
+  if (select count(*) from associations where created_by = auth.uid()) >= 10 then
+    raise exception 'Limite de 10 associations créées par compte.';
+  end if;
+  insert into associations(name, origin_country, region, prefecture, village,
+                           residence_country, residence_city, currency, fee_amount, fee_due_day, created_by)
+  values (trim(p_name), trim(p_origin_country), trim(p_region), trim(p_prefecture), trim(p_village),
+          trim(p_residence_country), trim(p_residence_city), p_currency, greatest(p_fee_amount, 0),
+          least(greatest(p_fee_due_day, 1), 28), auth.uid())
+  returning id into a;
+  perform set_config('vl.system', 'on', true);
+  insert into members(association_id, user_id, full_name, phone, city, country, role)
+  values (a, auth.uid(), trim(p_full_name), trim(p_phone), trim(p_residence_city), trim(p_residence_country), 'president');
+  perform set_config('vl.system', 'off', true);
+  perform write_log(a, format('a créé l''association « %s ».', trim(p_name)));
+  return a;
+end $$;
 
-CREATE TRIGGER ann_creator BEFORE INSERT ON announcements FOR EACH ROW EXECUTE FUNCTION force_creator();
+-- Rejoindre une association avec son code. La demande reste en attente jusqu'à ce
+-- qu'un membre du bureau la valide. Si le trésorier avait déjà inscrit la personne
+-- (simple membre, même numéro), la fiche existante lui est proposée ; une fiche du
+-- bureau n'est jamais reliée automatiquement.
+create or replace function public.join_association(p_code text, p_full_name text, p_phone text)
+returns uuid
+language plpgsql security definer set search_path = public as $$
+declare a uuid; m uuid; digits text := regexp_replace(coalesce(p_phone,''), '\D', '', 'g');
+begin
+  if auth.uid() is null then raise exception 'Connexion requise.'; end if;
+  if length(trim(coalesce(p_full_name,''))) < 2 then raise exception 'Saisissez votre nom complet.'; end if;
+  select id into a from associations where invite_code = upper(trim(p_code));
+  if a is null then raise exception 'Code d''invitation inconnu. Vérifiez-le auprès du bureau.'; end if;
+  if exists (select 1 from members where association_id = a and user_id = auth.uid()) then
+    return a;
+  end if;
+  perform set_config('vl.system', 'on', true);
+  if length(digits) >= 8 then
+    select id into m from members
+     where association_id = a and user_id is null and role = 'membre' and active
+       and right(regexp_replace(phone, '\D', '', 'g'), 9) = right(digits, 9)
+     limit 1;
+  end if;
+  if m is not null then
+    update members set user_id = auth.uid(), pending = true where id = m;
+  else
+    insert into members(association_id, user_id, full_name, phone, role, pending, created_by_join)
+    values (a, auth.uid(), left(trim(p_full_name), 120), left(trim(p_phone), 40), 'membre', true, true);
+  end if;
+  perform set_config('vl.system', 'off', true);
+  perform write_log(a, format('a demandé à rejoindre l''association (%s).', left(trim(p_full_name), 120)));
+  return a;
+end $$;
 
-CREATE TRIGGER ann_log AFTER INSERT ON announcements FOR EACH ROW EXECUTE FUNCTION content_log();
+-- Valider ou refuser une demande d'adhésion (président, secrétaire, trésorier).
+create or replace function public.review_join(p_member uuid, p_accept boolean) returns void
+language plpgsql security definer set search_path = public as $$
+declare m members;
+begin
+  select * into m from members where id = p_member;
+  if m.id is null or not has_role(m.association_id, array['president','vice_president','secretaire','tresorier']) then
+    raise exception 'Réservé au bureau.';
+  end if;
+  if not m.pending then raise exception 'Cette demande a déjà été traitée.'; end if;
+  perform set_config('vl.system', 'on', true);
+  if p_accept then
+    update members set pending = false where id = m.id;
+  elsif m.created_by_join then
+    update members set pending = false, active = false, user_id = null where id = m.id;
+  else
+    update members set pending = false, user_id = null where id = m.id;
+  end if;
+  perform set_config('vl.system', 'off', true);
+  perform write_log(m.association_id, format('a %s la demande d''adhésion de %s.',
+    case when p_accept then 'validé' else 'refusé' end, m.full_name));
+end $$;
 
-CREATE TRIGGER associations_guard BEFORE UPDATE ON associations FOR EACH ROW EXECUTE FUNCTION associations_guard();
+-- Mes associations, y compris les demandes en attente.
+create or replace function public.my_memberships()
+returns table(association_id uuid, name text, village text, residence_city text, pending boolean, active boolean)
+language sql stable security definer set search_path = public as $$
+  select a.id, a.name, a.village, a.residence_city, m.pending, m.active
+  from members m join associations a on a.id = m.association_id
+  where m.user_id = auth.uid()
+  order by a.created_at;
+$$;
 
-CREATE TRIGGER attendance_check BEFORE INSERT OR UPDATE ON meeting_attendance FOR EACH ROW EXECUTE FUNCTION attendance_check();
+-- L'auteur d'une annonce ou d'un projet est toujours la personne connectée.
+create or replace function public.force_creator() returns trigger
+language plpgsql as $$
+begin
+  new.created_by := auth.uid();
+  return new;
+end $$;
+drop trigger if exists ann_creator on public.announcements;
+create trigger ann_creator before insert on public.announcements
+  for each row execute function public.force_creator();
+drop trigger if exists projects_creator on public.projects;
+create trigger projects_creator before insert on public.projects
+  for each row execute function public.force_creator();
 
-CREATE TRIGGER meetings_guard BEFORE INSERT OR UPDATE ON meetings FOR EACH ROW EXECUTE FUNCTION meetings_guard();
+-- Annuler une opération par contre-écriture (trésorier uniquement).
+create or replace function public.reverse_transaction(p_id bigint, p_reason text)
+returns bigint
+language plpgsql security definer set search_path = public as $$
+declare t transactions; new_id bigint;
+begin
+  select * into t from transactions where id = p_id;
+  if t.id is null then raise exception 'Opération introuvable.'; end if;
+  if not has_role(t.association_id, array['tresorier']) then
+    raise exception 'Seul le trésorier peut annuler une opération.';
+  end if;
+  if t.reversal_of is not null then raise exception 'Une contre-écriture ne s''annule pas.'; end if;
+  if exists (select 1 from transactions where reversal_of = p_id) then
+    raise exception 'Cette opération est déjà annulée.';
+  end if;
+  if length(trim(coalesce(p_reason,''))) < 4 then raise exception 'Indiquez le motif de l''annulation.'; end if;
+  perform set_config('vl.reversing', 'on', true);
+  insert into transactions(association_id, kind, category, amount, occurred_on, description,
+                           member_id, period, project_id, payment_method, comment, reversal_of)
+  values (t.association_id, t.kind, t.category, -t.amount, current_date,
+          'Contre-écriture de TX-' || lpad(t.id::text, 5, '0'),
+          t.member_id, t.period, t.project_id, '', trim(p_reason), t.id)
+  returning id into new_id;
+  perform set_config('vl.reversing', 'off', true);
+  return new_id;
+end $$;
 
-CREATE TRIGGER meetings_log AFTER INSERT OR UPDATE ON meetings FOR EACH ROW EXECUTE FUNCTION meetings_log();
+-- Nouveau code d'invitation (président).
+create or replace function public.regenerate_invite_code(p_assoc uuid) returns text
+language plpgsql security definer set search_path = public as $$
+declare c text := upper(substr(replace(gen_random_uuid()::text,'-',''),1,8));
+begin
+  if not has_role(p_assoc, array['president']) then raise exception 'Réservé au président.'; end if;
+  perform set_config('vl.system', 'on', true);
+  update associations set invite_code = c where id = p_assoc;
+  perform set_config('vl.system', 'off', true);
+  return c;
+end $$;
 
-CREATE TRIGGER members_guard BEFORE INSERT OR UPDATE ON members FOR EACH ROW EXECUTE FUNCTION members_guard();
+-- ---------------------------------------------------------------------
+-- Vues de synthèse (respectent la RLS de l'utilisateur)
+-- ---------------------------------------------------------------------
 
-CREATE TRIGGER members_log AFTER INSERT OR UPDATE ON members FOR EACH ROW EXECUTE FUNCTION members_log();
+create or replace view public.v_balances with (security_invoker = true) as
+  select association_id,
+         coalesce(sum(amount) filter (where kind = 'in'), 0)  as total_in,
+         coalesce(sum(amount) filter (where kind = 'out'), 0) as total_out
+  from transactions group by association_id;
 
-CREATE TRIGGER messages_check BEFORE INSERT ON messages FOR EACH ROW EXECUTE FUNCTION messages_check();
+create or replace view public.v_member_paid with (security_invoker = true) as
+  select association_id, member_id, period, sum(amount) as paid
+  from transactions where category = 'Cotisations'
+  group by association_id, member_id, period;
 
-CREATE TRIGGER project_update_check BEFORE INSERT ON project_updates FOR EACH ROW EXECUTE FUNCTION project_update_check();
+create or replace view public.v_project_totals with (security_invoker = true) as
+  select project_id,
+         coalesce(sum(amount) filter (where kind = 'in'), 0)  as collected,
+         coalesce(sum(amount) filter (where kind = 'out'), 0) as spent
+  from transactions where project_id is not null group by project_id;
 
-CREATE TRIGGER updates_log AFTER INSERT ON project_updates FOR EACH ROW EXECUTE FUNCTION content_log();
+create or replace view public.v_category_totals with (security_invoker = true) as
+  select association_id, kind, category, sum(amount) as total
+  from transactions group by association_id, kind, category;
 
-CREATE TRIGGER projects_creator BEFORE INSERT ON projects FOR EACH ROW EXECUTE FUNCTION force_creator();
+-- ---------------------------------------------------------------------
+-- Row Level Security
+-- ---------------------------------------------------------------------
 
-CREATE TRIGGER projects_guard BEFORE INSERT OR UPDATE ON projects FOR EACH ROW EXECUTE FUNCTION projects_guard();
-
-CREATE TRIGGER projects_log AFTER INSERT OR UPDATE ON projects FOR EACH ROW EXECUTE FUNCTION content_log();
-
-CREATE TRIGGER tx_check BEFORE INSERT ON transactions FOR EACH ROW EXECUTE FUNCTION tx_check();
-
-CREATE TRIGGER tx_log AFTER INSERT ON transactions FOR EACH ROW EXECUTE FUNCTION tx_log();
-
-CREATE TRIGGER tx_no_update BEFORE DELETE OR UPDATE ON transactions FOR EACH ROW EXECUTE FUNCTION forbid_change();
-
--- 7. Sécurité au niveau des lignes (RLS)
-
-alter table public.activity_log enable row level security;
-
-alter table public.announcements enable row level security;
-
-alter table public.associations enable row level security;
-
-alter table public.meeting_attendance enable row level security;
-
-alter table public.meetings enable row level security;
-
-alter table public.members enable row level security;
-
-alter table public.messages enable row level security;
-
+alter table public.associations    enable row level security;
+alter table public.members         enable row level security;
+alter table public.projects        enable row level security;
+alter table public.transactions    enable row level security;
 alter table public.project_updates enable row level security;
+alter table public.announcements   enable row level security;
+alter table public.activity_log    enable row level security;
 
-alter table public.projects enable row level security;
+drop policy if exists assoc_select on public.associations;
+create policy assoc_select on public.associations for select to authenticated
+  using (is_member(id));
+drop policy if exists assoc_update on public.associations;
+create policy assoc_update on public.associations for update to authenticated
+  using (has_role(id, array['president'])) with check (has_role(id, array['president']));
 
-alter table public.transactions enable row level security;
+drop policy if exists members_select on public.members;
+create policy members_select on public.members for select to authenticated
+  using (is_member(association_id));
+drop policy if exists members_insert on public.members;
+create policy members_insert on public.members for insert to authenticated
+  with check (has_role(association_id, array['president','vice_president','secretaire','tresorier']));
+drop policy if exists members_update on public.members;
+create policy members_update on public.members for update to authenticated
+  using (has_role(association_id, array['president','vice_president','secretaire','tresorier']))
+  with check (has_role(association_id, array['president','vice_president','secretaire','tresorier']));
 
--- 8. Politiques RLS
+drop policy if exists projects_select on public.projects;
+create policy projects_select on public.projects for select to authenticated
+  using (is_member(association_id));
+drop policy if exists projects_insert on public.projects;
+create policy projects_insert on public.projects for insert to authenticated
+  with check (has_role(association_id, array['president','vice_president','projets']));
+drop policy if exists projects_update on public.projects;
+create policy projects_update on public.projects for update to authenticated
+  using (has_role(association_id, array['president','vice_president','projets']))
+  with check (has_role(association_id, array['president','vice_president','projets']));
 
+drop policy if exists tx_select on public.transactions;
+create policy tx_select on public.transactions for select to authenticated
+  using (is_member(association_id));
+drop policy if exists tx_insert on public.transactions;
+create policy tx_insert on public.transactions for insert to authenticated
+  with check (
+    reversal_of is null and amount > 0 and (
+      (kind = 'in'  and has_role(association_id, array['tresorier','president','vice_president'])) or
+      (kind = 'out' and has_role(association_id, array['tresorier']))
+    ));
+
+drop policy if exists updates_select on public.project_updates;
+create policy updates_select on public.project_updates for select to authenticated
+  using (is_member(association_id));
+drop policy if exists updates_insert on public.project_updates;
+create policy updates_insert on public.project_updates for insert to authenticated
+  with check (has_role(association_id, array['president','vice_president','projets']));
+
+drop policy if exists ann_select on public.announcements;
+create policy ann_select on public.announcements for select to authenticated
+  using (is_member(association_id));
+drop policy if exists ann_insert on public.announcements;
+create policy ann_insert on public.announcements for insert to authenticated
+  with check (has_role(association_id, array['president','vice_president','secretaire']));
+
+drop policy if exists log_select on public.activity_log;
 create policy log_select on public.activity_log for select to authenticated
   using (is_member(association_id));
 
-create policy ann_insert on public.announcements for insert to authenticated
-  with check (has_role(association_id, ARRAY['president'::text, 'vice_president'::text, 'secretaire'::text]));
+-- Droits SQL : rien pour les visiteurs non connectés, le strict nécessaire pour les autres.
+-- (Supabase accorde tout par défaut : on retire puis on redonne précisément.)
+revoke all on all tables in schema public from anon, authenticated;
+grant select on public.associations, public.members, public.projects, public.transactions,
+                public.project_updates, public.announcements, public.activity_log,
+                public.v_balances, public.v_member_paid, public.v_project_totals,
+                public.v_category_totals to authenticated;
+grant insert on public.members, public.projects, public.transactions,
+                public.project_updates, public.announcements to authenticated;
+grant update on public.associations, public.members, public.projects to authenticated;
+revoke execute on function public.create_association(text,text,text,text,text,text,text,text,text,text,bigint,int) from public, anon;
+revoke execute on function public.join_association(text,text,text) from public, anon;
+revoke execute on function public.reverse_transaction(bigint,text) from public, anon;
+revoke execute on function public.regenerate_invite_code(uuid) from public, anon;
+revoke execute on function public.review_join(uuid,boolean) from public, anon;
+revoke execute on function public.my_memberships() from public, anon;
+grant execute on function public.review_join(uuid,boolean) to authenticated;
+grant execute on function public.my_memberships() to authenticated;
+grant execute on function public.create_association(text,text,text,text,text,text,text,text,text,text,bigint,int) to authenticated;
+grant execute on function public.join_association(text,text,text) to authenticated;
+grant execute on function public.reverse_transaction(bigint,text) to authenticated;
+grant execute on function public.regenerate_invite_code(uuid) to authenticated;
 
-create policy ann_select on public.announcements for select to authenticated
-  using (is_member(association_id));
+-- ---------------------------------------------------------------------
+-- Stockage des justificatifs (bucket privé « proofs »)
+-- Chemin d'un fichier : <id de l'association>/<nom>.jpg
+-- ---------------------------------------------------------------------
 
-create policy assoc_select on public.associations for select to authenticated
-  using (is_member(id));
+do $$
+begin
+  if exists (select 1 from pg_namespace where nspname = 'storage') then
+    insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+    values ('proofs', 'proofs', false, 5242880,
+            array['image/jpeg','image/png','image/webp','image/heic','application/pdf'])
+    on conflict (id) do nothing;
 
-create policy assoc_update on public.associations for update to authenticated
-  using (has_role(id, ARRAY['president'::text]))
-  with check (has_role(id, ARRAY['president'::text]));
+    execute 'drop policy if exists proofs_read on storage.objects';
+    execute $p$create policy proofs_read on storage.objects for select to authenticated
+      using (bucket_id = 'proofs' and public.is_member(((storage.foldername(name))[1])::uuid))$p$;
+    execute 'drop policy if exists proofs_write on storage.objects';
+    execute $p$create policy proofs_write on storage.objects for insert to authenticated
+      with check (bucket_id = 'proofs'
+        and public.has_role(((storage.foldername(name))[1])::uuid, array['tresorier','president','vice_president']))$p$;
+  end if;
+end $$;
 
-create policy attendance_delete on public.meeting_attendance for delete to authenticated
-  using (has_role(association_id, ARRAY['president'::text, 'vice_president'::text, 'secretaire'::text]));
+-- ---------------------------------------------------------------------
+-- Discussion (version 1.2)
+-- ---------------------------------------------------------------------
+-- VillageLink 1.2 : espace Discussion (messages, idées, réclamations)
+create table if not exists public.messages (
+  id              bigint generated always as identity primary key,
+  association_id  uuid not null references public.associations(id) on delete cascade,
+  kind            text not null default 'Message' check (kind in ('Message','Idée','Réclamation')),
+  body            text not null check (length(trim(body)) between 1 and 1000),
+  author_id       uuid default auth.uid(),
+  author_label    text not null default '',
+  hidden          boolean not null default false,
+  hidden_by       text not null default '',
+  created_at      timestamptz not null default now()
+);
+create index if not exists messages_assoc_idx on public.messages(association_id, id desc);
+create or replace function public.messages_check() returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  new.author_id := auth.uid();
+  new.author_label := actor_label(new.association_id);
+  new.hidden := false;
+  new.hidden_by := '';
+  new.created_at := now();
+  return new;
+end $$;
+drop trigger if exists messages_check on public.messages;
+create trigger messages_check before insert on public.messages
+  for each row execute function public.messages_check();
+create or replace function public.hide_message(p_id bigint) returns void
+language plpgsql security definer set search_path = public as $$
+declare m messages;
+begin
+  select * into m from messages where id = p_id;
+  if m.id is null or not is_member(m.association_id) then raise exception 'Message introuvable.'; end if;
+  if m.author_id is distinct from auth.uid() and not has_role(m.association_id, array['president','vice_president','secretaire']) then
+    raise exception 'Seuls l''auteur, le président, le vice-président ou le secrétaire peuvent masquer un message.';
+  end if;
+  update messages set hidden = true, body = 'Message masqué', hidden_by = actor_label(m.association_id) where id = p_id;
+  if m.author_id is distinct from auth.uid() then
+    perform write_log(m.association_id, format('a masqué un message de %s dans la discussion.', m.author_label));
+  end if;
+end $$;
+alter table public.messages enable row level security;
+drop policy if exists messages_select on public.messages;
+create policy messages_select on public.messages for select to authenticated using (is_member(association_id));
+drop policy if exists messages_insert on public.messages;
+create policy messages_insert on public.messages for insert to authenticated with check (is_member(association_id));
+revoke all on public.messages from anon, authenticated;
+grant select, insert on public.messages to authenticated;
+revoke execute on function public.hide_message(bigint) from public, anon;
+grant execute on function public.hide_message(bigint) to authenticated;
 
-create policy attendance_insert on public.meeting_attendance for insert to authenticated
-  with check (has_role(( SELECT m.association_id
-   FROM meetings m
-  WHERE (m.id = meeting_attendance.meeting_id)), ARRAY['president'::text, 'vice_president'::text, 'secretaire'::text]));
+-- ---------------------------------------------------------------------
+-- Réunions (version 1.4) : convocation, présence, compte rendu
+-- Le président, le vice-président et le secrétaire gèrent les réunions ;
+-- tous les membres validés les voient.
+-- ---------------------------------------------------------------------
+create table if not exists public.meetings (
+  id              uuid primary key default gen_random_uuid(),
+  association_id  uuid not null references public.associations(id) on delete cascade,
+  title           text not null check (length(trim(title)) between 2 and 160),
+  starts_at       timestamptz not null,
+  place           text not null default '' check (length(place) <= 200),
+  agenda          text not null default '' check (length(agenda) <= 4000),
+  status          text not null default 'Prévue' check (status in ('Prévue','Tenue','Annulée')),
+  minutes         text not null default '' check (length(minutes) <= 20000),
+  created_by      uuid default auth.uid(),
+  created_label   text not null default '',
+  created_at      timestamptz not null default now(),
+  updated_at      timestamptz not null default now()
+);
+create index if not exists meetings_assoc_idx on public.meetings(association_id, starts_at desc);
 
-create policy attendance_select on public.meeting_attendance for select to authenticated
-  using (is_member(association_id));
+create table if not exists public.meeting_attendance (
+  meeting_id      uuid not null references public.meetings(id) on delete cascade,
+  member_id       uuid not null references public.members(id) on delete cascade,
+  association_id  uuid not null references public.associations(id) on delete cascade,
+  present         boolean not null,
+  marked_by       text not null default '',
+  marked_at       timestamptz not null default now(),
+  primary key (meeting_id, member_id)
+);
+create index if not exists attendance_assoc_idx on public.meeting_attendance(association_id);
 
-create policy attendance_update on public.meeting_attendance for update to authenticated
-  using (has_role(association_id, ARRAY['president'::text, 'vice_president'::text, 'secretaire'::text]))
-  with check (has_role(( SELECT m.association_id
-   FROM meetings m
-  WHERE (m.id = meeting_attendance.meeting_id)), ARRAY['president'::text, 'vice_president'::text, 'secretaire'::text]));
+-- Auteur et dates toujours fixés par la base ; l'association d'une réunion ne change pas.
+create or replace function public.meetings_guard() returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  if tg_op = 'INSERT' then
+    new.created_by := auth.uid();
+    new.created_label := actor_label(new.association_id);
+    new.created_at := now();
+  else
+    new.association_id := old.association_id;
+    new.created_by := old.created_by;
+    new.created_label := old.created_label;
+    new.created_at := old.created_at;
+  end if;
+  new.updated_at := now();
+  return new;
+end $$;
+drop trigger if exists meetings_guard on public.meetings;
+create trigger meetings_guard before insert or update on public.meetings
+  for each row execute function public.meetings_guard();
 
-create policy meetings_insert on public.meetings for insert to authenticated
-  with check (has_role(association_id, ARRAY['president'::text, 'vice_president'::text, 'secretaire'::text]));
+create or replace function public.meetings_log() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare d text := to_char(new.starts_at at time zone 'UTC', 'DD/MM/YYYY');
+begin
+  if tg_op = 'INSERT' then
+    perform write_log(new.association_id, format('a convoqué la réunion « %s » du %s.', new.title, d));
+    return new;
+  end if;
+  if new.status <> old.status then
+    perform write_log(new.association_id, format('a marqué la réunion « %s » comme %s.', new.title,
+      case new.status when 'Tenue' then 'tenue' when 'Annulée' then 'annulée' else 'prévue' end));
+  end if;
+  if new.minutes <> old.minutes and new.minutes <> '' then
+    perform write_log(new.association_id, format('a %s le compte rendu de la réunion « %s ».',
+      case when old.minutes = '' then 'publié' else 'modifié' end, new.title));
+  end if;
+  if new.starts_at <> old.starts_at or new.place <> old.place or new.title <> old.title or new.agenda <> old.agenda then
+    perform write_log(new.association_id, format('a modifié la convocation de la réunion « %s » (nouvelle date : %s).', new.title, d));
+  end if;
+  return new;
+end $$;
+drop trigger if exists meetings_log on public.meetings;
+create trigger meetings_log after insert or update on public.meetings
+  for each row execute function public.meetings_log();
 
+-- Présence : le membre et la réunion doivent être de la même association.
+create or replace function public.attendance_check() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare assoc uuid;
+begin
+  select association_id into assoc from meetings where id = new.meeting_id;
+  if assoc is null then raise exception 'Réunion introuvable.'; end if;
+  if not exists (select 1 from members where id = new.member_id and association_id = assoc) then
+    raise exception 'Membre inconnu dans cette association.';
+  end if;
+  new.association_id := assoc;
+  new.marked_by := actor_label(assoc);
+  new.marked_at := now();
+  return new;
+end $$;
+drop trigger if exists attendance_check on public.meeting_attendance;
+create trigger attendance_check before insert or update on public.meeting_attendance
+  for each row execute function public.attendance_check();
+
+alter table public.meetings enable row level security;
+alter table public.meeting_attendance enable row level security;
+
+drop policy if exists meetings_select on public.meetings;
 create policy meetings_select on public.meetings for select to authenticated
   using (is_member(association_id));
-
+drop policy if exists meetings_insert on public.meetings;
+create policy meetings_insert on public.meetings for insert to authenticated
+  with check (has_role(association_id, array['president','vice_president','secretaire']));
+drop policy if exists meetings_update on public.meetings;
 create policy meetings_update on public.meetings for update to authenticated
-  using (has_role(association_id, ARRAY['president'::text, 'vice_president'::text, 'secretaire'::text]))
-  with check (has_role(association_id, ARRAY['president'::text, 'vice_president'::text, 'secretaire'::text]));
+  using (has_role(association_id, array['president','vice_president','secretaire']))
+  with check (has_role(association_id, array['president','vice_president','secretaire']));
 
-create policy members_insert on public.members for insert to authenticated
-  with check (has_role(association_id, ARRAY['president'::text, 'vice_president'::text, 'secretaire'::text, 'tresorier'::text]));
-
-create policy members_select on public.members for select to authenticated
+drop policy if exists attendance_select on public.meeting_attendance;
+create policy attendance_select on public.meeting_attendance for select to authenticated
   using (is_member(association_id));
+drop policy if exists attendance_insert on public.meeting_attendance;
+create policy attendance_insert on public.meeting_attendance for insert to authenticated
+  with check (has_role((select m.association_id from public.meetings m where m.id = meeting_id), array['president','vice_president','secretaire']));
+drop policy if exists attendance_update on public.meeting_attendance;
+create policy attendance_update on public.meeting_attendance for update to authenticated
+  using (has_role(association_id, array['president','vice_president','secretaire']))
+  with check (has_role((select m.association_id from public.meetings m where m.id = meeting_id), array['president','vice_president','secretaire']));
+drop policy if exists attendance_delete on public.meeting_attendance;
+create policy attendance_delete on public.meeting_attendance for delete to authenticated
+  using (has_role(association_id, array['president','vice_president','secretaire']));
 
-create policy members_update on public.members for update to authenticated
-  using (has_role(association_id, ARRAY['president'::text, 'vice_president'::text, 'secretaire'::text, 'tresorier'::text]))
-  with check (has_role(association_id, ARRAY['president'::text, 'vice_president'::text, 'secretaire'::text, 'tresorier'::text]));
+revoke all on public.meetings, public.meeting_attendance from anon, authenticated;
+grant select, insert, update on public.meetings to authenticated;
+grant select, insert, update, delete on public.meeting_attendance to authenticated;
+revoke execute on function public.meetings_guard() from public, anon, authenticated;
+revoke execute on function public.meetings_log() from public, anon, authenticated;
+revoke execute on function public.attendance_check() from public, anon, authenticated;
 
-create policy messages_insert on public.messages for insert to authenticated
-  with check (is_member(association_id));
+-- VillageLink 1.4.2 : sécurité
+-- 1. Chemin de recherche figé sur les 4 fonctions qui ne l'avaient pas.
+alter function public.fmt_money(bigint, text) set search_path = public;
+alter function public.forbid_change() set search_path = public;
+alter function public.force_creator() set search_path = public;
+alter function public.associations_guard() set search_path = public;
 
-create policy messages_select on public.messages for select to authenticated
+-- 2. Les fonctions de trigger et les outils internes ne s'appellent pas depuis l'API.
+--    (Un trigger s'exécute même sans ce droit : il est vérifié à la création du trigger.)
+revoke execute on function public.associations_guard() from public, anon, authenticated;
+revoke execute on function public.content_log() from public, anon, authenticated;
+revoke execute on function public.forbid_change() from public, anon, authenticated;
+revoke execute on function public.force_creator() from public, anon, authenticated;
+revoke execute on function public.members_guard() from public, anon, authenticated;
+revoke execute on function public.members_log() from public, anon, authenticated;
+revoke execute on function public.messages_check() from public, anon, authenticated;
+revoke execute on function public.project_update_check() from public, anon, authenticated;
+revoke execute on function public.projects_guard() from public, anon, authenticated;
+revoke execute on function public.tx_check() from public, anon, authenticated;
+revoke execute on function public.tx_log() from public, anon, authenticated;
+revoke execute on function public.actor_label(uuid) from public, anon, authenticated;
+revoke execute on function public.fmt_money(bigint, text) from public, anon, authenticated;
+
+-- 3. is_member et has_role servent dans les règles d'accès : réservées aux comptes connectés.
+revoke execute on function public.is_member(uuid) from public, anon;
+revoke execute on function public.has_role(uuid, text[]) from public, anon;
+grant execute on function public.is_member(uuid) to authenticated;
+grant execute on function public.has_role(uuid, text[]) to authenticated;
+
+-- ---------------------------------------------------------------------
+-- Votes (version 1.5)
+-- Le président, le vice-président et le secrétaire lancent et closent un vote.
+-- Chaque membre validé qui a un compte vote une fois (il peut changer d'avis tant que
+-- le vote est ouvert). Un vote secret ne montre à personne qui a voté quoi.
+-- Tout passe par des fonctions : aucune écriture directe dans les tables.
+-- ---------------------------------------------------------------------
+create table if not exists public.polls (
+  id              uuid primary key default gen_random_uuid(),
+  association_id  uuid not null references public.associations(id) on delete cascade,
+  question        text not null check (length(trim(question)) between 3 and 300),
+  description     text not null default '' check (length(description) <= 2000),
+  anonymous       boolean not null default true,
+  status          text not null default 'Ouvert' check (status in ('Ouvert','Clos')),
+  closes_at       timestamptz,
+  created_by      uuid,
+  created_label   text not null default '',
+  created_at      timestamptz not null default now(),
+  closed_at       timestamptz
+);
+create index if not exists polls_assoc_idx on public.polls(association_id, created_at desc);
+
+create table if not exists public.poll_options (
+  id              uuid primary key default gen_random_uuid(),
+  poll_id         uuid not null references public.polls(id) on delete cascade,
+  association_id  uuid not null references public.associations(id) on delete cascade,
+  label           text not null check (length(trim(label)) between 1 and 120),
+  position        int not null default 0
+);
+create index if not exists poll_options_poll_idx on public.poll_options(poll_id, position);
+
+create table if not exists public.poll_votes (
+  poll_id         uuid not null references public.polls(id) on delete cascade,
+  member_id       uuid not null references public.members(id) on delete cascade,
+  option_id       uuid not null references public.poll_options(id) on delete cascade,
+  association_id  uuid not null references public.associations(id) on delete cascade,
+  voted_at        timestamptz not null default now(),
+  primary key (poll_id, member_id)
+);
+create index if not exists poll_votes_assoc_idx on public.poll_votes(association_id);
+
+alter table public.polls enable row level security;
+alter table public.poll_options enable row level security;
+alter table public.poll_votes enable row level security;
+
+create policy polls_select on public.polls for select to authenticated
   using (is_member(association_id));
-
-create policy updates_insert on public.project_updates for insert to authenticated
-  with check (has_role(association_id, ARRAY['president'::text, 'vice_president'::text, 'projets'::text]));
-
-create policy updates_select on public.project_updates for select to authenticated
+create policy poll_options_select on public.poll_options for select to authenticated
   using (is_member(association_id));
+-- Bulletins : on voit le sien ; ceux des autres seulement si le vote n'est pas secret.
+create policy poll_votes_select on public.poll_votes for select to authenticated
+  using (is_member(association_id) and (
+    member_id in (select m.id from public.members m where m.user_id = auth.uid())
+    or exists (select 1 from public.polls p where p.id = poll_id and not p.anonymous)));
 
-create policy projects_insert on public.projects for insert to authenticated
-  with check (has_role(association_id, ARRAY['president'::text, 'vice_president'::text, 'projets'::text]));
+revoke all on public.polls, public.poll_options, public.poll_votes from anon, authenticated;
+grant select on public.polls, public.poll_options, public.poll_votes to authenticated;
 
-create policy projects_select on public.projects for select to authenticated
+-- Lancer un vote (question + 2 à 10 choix), en une seule opération.
+create or replace function public.create_poll(p_assoc uuid, p_question text, p_description text,
+  p_options text[], p_closes_at timestamptz, p_anonymous boolean) returns uuid
+language plpgsql security definer set search_path = public as $$
+declare pid uuid; opt text; i int := 0; n int;
+begin
+  if not has_role(p_assoc, array['president','vice_president','secretaire']) then
+    raise exception 'Réservé au président, au vice-président et au secrétaire général.';
+  end if;
+  select count(distinct lower(trim(x))) into n from unnest(p_options) x where length(trim(x)) > 0;
+  if n < 2 or n > 10 then raise exception 'Il faut entre 2 et 10 choix différents.'; end if;
+  if p_closes_at is not null and p_closes_at <= now() then raise exception 'La date de clôture doit être dans le futur.'; end if;
+  insert into polls(association_id, question, description, anonymous, closes_at, created_by, created_label)
+  values (p_assoc, trim(p_question), coalesce(trim(p_description), ''), coalesce(p_anonymous, true), p_closes_at,
+          auth.uid(), actor_label(p_assoc))
+  returning id into pid;
+  foreach opt in array p_options loop
+    if length(trim(opt)) > 0 and not exists (select 1 from poll_options where poll_id = pid and lower(label) = lower(trim(opt))) then
+      insert into poll_options(poll_id, association_id, label, position) values (pid, p_assoc, trim(opt), i);
+      i := i + 1;
+    end if;
+  end loop;
+  perform write_log(p_assoc, format('a lancé le vote « %s ».', trim(p_question)));
+  return pid;
+end $$;
+
+-- Voter (ou changer son vote tant que le vote est ouvert).
+create or replace function public.cast_vote(p_poll uuid, p_option uuid) returns void
+language plpgsql security definer set search_path = public as $$
+declare p polls; mid uuid;
+begin
+  select * into p from polls where id = p_poll;
+  if p.id is null or not is_member(p.association_id) then raise exception 'Vote introuvable.'; end if;
+  if p.status <> 'Ouvert' or (p.closes_at is not null and p.closes_at <= now()) then
+    raise exception 'Ce vote est clos.';
+  end if;
+  if not exists (select 1 from poll_options where id = p_option and poll_id = p_poll) then
+    raise exception 'Choix inconnu.';
+  end if;
+  select id into mid from members
+    where association_id = p.association_id and user_id = auth.uid() and active and not pending limit 1;
+  if mid is null then raise exception 'Seuls les membres validés peuvent voter.'; end if;
+  insert into poll_votes(poll_id, member_id, option_id, association_id)
+  values (p_poll, mid, p_option, p.association_id)
+  on conflict (poll_id, member_id) do update set option_id = excluded.option_id, voted_at = now();
+end $$;
+
+-- Clore un vote.
+create or replace function public.close_poll(p_poll uuid) returns void
+language plpgsql security definer set search_path = public as $$
+declare p polls;
+begin
+  select * into p from polls where id = p_poll;
+  if p.id is null or not has_role(p.association_id, array['president','vice_president','secretaire']) then
+    raise exception 'Réservé au président, au vice-président et au secrétaire général.';
+  end if;
+  if p.status = 'Clos' then return; end if;
+  update polls set status = 'Clos', closed_at = now() where id = p_poll;
+  perform write_log(p.association_id, format('a clos le vote « %s ».', p.question));
+end $$;
+
+-- Résultats : nombre de voix par choix (y compris pour un vote secret).
+create or replace function public.poll_results(p_poll uuid)
+returns table(option_id uuid, votes int)
+language sql stable security definer set search_path = public as $$
+  select o.id, count(v.member_id)::int
+  from poll_options o
+  join polls p on p.id = o.poll_id
+  left join poll_votes v on v.option_id = o.id
+  where o.poll_id = p_poll and is_member(p.association_id)
+  group by o.id, o.position
+  order by o.position;
+$$;
+
+revoke execute on function public.create_poll(uuid, text, text, text[], timestamptz, boolean) from public, anon;
+revoke execute on function public.cast_vote(uuid, uuid) from public, anon;
+revoke execute on function public.close_poll(uuid) from public, anon;
+revoke execute on function public.poll_results(uuid) from public, anon;
+grant execute on function public.create_poll(uuid, text, text, text[], timestamptz, boolean) to authenticated;
+grant execute on function public.cast_vote(uuid, uuid) to authenticated;
+grant execute on function public.close_poll(uuid) to authenticated;
+grant execute on function public.poll_results(uuid) to authenticated;
+
+-- ---------------------------------------------------------------------
+-- Documents (version 1.6) : statuts, règlement, procès-verbaux, rapports…
+-- Le bureau (président, vice-président, secrétaire, trésorier) dépose et retire ;
+-- tous les membres validés lisent. Fichiers dans le bucket privé « docs »,
+-- rangés par association : <id de l'association>/<nom>.
+-- ---------------------------------------------------------------------
+create table if not exists public.documents (
+  id              uuid primary key default gen_random_uuid(),
+  association_id  uuid not null references public.associations(id) on delete cascade,
+  title           text not null check (length(trim(title)) between 2 and 160),
+  category        text not null default 'Autre'
+                  check (category in ('Statuts','Règlement intérieur','Procès-verbal','Rapport','Reçu','Autre')),
+  file_path       text not null check (length(file_path) between 3 and 300),
+  file_name       text not null default '' check (length(file_name) <= 200),
+  mime            text not null default '' check (length(mime) <= 120),
+  size            int not null default 0 check (size between 0 and 10485760),
+  uploaded_by     uuid,
+  uploaded_label  text not null default '',
+  created_at      timestamptz not null default now()
+);
+create index if not exists documents_assoc_idx on public.documents(association_id, created_at desc);
+
+-- Le chemin du fichier doit être dans le dossier de l'association ; l'auteur est la personne connectée.
+create or replace function public.documents_check() returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  if new.file_path not like new.association_id::text || '/%' or new.file_path like '%..%' then
+    raise exception 'Chemin de fichier invalide.';
+  end if;
+  new.uploaded_by := auth.uid();
+  new.uploaded_label := actor_label(new.association_id);
+  new.created_at := now();
+  return new;
+end $$;
+create trigger documents_check before insert on public.documents
+  for each row execute function public.documents_check();
+
+create or replace function public.documents_log() returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  if tg_op = 'INSERT' then
+    perform write_log(new.association_id, format('a déposé le document « %s » (%s).', new.title, new.category));
+    return new;
+  end if;
+  perform write_log(old.association_id, format('a retiré le document « %s ».', old.title));
+  return old;
+end $$;
+create trigger documents_log after insert or delete on public.documents
+  for each row execute function public.documents_log();
+
+alter table public.documents enable row level security;
+create policy documents_select on public.documents for select to authenticated
   using (is_member(association_id));
+create policy documents_insert on public.documents for insert to authenticated
+  with check (has_role(association_id, array['president','vice_president','secretaire','tresorier']));
+create policy documents_delete on public.documents for delete to authenticated
+  using (has_role(association_id, array['president','vice_president','secretaire','tresorier']));
 
-create policy projects_update on public.projects for update to authenticated
-  using (has_role(association_id, ARRAY['president'::text, 'vice_president'::text, 'projets'::text]))
-  with check (has_role(association_id, ARRAY['president'::text, 'vice_president'::text, 'projets'::text]));
+revoke all on public.documents from anon, authenticated;
+grant select, insert, delete on public.documents to authenticated;
+revoke execute on function public.documents_check() from public, anon, authenticated;
+revoke execute on function public.documents_log() from public, anon, authenticated;
 
-create policy tx_insert on public.transactions for insert to authenticated
-  with check (((reversal_of IS NULL) AND (amount > 0) AND (((kind = 'in'::text) AND has_role(association_id, ARRAY['tresorier'::text, 'president'::text, 'vice_president'::text])) OR ((kind = 'out'::text) AND has_role(association_id, ARRAY['tresorier'::text])))));
+-- Bucket privé « docs » (10 Mo maximum par fichier) et ses règles d'accès.
+do $$
+begin
+  if exists (select 1 from pg_namespace where nspname = 'storage') then
+    insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+    values ('docs', 'docs', false, 10485760,
+            array['application/pdf','image/jpeg','image/png','image/webp','image/heic',
+                  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+                  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                  'application/msword','application/vnd.ms-excel'])
+    on conflict (id) do nothing;
+    execute $p$create policy docs_read on storage.objects for select to authenticated
+      using (bucket_id = 'docs' and public.is_member(((storage.foldername(name))[1])::uuid))$p$;
+    execute $p$create policy docs_write on storage.objects for insert to authenticated
+      with check (bucket_id = 'docs'
+        and public.has_role(((storage.foldername(name))[1])::uuid, array['president','vice_president','secretaire','tresorier']))$p$;
+    execute $p$create policy docs_delete on storage.objects for delete to authenticated
+      using (bucket_id = 'docs'
+        and public.has_role(((storage.foldername(name))[1])::uuid, array['president','vice_president','secretaire','tresorier']))$p$;
+  end if;
+end $$;
 
-create policy tx_select on public.transactions for select to authenticated
+-- ---------------------------------------------------------------------
+-- Double validation des dépenses (version 1.7)
+-- Le trésorier propose une dépense ; le président ou le vice-président l'approuve
+-- (ou la refuse). Elle n'entre dans la caisse qu'une fois approuvée.
+-- Le président peut désactiver la règle (petites associations sans second signataire).
+-- ---------------------------------------------------------------------
+alter table public.associations add column if not exists expense_approval boolean not null default true;
+alter table public.transactions add column if not exists approved_label text not null default '';
+alter table public.transactions add column if not exists requested_label text not null default '';
+
+create table if not exists public.expense_requests (
+  id              bigint generated always as identity primary key,
+  association_id  uuid not null references public.associations(id) on delete cascade,
+  category        text not null check (category in ('Projet','Transport','Réunion','Communication','Administration','Autres')),
+  amount          bigint not null check (amount > 0 and amount <= 1000000000000),
+  occurred_on     date not null default current_date,
+  description     text not null check (length(trim(description)) between 2 and 300),
+  project_id      uuid references public.projects(id) on delete restrict,
+  comment         text not null default '' check (length(comment) <= 500),
+  proof_path      text not null default '' check (length(proof_path) <= 300),
+  status          text not null default 'En attente' check (status in ('En attente','Approuvée','Refusée','Annulée')),
+  requested_by    uuid,
+  requested_label text not null default '',
+  decided_by      uuid,
+  decided_label   text not null default '',
+  decided_at      timestamptz,
+  decision_note   text not null default '' check (length(decision_note) <= 500),
+  tx_id           bigint references public.transactions(id) on delete restrict,
+  created_at      timestamptz not null default now()
+);
+create index if not exists expense_requests_assoc_idx on public.expense_requests(association_id, id desc);
+
+create or replace function public.expense_requests_check() returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  if new.project_id is not null and not exists
+     (select 1 from projects where id = new.project_id and association_id = new.association_id) then
+    raise exception 'Projet inconnu dans cette association.';
+  end if;
+  if new.proof_path <> '' and (new.proof_path not like new.association_id::text || '/%' or new.proof_path like '%..%') then
+    raise exception 'Justificatif invalide.';
+  end if;
+  new.status := 'En attente';
+  new.requested_by := auth.uid();
+  new.requested_label := actor_label(new.association_id);
+  new.decided_by := null; new.decided_label := ''; new.decided_at := null; new.decision_note := ''; new.tx_id := null;
+  new.created_at := now();
+  return new;
+end $$;
+create trigger expense_requests_check before insert on public.expense_requests
+  for each row execute function public.expense_requests_check();
+
+create or replace function public.expense_requests_log() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare cur text;
+begin
+  select currency into cur from associations where id = new.association_id;
+  perform write_log(new.association_id, format('a demandé l''approbation d''une dépense de %s : %s.',
+    fmt_money(new.amount, cur), new.description));
+  return null;
+end $$;
+create trigger expense_requests_log after insert on public.expense_requests
+  for each row execute function public.expense_requests_log();
+
+alter table public.expense_requests enable row level security;
+create policy expense_requests_select on public.expense_requests for select to authenticated
   using (is_member(association_id));
+create policy expense_requests_insert on public.expense_requests for insert to authenticated
+  with check (has_role(association_id, array['tresorier']));
+revoke all on public.expense_requests from anon, authenticated;
+grant select, insert on public.expense_requests to authenticated;
 
--- 9. Droits sur les tables et vues
+-- Une dépense directe n'est possible que si la double validation est désactivée.
+alter policy tx_insert on public.transactions with check (
+  reversal_of is null and amount > 0 and (
+    (kind = 'in'  and has_role(association_id, array['tresorier','president','vice_president'])) or
+    (kind = 'out' and has_role(association_id, array['tresorier'])
+       and not coalesce((select a.expense_approval from public.associations a where a.id = association_id), true))
+  ));
 
-revoke all on table public.activity_log from public, anon, authenticated;
-grant select on table public.activity_log to authenticated;
+-- L'auteur d'une opération est la personne connectée, sauf pour une dépense approuvée
+-- (l'auteur reste le trésorier qui l'a proposée). Les signatures sont fixées par la base.
+create or replace function public.tx_check() returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  if new.member_id is not null and not exists
+     (select 1 from members where id = new.member_id and association_id = new.association_id) then
+    raise exception 'Membre inconnu dans cette association.';
+  end if;
+  if new.project_id is not null and not exists
+     (select 1 from projects where id = new.project_id and association_id = new.association_id) then
+    raise exception 'Projet inconnu dans cette association.';
+  end if;
+  if new.proof_path <> '' and (new.proof_path not like new.association_id::text || '/%' or new.proof_path like '%..%') then
+    raise exception 'Justificatif invalide.';
+  end if;
+  if new.reversal_of is null and new.amount <= 0 then
+    raise exception 'Le montant doit être supérieur à 0.';
+  end if;
+  if new.reversal_of is not null and coalesce(current_setting('vl.reversing', true), '') <> 'on' then
+    raise exception 'Une contre-écriture passe par la fonction prévue.';
+  end if;
+  if coalesce(current_setting('vl.approving', true), '') <> 'on' then
+    new.created_by := auth.uid();
+    new.approved_label := '';
+    new.requested_label := '';
+  end if;
+  new.created_at := now();
+  return new;
+end $$;
 
-revoke all on table public.announcements from public, anon, authenticated;
-grant insert, select on table public.announcements to authenticated;
+create or replace function public.tx_log() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare cur text; who text;
+begin
+  if coalesce(current_setting('vl.approving', true), '') = 'on' then return null; end if;
+  select currency into cur from associations where id = new.association_id;
+  if new.reversal_of is not null then
+    perform write_log(new.association_id, format('a annulé l''opération TX-%s (%s) par contre-écriture. Motif : %s',
+      lpad(new.reversal_of::text, 5, '0'), fmt_money(new.amount, cur), new.comment));
+  elsif new.category = 'Cotisations' then
+    select full_name into who from members where id = new.member_id;
+    perform write_log(new.association_id, format('a enregistré une cotisation de %s de %s (%s).',
+      fmt_money(new.amount, cur), who, new.period));
+  else
+    perform write_log(new.association_id, format('a enregistré %s de %s : %s.',
+      case new.kind when 'in' then 'une recette' else 'une dépense' end,
+      fmt_money(new.amount, cur), new.description));
+  end if;
+  return null;
+end $$;
 
-revoke all on table public.associations from public, anon, authenticated;
-grant select, update on table public.associations to authenticated;
+-- Approuver : président ou vice-président, jamais la personne qui a proposé la dépense.
+create or replace function public.approve_expense(p_id bigint) returns bigint
+language plpgsql security definer set search_path = public as $$
+declare r expense_requests; tid bigint; bal bigint; cur text;
+begin
+  select * into r from expense_requests where id = p_id for update;
+  if r.id is null or not has_role(r.association_id, array['president','vice_president']) then
+    raise exception 'Réservé au président et au vice-président.';
+  end if;
+  if r.status <> 'En attente' then raise exception 'Cette dépense a déjà été traitée.'; end if;
+  if r.requested_by = auth.uid() then raise exception 'La personne qui propose une dépense ne peut pas l''approuver.'; end if;
+  select coalesce(sum(amount) filter (where kind = 'in'), 0) - coalesce(sum(amount) filter (where kind = 'out'), 0)
+    into bal from transactions where association_id = r.association_id;
+  select currency into cur from associations where id = r.association_id;
+  if r.amount > bal then
+    raise exception 'Solde insuffisant : la caisse contient %.', fmt_money(bal, cur);
+  end if;
+  perform set_config('vl.approving', 'on', true);
+  insert into transactions(association_id, kind, category, amount, occurred_on, description, project_id,
+                           comment, proof_path, created_by, approved_label, requested_label)
+  values (r.association_id, 'out', r.category, r.amount, r.occurred_on, r.description, r.project_id,
+          r.comment, r.proof_path, r.requested_by, actor_label(r.association_id), r.requested_label)
+  returning id into tid;
+  perform set_config('vl.approving', 'off', true);
+  update expense_requests set status = 'Approuvée', decided_by = auth.uid(), decided_label = actor_label(r.association_id),
+    decided_at = now(), tx_id = tid where id = r.id;
+  perform write_log(r.association_id, format('a approuvé la dépense de %s : %s (proposée par %s).',
+    fmt_money(r.amount, cur), r.description, r.requested_label));
+  return tid;
+end $$;
 
-revoke all on table public.meeting_attendance from public, anon, authenticated;
-grant delete, insert, select, update on table public.meeting_attendance to authenticated;
+create or replace function public.reject_expense(p_id bigint, p_reason text) returns void
+language plpgsql security definer set search_path = public as $$
+declare r expense_requests; cur text;
+begin
+  select * into r from expense_requests where id = p_id for update;
+  if r.id is null or not has_role(r.association_id, array['president','vice_president']) then
+    raise exception 'Réservé au président et au vice-président.';
+  end if;
+  if r.status <> 'En attente' then raise exception 'Cette dépense a déjà été traitée.'; end if;
+  if length(trim(coalesce(p_reason, ''))) < 4 then raise exception 'Indiquez le motif du refus.'; end if;
+  select currency into cur from associations where id = r.association_id;
+  update expense_requests set status = 'Refusée', decided_by = auth.uid(), decided_label = actor_label(r.association_id),
+    decided_at = now(), decision_note = left(trim(p_reason), 500) where id = r.id;
+  perform write_log(r.association_id, format('a refusé la dépense de %s : %s. Motif : %s',
+    fmt_money(r.amount, cur), r.description, left(trim(p_reason), 500)));
+end $$;
 
-revoke all on table public.meetings from public, anon, authenticated;
-grant insert, select, update on table public.meetings to authenticated;
+-- Retirer sa propre proposition tant qu'elle est en attente.
+create or replace function public.cancel_expense(p_id bigint) returns void
+language plpgsql security definer set search_path = public as $$
+declare r expense_requests;
+begin
+  select * into r from expense_requests where id = p_id for update;
+  if r.id is null or r.requested_by is distinct from auth.uid() or not is_member(r.association_id) then
+    raise exception 'Seule la personne qui a proposé la dépense peut la retirer.';
+  end if;
+  if r.status <> 'En attente' then raise exception 'Cette dépense a déjà été traitée.'; end if;
+  update expense_requests set status = 'Annulée', decided_by = auth.uid(), decided_label = actor_label(r.association_id),
+    decided_at = now() where id = r.id;
+  perform write_log(r.association_id, format('a retiré sa demande de dépense : %s.', r.description));
+end $$;
 
-revoke all on table public.members from public, anon, authenticated;
-grant insert, select, update on table public.members to authenticated;
+-- Journal : activation / désactivation de la règle.
+create or replace function public.associations_log() returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  if new.expense_approval <> old.expense_approval then
+    perform write_log(new.id, case when new.expense_approval
+      then 'a activé la double validation des dépenses.'
+      else 'a désactivé la double validation des dépenses.' end);
+  end if;
+  return null;
+end $$;
+create trigger associations_log after update on public.associations
+  for each row execute function public.associations_log();
 
-revoke all on table public.messages from public, anon, authenticated;
-grant insert, select on table public.messages to authenticated;
-
-revoke all on table public.project_updates from public, anon, authenticated;
-grant insert, select on table public.project_updates to authenticated;
-
-revoke all on table public.projects from public, anon, authenticated;
-grant insert, select, update on table public.projects to authenticated;
-
-revoke all on table public.transactions from public, anon, authenticated;
-grant insert, select on table public.transactions to authenticated;
-
-revoke all on table public.v_balances from public, anon, authenticated;
-grant select on table public.v_balances to authenticated;
-
-revoke all on table public.v_category_totals from public, anon, authenticated;
-grant select on table public.v_category_totals to authenticated;
-
-revoke all on table public.v_member_paid from public, anon, authenticated;
-grant select on table public.v_member_paid to authenticated;
-
-revoke all on table public.v_project_totals from public, anon, authenticated;
-grant select on table public.v_project_totals to authenticated;
-
--- 10. Droits sur les fonctions
-
-revoke all on function public.actor_label(assoc uuid) from public, anon, authenticated;
-grant execute on function public.actor_label(assoc uuid) to public, anon, authenticated;
-
-revoke all on function public.associations_guard() from public, anon, authenticated;
-grant execute on function public.associations_guard() to public, anon, authenticated;
-
-revoke all on function public.attendance_check() from public, anon, authenticated;
-
-revoke all on function public.content_log() from public, anon, authenticated;
-grant execute on function public.content_log() to public, anon, authenticated;
-
-revoke all on function public.create_association(p_name text, p_full_name text, p_phone text, p_origin_country text, p_region text, p_prefecture text, p_village text, p_residence_country text, p_residence_city text, p_currency text, p_fee_amount bigint, p_fee_due_day integer) from public, anon, authenticated;
-grant execute on function public.create_association(p_name text, p_full_name text, p_phone text, p_origin_country text, p_region text, p_prefecture text, p_village text, p_residence_country text, p_residence_city text, p_currency text, p_fee_amount bigint, p_fee_due_day integer) to authenticated;
-
-revoke all on function public.fmt_money(amount bigint, cur text) from public, anon, authenticated;
-grant execute on function public.fmt_money(amount bigint, cur text) to public, anon, authenticated;
-
-revoke all on function public.forbid_change() from public, anon, authenticated;
-grant execute on function public.forbid_change() to public, anon, authenticated;
-
-revoke all on function public.force_creator() from public, anon, authenticated;
-grant execute on function public.force_creator() to public, anon, authenticated;
-
-revoke all on function public.has_role(assoc uuid, roles text[]) from public, anon, authenticated;
-grant execute on function public.has_role(assoc uuid, roles text[]) to public, anon, authenticated;
-
-revoke all on function public.hide_message(p_id bigint) from public, anon, authenticated;
-grant execute on function public.hide_message(p_id bigint) to authenticated;
-
-revoke all on function public.is_member(assoc uuid) from public, anon, authenticated;
-grant execute on function public.is_member(assoc uuid) to public, anon, authenticated;
-
-revoke all on function public.join_association(p_code text, p_full_name text, p_phone text) from public, anon, authenticated;
-grant execute on function public.join_association(p_code text, p_full_name text, p_phone text) to authenticated;
-
-revoke all on function public.meetings_guard() from public, anon, authenticated;
-
-revoke all on function public.meetings_log() from public, anon, authenticated;
-
-revoke all on function public.members_guard() from public, anon, authenticated;
-grant execute on function public.members_guard() to public, anon, authenticated;
-
-revoke all on function public.members_log() from public, anon, authenticated;
-grant execute on function public.members_log() to public, anon, authenticated;
-
-revoke all on function public.messages_check() from public, anon, authenticated;
-grant execute on function public.messages_check() to public, anon, authenticated;
-
-revoke all on function public.my_memberships() from public, anon, authenticated;
-grant execute on function public.my_memberships() to authenticated;
-
-revoke all on function public.project_update_check() from public, anon, authenticated;
-grant execute on function public.project_update_check() to public, anon, authenticated;
-
-revoke all on function public.projects_guard() from public, anon, authenticated;
-grant execute on function public.projects_guard() to public, anon, authenticated;
-
-revoke all on function public.regenerate_invite_code(p_assoc uuid) from public, anon, authenticated;
-grant execute on function public.regenerate_invite_code(p_assoc uuid) to authenticated;
-
-revoke all on function public.reverse_transaction(p_id bigint, p_reason text) from public, anon, authenticated;
-grant execute on function public.reverse_transaction(p_id bigint, p_reason text) to authenticated;
-
-revoke all on function public.review_join(p_member uuid, p_accept boolean) from public, anon, authenticated;
-grant execute on function public.review_join(p_member uuid, p_accept boolean) to authenticated;
-
-revoke all on function public.tx_check() from public, anon, authenticated;
-grant execute on function public.tx_check() to public, anon, authenticated;
-
-revoke all on function public.tx_log() from public, anon, authenticated;
-grant execute on function public.tx_log() to public, anon, authenticated;
-
-revoke all on function public.write_log(assoc uuid, msg text) from public, anon, authenticated;
-
--- 11. Stockage des justificatifs
-
-insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
-values ('proofs', 'proofs', false, 5242880, '{image/jpeg,image/png,image/webp,image/heic,application/pdf}'::text[])
-on conflict (id) do nothing;
-
-create policy proofs_read on storage.objects for select to authenticated
-  using (((bucket_id = 'proofs'::text) AND is_member(((storage.foldername(name))[1])::uuid)));
-
-create policy proofs_write on storage.objects for insert to authenticated
-  with check (((bucket_id = 'proofs'::text) AND has_role(((storage.foldername(name))[1])::uuid, ARRAY['tresorier'::text, 'president'::text, 'vice_president'::text])));
-
-commit;
+revoke execute on function public.expense_requests_check() from public, anon, authenticated;
+revoke execute on function public.expense_requests_log() from public, anon, authenticated;
+revoke execute on function public.associations_log() from public, anon, authenticated;
+revoke execute on function public.tx_check() from public, anon, authenticated;
+revoke execute on function public.tx_log() from public, anon, authenticated;
+revoke execute on function public.approve_expense(bigint) from public, anon;
+revoke execute on function public.reject_expense(bigint, text) from public, anon;
+revoke execute on function public.cancel_expense(bigint) from public, anon;
+grant execute on function public.approve_expense(bigint) to authenticated;
+grant execute on function public.reject_expense(bigint, text) to authenticated;
+grant execute on function public.cancel_expense(bigint) to authenticated;

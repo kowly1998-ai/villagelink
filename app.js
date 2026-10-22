@@ -126,6 +126,7 @@
     collect: ['tresorier', 'president', 'vice_president'],
     spend: ['tresorier'],
     reverse: ['tresorier'],
+    approve: ['president', 'vice_president'],
     projects: ['president', 'vice_president', 'projets'],
     announce: ['president', 'vice_president', 'secretaire'],
     meetings: ['president', 'vice_president', 'secretaire'],
@@ -166,11 +167,13 @@
         if (!n.error) notif = n.data.length;
       }
     } catch (e) { /* pas bloquant */ }
+    let expPending = 0;
+    try { const r = await sb.from('expense_requests').select('id').eq('association_id', id).eq('status', 'En attente').limit(99); if (!r.error) expPending = r.data.length; } catch (e) { /* double validation pas encore installée */ }
     try { if (navigator.setAppBadge) { if (notif) navigator.setAppBadge(notif); else navigator.clearAppBadge(); } } catch (e) { /* non pris en charge */ }
     const paidMap = new Map();
     paid.forEach(r => paidMap.set(r.member_id + '|' + r.period, Number(r.paid)));
     const me = members.find(m => m.user_id === S.user.id) || null;
-    S.ctx = { loadedAt: Date.now(), lastMsg, notif, lastLog, assoc: a, me, members, byId: new Map(members.map(m => [m.id, m])), paidMap,
+    S.ctx = { loadedAt: Date.now(), lastMsg, notif, expPending, lastLog, assoc: a, me, members, byId: new Map(members.map(m => [m.id, m])), paidMap,
       bal: { in: Number(bal ? bal.total_in : 0), out: Number(bal ? bal.total_out : 0) } };
     store.set('vl:last', id);
     return S.ctx;
@@ -430,6 +433,7 @@
       <section class="stack"><div class="between"><h2>Derniers mouvements</h2><a class="link" href="${B()}/finances">Tout voir</a></div>
         <div class="list">${lastOps.map(t => txItem(t, lastRev)).join('') || '<div class="empty">Aucune opération pour le moment. Elles s’afficheront ici avec leur date et leur heure.</div>'}</div></section>
       <a class="card between" href="${B()}/membres"><span><span class="t" style="font-weight:700">${act.length} membre${act.length > 1 ? 's' : ''}</span><br><span class="muted" style="font-size:13px">${onApp} sur l’application</span></span><span class="chev">${I.chev}</span></a>
+      ${S.ctx.expPending && can('approve') ? `<a class="card stack" href="${B()}/depenses" style="border-color:var(--warn)"><span class="eyebrow">À approuver</span><h2>${S.ctx.expPending} dépense${S.ctx.expPending > 1 ? 's' : ''} en attente</h2><span class="muted">Le trésorier attend votre accord avant de sortir l’argent de la caisse.</span></a>` : ''}
       ${pendingMembers().length && can('members') ? `<a class="card stack" href="${B()}/membres?f=pending" style="border-color:var(--warn)"><span class="eyebrow">À valider</span><h2>${pendingMembers().length} demande${pendingMembers().length > 1 ? 's' : ''} d’adhésion</h2><span class="muted">Vérifiez que ce sont bien des ressortissants du village avant de valider.</span></a>` : ''}
       ${projCard}
       ${act.length <= 1 && can('members') ? `<a class="card stack" href="${B()}/membres/import"><span class="eyebrow">Pour bien démarrer</span><h2>Ajoutez la liste des membres</h2><span class="muted">Collez-la depuis votre cahier, Excel ou WhatsApp, ou partagez le code d’invitation.</span></a>` : ''}
@@ -626,7 +630,8 @@
     const rset = await reversedSet(rows);
     const link = (np) => `${B()}/finances?f=${f}&p=${np}`;
     return `${subHead('Finances', B() + '/plus')}
-      <div class="row" style="flex-wrap:wrap">${can('collect') ? `<a class="btn primary sm" href="${B()}/operation?type=in">+ Recette</a>` : ''}${can('spend') ? `<a class="btn ghost sm" href="${B()}/operation?type=out">+ Dépense</a>` : ''}</div>
+      <div class="row" style="flex-wrap:wrap">${can('collect') ? `<a class="btn primary sm" href="${B()}/operation?type=in">+ Recette</a>` : ''}${can('spend') ? `<a class="btn ghost sm" href="${B()}/operation?type=out">${S.ctx.assoc.expense_approval ? '+ Proposer une dépense' : '+ Dépense'}</a>` : ''}</div>
+      ${S.ctx.assoc.expense_approval || S.ctx.expPending ? `<a class="card between" href="${B()}/depenses"><span><b>Dépenses à valider</b><br><span class="muted" style="font-size:13px">${S.ctx.expPending ? S.ctx.expPending + ' en attente d’approbation' : 'Aucune en attente · voir l’historique'}</span></span>${S.ctx.expPending ? `<span class="pill p-late num">${S.ctx.expPending}</span>` : `<span class="chev">${I.chev}</span>`}</a>` : ''}
       <div class="chips" role="group" aria-label="Filtrer">${[['all', 'Tout'], ['hors', 'Hors cotisations'], ['in', 'Recettes'], ['out', 'Dépenses']].map(([k, l]) => `<a class="chip" style="text-decoration:none" href="${B()}/finances?f=${k}" aria-pressed="${f === k}">${l}</a>`).join('')}</div>
       <div class="list">${rows.map(t => txItem(t, rset)).join('') || '<div class="empty">Aucune opération.</div>'}</div>
       ${p || more ? `<div class="pager">${p ? `<a class="btn ghost sm" href="${link(p - 1)}">← Plus récentes</a>` : '<span></span>'}${more ? `<a class="btn ghost sm" href="${link(p + 1)}">Plus anciennes →</a>` : ''}</div>` : ''}`;
@@ -639,7 +644,9 @@
     const projects = must(await sb.from('projects').select('id,name,status').eq('association_id', S.ctx.assoc.id).neq('status', 'Terminé').order('created_at', { ascending: false }));
     const cats = type === 'out' ? CAT_OUT : CAT_IN;
     const pre = q.get('projet') || '';
-    return `${subHead(type === 'out' ? 'Nouvelle dépense' : 'Nouvelle recette', B() + '/finances')}
+    const approval = type === 'out' && S.ctx.assoc.expense_approval;
+    return `${subHead(approval ? 'Proposer une dépense' : type === 'out' ? 'Nouvelle dépense' : 'Nouvelle recette', B() + '/finances')}
+      ${approval ? '<p class="note">Double validation : la dépense n’entrera dans la caisse qu’après l’approbation du président ou du vice-président. Joignez le reçu pour l’aider à décider.</p>' : ''}
       ${type === 'in' ? `<p class="note">Pour une cotisation mensuelle, utilisez plutôt <a class="link" href="${B()}/encaisser">Enregistrer un paiement</a> : le membre sera marqué à jour.</p>` : ''}
       <form class="stack" data-form="op" data-type="${type}" novalidate>
         <div class="field"><label for="op-cat">Catégorie</label><select id="op-cat" name="category">${cats.map(c => opt(c, c, pre && type === 'in' ? 'Dons' : pre ? 'Projet' : '')).join('')}</select></div>
@@ -650,7 +657,7 @@
         <div class="field"><label for="op-date">Date</label><input id="op-date" name="occurred_on" type="date" value="${todayISO()}" max="${todayISO()}"></div>
         <div class="field"><label for="op-f">Justificatif (photo ou PDF, facultatif)</label><input id="op-f" name="proof" type="file" accept="image/*,application/pdf"><p class="help">La photo est réduite avant l’envoi pour économiser vos données.</p></div>
         <div class="field"><label for="op-c">Commentaire (facultatif)</label><input id="op-c" name="comment"></div>
-        <p class="err" hidden></p><button class="btn primary block" type="submit">Enregistrer</button></form>`;
+        <p class="err" hidden></p><button class="btn primary block" type="submit">${approval ? 'Envoyer pour approbation' : 'Enregistrer'}</button></form>`;
   };
 
   V.op = async (sub, q) => {
@@ -672,7 +679,7 @@
         <a class="btn wa block" target="_blank" rel="noopener" href="${waTo(m.phone, receipt)}">${I.wa} Envoyer le reçu sur WhatsApp</a>
         <a class="btn ghost block" href="${B()}/encaisser">Enregistrer un autre paiement</a>` : `
       <section class="card stack num"><div class="between"><span class="pill ${t.kind === 'in' ? 'p-ok' : 'p-red'}">${t.kind === 'in' ? 'Recette' : 'Dépense'} · ${esc(t.category)}</span><span class="amt ${effect(t) >= 0 ? 'in' : 'out'}" style="font-size:18px">${effect(t) >= 0 ? '+' : '−'}${money(Math.abs(t.amount))}</span></div>
-        <dl class="kv" style="margin:0"><dt>Objet</dt><dd>${esc(t.description)}</dd>${m ? `<dt>Membre</dt><dd>${esc(m.full_name)}</dd>` : ''}${t.period ? `<dt>Mois</dt><dd>${pFR(t.period)}</dd>` : ''}${proj ? `<dt>Projet</dt><dd>${esc(proj.name)}</dd>` : ''}<dt>Date</dt><dd>${dFR(t.occurred_on)}</dd>${t.payment_method ? `<dt>Mode</dt><dd>${esc(t.payment_method)}</dd>` : ''}<dt>Saisi par</dt><dd>${esc(author ? author.full_name : '—')}</dd><dt>Saisi le</dt><dd>${dFR(t.created_at)} à ${hm(t.created_at)}</dd>${t.comment ? `<dt>${t.reversal_of ? 'Motif' : 'Commentaire'}</dt><dd>${esc(t.comment)}</dd>` : ''}</dl>
+        <dl class="kv" style="margin:0"><dt>Objet</dt><dd>${esc(t.description)}</dd>${m ? `<dt>Membre</dt><dd>${esc(m.full_name)}</dd>` : ''}${t.period ? `<dt>Mois</dt><dd>${pFR(t.period)}</dd>` : ''}${proj ? `<dt>Projet</dt><dd>${esc(proj.name)}</dd>` : ''}<dt>Date</dt><dd>${dFR(t.occurred_on)}</dd>${t.payment_method ? `<dt>Mode</dt><dd>${esc(t.payment_method)}</dd>` : ''}<dt>${t.approved_label ? 'Proposé par' : 'Saisi par'}</dt><dd>${esc(author ? author.full_name : t.requested_label || '—')}</dd>${t.approved_label ? `<dt>Approuvé par</dt><dd>${esc(t.approved_label)}</dd>` : ''}<dt>Saisi le</dt><dd>${dFR(t.created_at)} à ${hm(t.created_at)}</dd>${t.comment ? `<dt>${t.reversal_of ? 'Motif' : 'Commentaire'}</dt><dd>${esc(t.comment)}</dd>` : ''}</dl>
         ${t.proof_path ? `<button class="btn ghost sm" data-act="proof" data-path="${esc(t.proof_path)}">Voir le justificatif</button><div id="proof-box"></div>` : '<span class="muted" style="font-size:13px">Aucun justificatif</span>'}</section>
       ${rev ? `<p class="note">Opération annulée le ${dFR(rev.occurred_on)} par la contre-écriture <a class="link" href="${B()}/op/${rev.id}">${txRef(rev.id)}</a>. Motif : ${esc(rev.comment)}</p>` : ''}
       ${orig ? `<p class="note">Cette ligne annule <a class="link" href="${B()}/op/${orig.id}">${txRef(orig.id)}</a>. Les deux restent visibles dans l’historique.</p>` : ''}
@@ -683,6 +690,35 @@
     const a = S.ctx.assoc;
     return `Reçu ${txRef(t.id)}\n${a.name}\n\n${m ? 'Membre : ' + m.full_name + '\n' : ''}${t.description}\nMontant : ${money(t.amount)}\nMode : ${t.payment_method || '—'}\nDate : ${whenTx(t)}\nEnregistré par : ${author ? author.full_name : S.ctx.me.full_name}\n\nMerci pour votre contribution au développement de ${a.village || 'notre village'}.`;
   }
+
+  /* Double validation des dépenses ----------------------------------- */
+  const EXP_PILL = { 'En attente': 'p-late', 'Approuvée': 'p-ok', 'Refusée': 'p-red', 'Annulée': 'p-blue' };
+  V.depenses = async (sub, q) => {
+    const f = q.get('f') === 'tout' ? 'tout' : 'attente';
+    let qy = sb.from('expense_requests').select('*').eq('association_id', S.ctx.assoc.id);
+    if (f === 'attente') qy = qy.eq('status', 'En attente');
+    const rows = must(await qy.order('id', { ascending: false }).limit(60));
+    return `${subHead('Dépenses à valider', B() + '/finances')}
+      <p class="note">${S.ctx.assoc.expense_approval ? 'Double validation active : le trésorier propose, le président ou le vice-président approuve. Une dépense n’entre dans la caisse qu’après approbation.' : 'La double validation est désactivée : le trésorier enregistre les dépenses directement.'}</p>
+      <div class="chips" role="group" aria-label="Filtrer"><a class="chip" style="text-decoration:none" href="${B()}/depenses" aria-pressed="${f === 'attente'}">En attente (${S.ctx.expPending})</a><a class="chip" style="text-decoration:none" href="${B()}/depenses?f=tout" aria-pressed="${f === 'tout'}">Historique</a></div>
+      <div class="list">${rows.map(r => `<a class="item" href="${B()}/depense/${r.id}"><div class="body"><div class="t">${esc(r.description)}</div><div class="s wrap">${dFR(r.created_at)} · ${esc(r.category)} · <span class="pill ${EXP_PILL[r.status]}">${esc(r.status)}</span></div></div><span class="amt num out">−${money(r.amount)}</span></a>`).join('') || `<div class="empty">${f === 'attente' ? 'Aucune dépense en attente.' : 'Aucune proposition de dépense.'}</div>`}</div>`;
+  };
+  V.depense = async (sub) => {
+    const r = must(await sb.from('expense_requests').select('*').eq('association_id', S.ctx.assoc.id).eq('id', Number(sub[1])).maybeSingle());
+    if (!r) return subHead('Dépense introuvable', B() + '/depenses');
+    const proj = r.project_id ? must(await sb.from('projects').select('id,name').eq('id', r.project_id).maybeSingle()) : null;
+    const pending = r.status === 'En attente', mine = r.requested_by === S.user.id, solde = S.ctx.bal.in - S.ctx.bal.out;
+    return `${subHead('Proposition de dépense', B() + '/depenses')}
+      <section class="card stack num"><div class="between"><span class="pill ${EXP_PILL[r.status]}">${esc(r.status)}</span><span class="amt out" style="font-size:18px">−${money(r.amount)}</span></div>
+        <dl class="kv" style="margin:0"><dt>Objet</dt><dd>${esc(r.description)}</dd><dt>Catégorie</dt><dd>${esc(r.category)}</dd>${proj ? `<dt>Projet</dt><dd>${esc(proj.name)}</dd>` : ''}<dt>Date</dt><dd>${dFR(r.occurred_on)}</dd><dt>Proposé par</dt><dd>${esc(r.requested_label)}</dd><dt>Le</dt><dd>${dFR(r.created_at)} à ${hm(r.created_at)}</dd>${r.comment ? `<dt>Commentaire</dt><dd>${esc(r.comment)}</dd>` : ''}${r.decided_at ? `<dt>${r.status === 'Annulée' ? 'Retiré par' : r.status === 'Approuvée' ? 'Approuvé par' : 'Refusé par'}</dt><dd>${esc(r.decided_label)}, le ${dFR(r.decided_at)}</dd>` : ''}${r.decision_note ? `<dt>Motif</dt><dd>${esc(r.decision_note)}</dd>` : ''}</dl>
+        ${r.proof_path ? `<button class="btn ghost sm" data-act="proof" data-path="${esc(r.proof_path)}">Voir le justificatif</button><div id="proof-box"></div>` : '<span class="muted" style="font-size:13px">Aucun justificatif joint</span>'}</section>
+      ${r.tx_id ? `<a class="btn ghost block" href="${B()}/op/${r.tx_id}">Voir l’opération dans la caisse</a>` : ''}
+      ${pending && can('approve') && !mine ? `<section class="card stack"><h2>Votre décision</h2><p class="muted num" style="margin:0;font-size:13.5px">Solde actuel de la caisse : ${money(solde)}${r.amount > solde ? ' : <b style="color:var(--danger)">insuffisant pour cette dépense</b>' : ''}.</p>
+        <button class="btn primary block" data-act="approveexp" data-id="${r.id}" ${r.amount > solde ? 'disabled' : ''}>Approuver la dépense</button></section>
+        <form class="card stack" data-form="rejectexp" data-id="${r.id}" novalidate><h2>Refuser</h2><div class="field"><label for="rj-r">Motif du refus</label><input id="rj-r" name="reason" placeholder="Ex. demander un deuxième devis"></div><p class="err" hidden></p><button class="btn danger block" type="submit">Refuser la dépense</button></form>` : ''}
+      ${pending && mine ? `<p class="note">En attente de l’approbation du président ou du vice-président. Prévenez-les sur WhatsApp.</p><button class="btn ghost block" data-act="cancelexp" data-id="${r.id}">Retirer ma proposition</button>` : ''}
+      ${pending && !mine && !can('approve') ? '<p class="note">En attente de l’approbation du président ou du vice-président.</p>' : ''}`;
+  };
 
   /* Transparence ----------------------------------------------------- */
   V.transparence = async () => {
@@ -998,7 +1034,7 @@ Abstention</textarea><p class="help">Entre 2 et 10 choix.</p></div>
 
   /* Notifications ---------------------------------------------------- */
   const NOTIF_LINKS = [[/annonce/i, 'annonces', I.mega], [/réunion|compte rendu|convocation/i, 'reunions', I.cal], [/vote/i, 'votes', I.vote], [/document/i, 'documents', I.doc],
-    [/cotisation|recette|dépense|opération|contre-écriture/i, 'finances', I.list], [/projet|mise à jour/i, 'projets', I.drop], [/membre|adhésion|rôle|retiré|réintégré|bureau|rejoindre|demande de/i, 'membres', I.users], [/message|discussion/i, 'discussion', I.chat]];
+    [/approbation|approuvé la dépense|refusé la dépense|demande de dépense|double validation/i, 'depenses', I.list], [/cotisation|recette|dépense|opération|contre-écriture/i, 'finances', I.list], [/projet|mise à jour/i, 'projets', I.drop], [/membre|adhésion|rôle|retiré|réintégré|bureau|rejoindre|demande de/i, 'membres', I.users], [/message|discussion/i, 'discussion', I.chat]];
   V.notifications = async () => {
     const a = S.ctx.assoc, seenKey = 'vl:notif:' + a.id, seen = Number(store.get(seenKey) || 0);
     const rows = must(await sb.from('activity_log').select('*').eq('association_id', a.id).order('id', { ascending: false }).limit(40));
@@ -1056,7 +1092,7 @@ Abstention</textarea><p class="help">Entre 2 et 10 choix.</p></div>
       <div class="list menu"><a class="item" href="#/bienvenue"><span class="ico">${I.swap}</span><div class="body"><div class="t">Mes associations</div><div class="s">Changer, rejoindre ou créer une association</div></div><span class="chev">${I.chev}</span></a>
       <button class="item" data-act="signout"><span class="ico">${I.out}</span><div class="body"><div class="t">Se déconnecter</div><div class="s">${esc(S.user.email || '')}</div></div></button></div>
       <section class="card stack"><h2>Affichage</h2><div class="seg seg3" role="group" aria-label="Thème">${THEMES.map(([k, l]) => `<button data-act="theme" data-theme="${k}" aria-pressed="${themeNow() === k}">${l}</button>`).join('')}</div><p class="help">« Auto » suit le réglage clair ou sombre de votre téléphone.</p></section>
-      <p class="muted" style="font-size:12.5px;text-align:center">VillageLink · version 1.10.2 · <a class="link" href="confidentialite.html">Confidentialité</a> · <a class="link" href="conditions.html">Conditions</a></p>`;
+      <p class="muted" style="font-size:12.5px;text-align:center">VillageLink · version 1.11 · <a class="link" href="confidentialite.html">Confidentialité</a> · <a class="link" href="conditions.html">Conditions</a></p>`;
   };
 
   V.parametres = async () => {
@@ -1074,6 +1110,8 @@ Abstention</textarea><p class="help">Entre 2 et 10 choix.</p></div>
         <div class="row2"><div class="field"><label for="as-fee">Montant par mois</label><input id="as-fee" name="fee_amount" type="number" inputmode="numeric" min="0" step="1" value="${esc(a.fee_amount)}" ${ro}></div><div class="field"><label for="as-due">Jour d’échéance</label><input id="as-due" name="fee_due_day" type="number" inputmode="numeric" min="1" max="28" value="${esc(a.fee_due_day)}" ${ro}></div></div>
         <div class="field"><label for="as-start">Suivre les cotisations à partir de</label><input id="as-start" name="dues_start" type="month" value="${esc(ym(a.dues_start))}" ${ro}><p class="help">Les mois précédents ne comptent pas comme des retards.</p></div>
         <div class="field"><label for="as-cur">Monnaie</label><select id="as-cur" name="currency" ${ro}>${CURRENCIES.map(([k, l]) => opt(k, l, a.currency)).join('')}</select></div>
+        <span class="eyebrow">Dépenses</span>
+        <div class="field"><label class="check" style="align-items:flex-start"><input type="checkbox" name="expense_approval" ${a.expense_approval ? 'checked' : ''} ${ro} style="margin-top:2px"> <span><b>Double validation des dépenses</b><br><span class="muted" style="font-size:13px;font-weight:400">Le trésorier propose, le président ou le vice-président approuve. Aucune sortie d’argent sans deux personnes.</span></span></label></div>
         <span class="eyebrow">Fiche de l’association</span>
         <div class="field"><label for="as-name">Nom</label><input id="as-name" name="name" value="${esc(a.name)}" ${ro}></div>
         <div class="row2"><div class="field"><label for="as-vil">Village d’origine</label><input id="as-vil" name="village" value="${esc(a.village)}" ${ro}></div><div class="field"><label for="as-oc">Pays d’origine</label><input id="as-oc" name="origin_country" value="${esc(a.origin_country)}" ${ro}></div></div>
@@ -1211,6 +1249,13 @@ Abstention</textarea><p class="help">Entre 2 et 10 choix.</p></div>
         proof_path = `${S.ctx.assoc.id}/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
         must(await sb.storage.from('proofs').upload(proof_path, file, { contentType: file.type, upsert: false }));
       }
+      if (kind === 'out' && S.ctx.assoc.expense_approval) {
+        const r = must(await sb.from('expense_requests').insert({
+          association_id: S.ctx.assoc.id, category: val(fd, 'category'), amount, occurred_on: val(fd, 'occurred_on') || todayISO(),
+          description: desc, project_id: val(fd, 'project_id') || null, comment: val(fd, 'comment'), proof_path
+        }).select('id').single());
+        await refresh(); toast('Dépense envoyée pour approbation'); return go(B() + '/depense/' + r.id);
+      }
       const t = must(await sb.from('transactions').insert({
         association_id: S.ctx.assoc.id, kind, category: val(fd, 'category'), amount, occurred_on: val(fd, 'occurred_on') || todayISO(),
         description: desc, project_id: val(fd, 'project_id') || null, payment_method: val(fd, 'payment_method'), comment: val(fd, 'comment'), proof_path
@@ -1222,6 +1267,12 @@ Abstention</textarea><p class="help">Entre 2 et 10 choix.</p></div>
       if (reason.length < 4) fail('Indiquez le motif de l’annulation.');
       const nid = must(await sb.rpc('reverse_transaction', { p_id: Number(form.dataset.id), p_reason: reason }));
       await refresh(); toast('Contre-écriture enregistrée'); go(B() + '/op/' + nid);
+    },
+    async rejectexp(fd, form) {
+      const reason = val(fd, 'reason');
+      if (reason.length < 4) fail('Indiquez le motif du refus.');
+      must(await sb.rpc('reject_expense', { p_id: Number(form.dataset.id), p_reason: reason }));
+      await refresh(); toast('Dépense refusée'); route();
     },
     async project(fd, form) {
       const id = form.dataset.id, name = val(fd, 'name'), goal = intVal(fd, 'goal'), start = val(fd, 'start_on'), end = val(fd, 'end_on');
@@ -1300,7 +1351,7 @@ Abstention</textarea><p class="help">Entre 2 et 10 choix.</p></div>
       if (isNaN(fee) || fee < 0) fail('Montant de cotisation invalide.');
       if (isNaN(due) || due < 1 || due > 28) fail('Le jour d’échéance doit être entre 1 et 28.');
       if (!/^\d{4}-\d{2}$/.test(start)) fail('Choisissez le mois de début du suivi.');
-      const row = { fee_amount: fee, fee_due_day: due, dues_start: start + '-01', currency: val(fd, 'currency'), founded_on: val(fd, 'founded_on') || null };
+      const row = { fee_amount: fee, fee_due_day: due, dues_start: start + '-01', currency: val(fd, 'currency'), founded_on: val(fd, 'founded_on') || null, expense_approval: fd.get('expense_approval') === 'on' };
       ['name', 'village', 'origin_country', 'region', 'prefecture', 'residence_city', 'residence_country', 'description'].forEach(k => { row[k] = val(fd, k); });
       must(await sb.from('associations').update(row).eq('id', S.ctx.assoc.id).select('id').single());
       await refresh(); toast('Association enregistrée'); route();
@@ -1385,6 +1436,18 @@ Abstention</textarea><p class="help">Entre 2 et 10 choix.</p></div>
         toast('Document retiré'); route();
       }
       else if (act === 'print') { window.print(); }
+      else if (act === 'approveexp') {
+        if (b.dataset.confirm !== '1') { b.dataset.confirm = '1'; b.textContent = 'Confirmer : la dépense sort de la caisse'; return; }
+        b.disabled = true;
+        const tid = must(await sb.rpc('approve_expense', { p_id: Number(b.dataset.id) }));
+        await refresh(); toast('Dépense approuvée'); go(B() + '/op/' + tid);
+      }
+      else if (act === 'cancelexp') {
+        if (b.dataset.confirm !== '1') { b.dataset.confirm = '1'; b.textContent = 'Confirmer le retrait'; return; }
+        b.disabled = true;
+        must(await sb.rpc('cancel_expense', { p_id: Number(b.dataset.id) }));
+        await refresh(); toast('Proposition retirée'); route();
+      }
       else if (act === 'review') {
         const ok = b.dataset.ok === '1';
         if (!ok && b.dataset.confirm !== '1') { b.dataset.confirm = '1'; b.textContent = 'Confirmer le refus'; return; }
