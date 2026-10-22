@@ -52,3 +52,21 @@ self.addEventListener('fetch', e => {
   const asset = url.hostname === 'cdn.jsdelivr.net' || url.hostname === 'fonts.googleapis.com' || url.hostname === 'fonts.gstatic.com';
   if (sameOrigin || asset) e.respondWith(networkFirst(req, SHELL));
 });
+
+// Notifications (rappels de cotisation, version 1.18)
+self.addEventListener('push', e => {
+  let d = {};
+  try { d = e.data ? e.data.json() : {}; } catch (err) { d = { body: e.data ? e.data.text() : '' }; }
+  e.waitUntil(self.registration.showNotification(d.title || 'VillageLink', {
+    body: d.body || '', icon: 'icon-192.png', badge: 'icon-192.png', tag: d.tag || undefined, lang: 'fr', data: { url: d.url || '#/' }
+  }));
+});
+self.addEventListener('notificationclick', e => {
+  e.notification.close();
+  const hash = String((e.notification.data || {}).url || '#/');
+  const target = new URL('./' + (hash.startsWith('#') ? hash : '#/'), self.registration.scope).href;
+  e.waitUntil(self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(list => {
+    for (const c of list) { if (c.url.startsWith(self.registration.scope) && 'focus' in c) { c.navigate(target).catch(() => {}); return c.focus(); } }
+    return self.clients.openWindow(target);
+  }));
+});

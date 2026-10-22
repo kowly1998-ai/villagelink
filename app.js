@@ -1411,9 +1411,48 @@ Abstention</textarea><p class="help">Entre 2 et 10 choix.</p></div>
       <div class="list menu">${items.map(([k, t, s, ic]) => `<a class="item" href="${B()}/${k}"><span class="ico">${ic}</span><div class="body"><div class="t">${t}</div><div class="s">${s}</div></div><span class="chev">${I.chev}</span></a>`).join('')}</div>
       <div class="list menu"><a class="item" href="#/bienvenue"><span class="ico">${I.swap}</span><div class="body"><div class="t">Mes associations</div><div class="s">Changer, rejoindre ou créer une association</div></div><span class="chev">${I.chev}</span></a>
       <button class="item" data-act="signout"><span class="ico">${I.out}</span><div class="body"><div class="t">Se déconnecter</div><div class="s">${esc(S.user.email || '')}</div></div></button></div>
+      <section class="card stack" id="push-card"><h2>Rappels sur ce téléphone</h2><p class="muted" style="margin:0;font-size:13.5px">Recevez une notification 3 jours avant l’échéance de votre cotisation, le jour même, et en cas de retard.</p><div id="push-state" class="stack"><span class="muted">Vérification…</span></div></section>
       <section class="card stack"><h2>Affichage</h2><div class="seg seg3" role="group" aria-label="Thème">${THEMES.map(([k, l]) => `<button data-act="theme" data-theme="${k}" aria-pressed="${themeNow() === k}">${l}</button>`).join('')}</div><p class="help">« Auto » suit le réglage clair ou sombre de votre téléphone.</p></section>
-      <p class="muted" style="font-size:12.5px;text-align:center">VillageLink · version 1.17 · <a class="link" href="confidentialite.html">Confidentialité</a> · <a class="link" href="conditions.html">Conditions</a></p>`;
+      <p class="muted" style="font-size:12.5px;text-align:center">VillageLink · version 1.18 · <a class="link" href="confidentialite.html">Confidentialité</a> · <a class="link" href="conditions.html">Conditions</a></p>`;
   };
+
+  /* Notifications sur le téléphone ----------------------------------- */
+  const VAPID_PUBLIC = 'BHdpu4C4Fk4SvXgfSIzwgUIdpNPU4jLnPYFVuDVegMGDbiXhQuA5UqO5rDp3jQrCY0RFzYq2AFihYshAxKF_zY0';
+  const b64u = s => { const p = '='.repeat((4 - s.length % 4) % 4), b = atob((s + p).replace(/-/g, '+').replace(/_/g, '/')); return Uint8Array.from(b, c => c.charCodeAt(0)); };
+  const pushSupported = () => 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window && (location.protocol === 'https:' || location.hostname === '127.0.0.1');
+  async function pushSub() { if (!pushSupported()) return null; const reg = await navigator.serviceWorker.getRegistration(); return reg ? reg.pushManager.getSubscription() : null; }
+  async function drawPush() {
+    const box = $('#push-state'); if (!box) return;
+    if (!pushSupported()) { box.innerHTML = '<p class="note" style="margin:0">Ce navigateur ne reçoit pas les notifications. Sur Android, ouvrez VillageLink dans Chrome et installez l’application. Sur iPhone, ajoutez-la d’abord à l’écran d’accueil.</p>'; return; }
+    if (Notification.permission === 'denied') { box.innerHTML = '<p class="note" style="margin:0">Les notifications sont bloquées pour VillageLink. Autorisez-les dans les réglages du navigateur (cadenas à côté de l’adresse → Notifications), puis revenez ici.</p>'; return; }
+    let sub = null; try { sub = await pushSub(); } catch (e) { /* rien */ }
+    box.innerHTML = sub
+      ? '<span class="pill p-ok" style="width:max-content">Activés sur ce téléphone</span><div class="row" style="flex-wrap:wrap"><button class="btn ghost sm" data-act="pushtest">Envoyer une notification de test</button><button class="btn ghost sm" data-act="pushoff">Désactiver</button></div>'
+      : '<button class="btn primary block" data-act="pushon">Activer les rappels</button>';
+  }
+  async function pushOn() {
+    if (!pushSupported()) fail('Ce navigateur ne reçoit pas les notifications.');
+    const perm = await Notification.requestPermission();
+    if (perm !== 'granted') fail('Autorisez les notifications pour recevoir les rappels.');
+    const reg = await navigator.serviceWorker.register('sw.js'); await navigator.serviceWorker.ready;
+    let sub = await reg.pushManager.getSubscription();
+    if (!sub) sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64u(VAPID_PUBLIC) });
+    const j = sub.toJSON();
+    must(await sb.rpc('save_push_subscription', { p_endpoint: j.endpoint, p_p256dh: j.keys.p256dh, p_auth: j.keys.auth, p_ua: navigator.userAgent.slice(0, 300) }));
+  }
+  async function pushOff(silent) {
+    const sub = await pushSub().catch(() => null); if (!sub) return;
+    try { await sb.rpc('remove_push_subscription', { p_endpoint: sub.endpoint }); } catch (e) { if (!silent) throw e; }
+    await sub.unsubscribe().catch(() => {});
+  }
+  async function pushTest() {
+    const { data } = await sb.auth.getSession(), tok = data && data.session && data.session.access_token;
+    const r = await fetch(CFG.supabaseUrl + '/functions/v1/send-reminders', { method: 'POST', headers: { 'Content-Type': 'application/json', apikey: CFG.supabaseAnonKey, Authorization: 'Bearer ' + tok }, body: '{}' });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) fail(j.error || 'Envoi impossible pour le moment.');
+    if (!j.sent) fail('Ce téléphone n’est plus inscrit. Désactivez puis réactivez les rappels.');
+  }
+  AFTER.plus = () => { drawPush(); };
 
   V.parametres = async () => {
     const a = S.ctx.assoc, pres = can('settings');
@@ -1741,7 +1780,7 @@ Abstention</textarea><p class="help">Entre 2 et 10 choix.</p></div>
         const r = await sb.auth.signInWithOAuth({ provider: 'google', options: { redirectTo: location.origin + location.pathname } });
         if (r.error) { b.disabled = false; throw r.error; }
       }
-      else if (act === 'signout') { clearOfflineData(); await sb.auth.signOut(); S.ctx = null; S.authMode = 'login'; S.authMsg = ''; S.session = null; S.user = null; location.hash = '#/'; renderAuth(); }
+      else if (act === 'signout') { await pushOff(true).catch(() => {}); clearOfflineData(); await sb.auth.signOut(); S.ctx = null; S.authMode = 'login'; S.authMsg = ''; S.session = null; S.user = null; location.hash = '#/'; renderAuth(); }
       else if (act === 'reload') location.reload();
       else if (act === 'theme') { store.set('vl:theme', b.dataset.theme); applyTheme(); document.querySelectorAll('[data-act=theme]').forEach(x => x.setAttribute('aria-pressed', String(x === b))); }
       else if (act === 'hidemsg') {
@@ -1796,6 +1835,9 @@ Abstention</textarea><p class="help">Entre 2 et 10 choix.</p></div>
         toast('Document retiré'); route();
       }
       else if (act === 'print') { window.print(); }
+      else if (act === 'pushon') { b.disabled = true; try { await pushOn(); toast('Rappels activés sur ce téléphone'); } finally { drawPush(); } }
+      else if (act === 'pushoff') { b.disabled = true; try { await pushOff(false); toast('Rappels désactivés'); } finally { drawPush(); } }
+      else if (act === 'pushtest') { b.disabled = true; try { await pushTest(); toast('Notification envoyée'); } finally { b.disabled = false; } }
       else if (act === 'rec') { await voiceToggle(b.dataset.key); }
       else if (act === 'recdel') { voiceDone(b.dataset.key); voiceDraw(b.dataset.key); }
       else if (act === 'play') {
