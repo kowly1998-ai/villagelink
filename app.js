@@ -250,6 +250,7 @@
       if (!S.session) { if (!document.querySelector('form[data-form=auth]')) renderAuth(); return; }
       if (parts[0] === 'mot-de-passe') return renderNewPassword();
       if (parts[0] === 'bienvenue') return await renderWelcome();
+      if (parts[0] === 'admin') return await renderAdmin();
       if (parts[0] === 'a' && parts[1]) return await renderAssoc(parts[1], parts.slice(2), q);
       return await goHome();
     } catch (e) {
@@ -303,9 +304,41 @@
   /* ------------------------------------------------------------------
      Accueil sans association : créer ou rejoindre
   ------------------------------------------------------------------ */
+  // Tableau de bord du propriétaire : totaux globaux, aucune donnée personnelle.
+  async function renderAdmin() {
+    root.innerHTML = '<div class="loading">Chargement du tableau de bord…</div>';
+    const r = await sb.rpc('owner_stats');
+    if (r.error) { root.innerHTML = `<div class="auth"><section class="card stack"><h2>Accès réservé</h2><p class="muted" style="margin:0">Ce tableau de bord est réservé au propriétaire de VillageLink.</p><a class="btn primary" href="#/bienvenue">Mes associations</a></section></div>`; return; }
+    const d = r.data, N = n => num(n), pc = (a, b) => (b ? Math.round(a / b * 100) : 0);
+    const wk = d.weekly || [], maxA = Math.max(1, ...wk.map(w => w.users));
+    const ago = ts => { if (!ts) return 'jamais'; const h = (Date.now() - new Date(ts)) / 3600e3; return h < 1 ? 'il y a moins d’1 h' : h < 24 ? `il y a ${Math.round(h)} h` : `il y a ${Math.round(h / 24)} j`; };
+    const health = a => { const h = a.last_activity ? (Date.now() - new Date(a.last_activity)) / 864e5 : 999; return h <= 7 ? ['p-ok', 'Active'] : h <= 30 ? ['p-late', 'Ralentit'] : ['p-red', 'Endormie']; };
+    const tile = (v, l, s2) => `<div class="stat"><span class="v num">${v}</span><span class="l">${l}</span>${s2 ? `<span class="l">${s2}</span>` : ''}</div>`;
+    root.innerHTML = `<div class="auth admin" style="max-width:720px">
+      <div class="between"><a class="brand" href="#/bienvenue" style="text-decoration:none;color:inherit"><div class="logo">V</div><b>Tableau de bord</b></a><button class="btn ghost sm" data-act="reload">Actualiser</button></div>
+      <p class="muted" style="margin:0;font-size:13px">Chiffres de toutes les associations, au ${dFR(d.generated_at)} à ${hm(d.generated_at)}.</p>
+      <div class="grid2">
+        ${tile(N(d.associations), 'Associations', d.associations_30d ? '+' + N(d.associations_30d) + ' en 30 jours' : 'aucune nouvelle en 30 jours')}
+        ${tile(N(d.members), 'Membres', N(d.members_on_app) + ' sur l’application (' + pc(d.members_on_app, d.members) + NB + '%)')}
+        ${tile(N(d.active_users_7d), 'Actifs cette semaine', N(d.active_users_30d) + ' sur 30 jours')}
+        ${tile(N(d.accounts), 'Comptes créés', d.accounts_30d ? '+' + N(d.accounts_30d) + ' en 30 jours' : '')}
+        ${tile(N(d.tx_30d), 'Opérations en 30 jours', '')}
+        ${tile(N(d.push_devices), 'Téléphones avec rappels', '')}
+      </div>
+      ${(d.volume || []).length ? `<section class="card stack"><h2>Argent suivi dans VillageLink</h2>${d.volume.map(v => `<div class="between num"><span>Encaissé en ${esc(CUR_LABEL[v.currency] || v.currency)}</span><b>${money(v.total_in || 0, v.currency)}</b></div>`).join('')}</section>` : ''}
+      <section class="card stack"><h2>Personnes actives par semaine</h2>
+        ${wk.length ? `<div class="wkbars" role="img" aria-label="Personnes actives par semaine sur 12 semaines">${wk.map(w => `<div class="wk"><span class="n num">${w.users}</span><i style="height:${Math.max(4, Math.round(w.users / maxA * 100))}%"></i><small>${new Date(w.week + 'T12:00:00').getDate()}/${new Date(w.week + 'T12:00:00').getMonth() + 1}</small></div>`).join('')}</div>` : '<span class="muted">Pas encore d’activité.</span>'}
+        <p class="help">Une personne est active quand elle fait une action (paiement, message, vote…) dans la semaine.</p></section>
+      <h2>Associations</h2>
+      <div class="list">${(d.list || []).map(a => { const [cl, lb] = health(a); return `<div class="item"><div class="body"><div class="t">${esc(a.name)}</div><div class="s wrap num">${N(a.members)} membres · ${N(a.on_app)} sur l’app${a.pending ? ' · ' + N(a.pending) + ' en attente' : ''} · ${N(a.actions_30d)} actions en 30 j · dernière ${ago(a.last_activity)}</div><div class="s wrap num">${esc([a.village, a.residence_city].filter(Boolean).join(' · '))} · créée le ${dFR(a.created_at)} · solde ${money(a.balance, a.currency)}</div></div><span class="pill ${cl}">${lb}</span></div>`; }).join('') || '<div class="empty">Aucune association.</div>'}</div>
+      <a class="link" href="#/bienvenue">Revenir à mes associations</a></div>`;
+  }
+
   async function renderWelcome() {
     const list = must(await sb.rpc('my_memberships')).filter(a => a.active || a.pending);
+    const owner = await sb.rpc('am_owner').then(r => !r.error && r.data === true, () => false);
     root.innerHTML = `<div class="auth" style="max-width:520px">
+      ${owner ? `<a class="card between" href="#/admin" style="border-color:var(--gold)"><span><span class="eyebrow">Propriétaire</span><br><b>Tableau de bord VillageLink</b></span><span class="chev">${I.chev}</span></a>` : ''}
       <div class="between"><div class="brand"><div class="logo">V</div><b>VillageLink</b></div><button class="btn ghost sm" data-act="signout">Déconnexion</button></div>
       ${list.some(a => a.pending) ? '<button class="btn ghost block" data-act="reload">Actualiser : ma demande a-t-elle été validée ?</button>' : ''}
       ${list.length ? `<section class="stack"><span class="eyebrow">Mes associations</span><div class="list">${list.map(a => a.pending
@@ -1413,7 +1446,7 @@ Abstention</textarea><p class="help">Entre 2 et 10 choix.</p></div>
       <button class="item" data-act="signout"><span class="ico">${I.out}</span><div class="body"><div class="t">Se déconnecter</div><div class="s">${esc(S.user.email || '')}</div></div></button></div>
       <section class="card stack" id="push-card"><h2>Rappels sur ce téléphone</h2><p class="muted" style="margin:0;font-size:13.5px">Recevez une notification 3 jours avant l’échéance de votre cotisation, le jour même, et en cas de retard.</p><div id="push-state" class="stack"><span class="muted">Vérification…</span></div></section>
       <section class="card stack"><h2>Affichage</h2><div class="seg seg3" role="group" aria-label="Thème">${THEMES.map(([k, l]) => `<button data-act="theme" data-theme="${k}" aria-pressed="${themeNow() === k}">${l}</button>`).join('')}</div><p class="help">« Auto » suit le réglage clair ou sombre de votre téléphone.</p></section>
-      <p class="muted" style="font-size:12.5px;text-align:center">VillageLink · version 1.18 · <a class="link" href="confidentialite.html">Confidentialité</a> · <a class="link" href="conditions.html">Conditions</a></p>`;
+      <p class="muted" style="font-size:12.5px;text-align:center">VillageLink · version 1.19 · <a class="link" href="confidentialite.html">Confidentialité</a> · <a class="link" href="conditions.html">Conditions</a></p>`;
   };
 
   /* Notifications sur le téléphone ----------------------------------- */
