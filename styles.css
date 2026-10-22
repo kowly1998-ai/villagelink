@@ -286,3 +286,9 @@ textarea.mono{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:13px}
 .receipt-doc.void .rd-amount{text-decoration:line-through}
 .rd-check{margin:0;font-size:11.5px;color:#6b6178;border-top:1px solid #eee;padding-top:10px}
 @media print{.receipt-doc{border:1px solid #bbb;box-shadow:none;max-width:150mm;margin:0 auto}}
+
+/* --- collectes de solidarité (1.14) --- */
+.col-card .eyebrow svg,.col-hero .eyebrow svg{width:14px;height:14px;vertical-align:-2px}
+.col-card.open{border-color:var(--gold)}
+.col-hero h2{margin:2px 0 0}
+.col-hero .bar{background:rgba(255,255,255,.25)}.col-hero .bar>i{background:var(--gold)}

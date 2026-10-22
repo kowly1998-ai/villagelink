@@ -117,6 +117,7 @@
     swap: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M7 7h12l-3-3M17 17H5l3 3"/></svg>',
     out: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M15 4h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-3M10 17l5-5-5-5M15 12H4"/></svg>',
     chat: '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round"><path d="M4 5h16v11H9l-5 4z"/><path d="M8 9.5h8M8 12.5h5" stroke-linecap="round"/></svg>',
+    heart: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round"><path d="M12 20s-7.5-4.6-9-9.3C1.9 7.2 4.1 4 7.4 4c2 0 3.6 1.1 4.6 2.7C13 5.1 14.6 4 16.6 4c3.3 0 5.5 3.2 4.4 6.7C19.5 15.4 12 20 12 20z"/></svg>',
     wa: '<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2a10 10 0 0 0-8.6 15.1L2 22l5-1.3A10 10 0 1 0 12 2zm0 18.2a8.2 8.2 0 0 1-4.2-1.2l-.3-.2-3 .8.8-2.9-.2-.3A8.2 8.2 0 1 1 12 20.2zm4.5-6.1c-.2-.1-1.5-.7-1.7-.8s-.4-.1-.6.1-.6.8-.8 1-.3.2-.5.1a6.7 6.7 0 0 1-3.3-2.9c-.3-.4.2-.4.7-1.4.1-.2 0-.3 0-.4l-.8-1.8c-.2-.5-.4-.4-.6-.4h-.5a1 1 0 0 0-.7.3 3 3 0 0 0-.9 2.2 5.2 5.2 0 0 0 1.1 2.7 11.8 11.8 0 0 0 4.5 4c1.7.7 2.3.8 3.2.6a2.7 2.7 0 0 0 1.8-1.2 2.2 2.2 0 0 0 .2-1.2c-.1-.1-.3-.2-.5-.3z"/></svg>'
   };
 
@@ -136,6 +137,7 @@
     meetings: ['president', 'vice_president', 'secretaire'],
     polls: ['president', 'vice_president', 'secretaire'],
     docs: ['president', 'vice_president', 'secretaire', 'tresorier'],
+    collections: ['president', 'vice_president', 'secretaire', 'tresorier'],
     settings: ['president']
   };
   const can = a => !!(S.ctx && S.ctx.me && CAN[a].includes(S.ctx.me.role));
@@ -144,6 +146,7 @@
   const MODES = ['Espèces', 'Wave', 'Orange Money', 'Free Money', 'MTN Mobile Money', 'Virement', 'Autre'];
   const PROJECT_TYPES = ['École', 'Forage', 'Mosquée', 'Route', 'Électrification', 'Centre de santé', 'Matériel agricole', 'Autre'];
   const STATUSES = ['En préparation', 'En cours', 'Suspendu', 'Terminé'];
+  const COL_KINDS = ['Décès', 'Maladie', 'Mariage', 'Naissance', 'Accident', 'Autre'];
   const ANN_KINDS = ['Annonce', 'Information', 'Convocation', 'Nouvelles du village', 'Urgence'];
   const CURRENCIES = [['XOF', 'Franc CFA (XOF)'], ['GNF', 'Franc guinéen (GNF)'], ['EUR', 'Euro'], ['USD', 'Dollar US'], ['XAF', 'Franc CFA (XAF)'], ['CAD', 'Dollar canadien'], ['GBP', 'Livre sterling']];
 
@@ -405,6 +408,8 @@
       sb.from('activity_log').select('*').eq('association_id', a.id).order('id', { ascending: false }).limit(5).then(must)
     ]);
     const lastRev = await reversedSet(lastOps);
+    const openCols = await sb.from('collections').select('*').eq('association_id', a.id).eq('status', 'Ouverte').order('created_at', { ascending: false }).limit(3).then(r => (r.error ? [] : r.data || []), () => []);
+    const colTot = openCols.length ? await colTotals(openCols.map(c => c.id)) : new Map();
     let projCard = '';
     if (projects.length) {
       const p = projects[0];
@@ -427,6 +432,7 @@
         <div class="boxes num"><div><small>Collecté</small><b>${money(bal.in)}</b></div><div><small>Dépensé</small><b>${money(bal.out)}</b></div></div>
         ${can('collect') ? `<a class="btn gold block" href="${B()}/encaisser">${I.plus} Encaisser une cotisation</a>` : ''}
         <div><a class="link" href="${B()}/transparence">Voir où va l’argent</a></div></section>
+      ${openCols.map(c => colCard(c, colTot.get(c.id), true)).join('')}
       ${toVote.length && S.ctx.me.user_id ? `<a class="card poll-next" href="${B()}/vote/${toVote[0].id}"><span class="ico">${I.vote}</span><span class="body"><span class="eyebrow">Vote en cours${toVote.length > 1 ? ' · ' + toVote.length + ' votes' : ''}</span><b>${esc(toVote[0].question)}</b><span class="muted">Donnez votre avis</span></span><span class="chev">${I.chev}</span></a>` : ''}
       ${nextMeet.length ? `<a class="card meet-next" href="${B()}/r/${nextMeet[0].id}">${dateBox(nextMeet[0].starts_at)}<span class="body"><span class="eyebrow">Prochaine réunion</span><b>${esc(nextMeet[0].title)}</b><span class="muted">${esc(hm(nextMeet[0].starts_at))}${nextMeet[0].place ? ' · ' + esc(nextMeet[0].place) : ''}</span></span><span class="chev">${I.chev}</span></a>` : ''}
       <div class="grid2">
@@ -695,6 +701,24 @@
     const cats = type === 'out' ? CAT_OUT : CAT_IN;
     const pre = q.get('projet') || '';
     const approval = type === 'out' && S.ctx.assoc.expense_approval;
+    const col = q.get('collecte') ? must(await sb.from('collections').select('*').eq('association_id', S.ctx.assoc.id).eq('id', q.get('collecte')).maybeSingle()) : null;
+    const back = col ? B() + '/collecte/' + col.id : B() + '/finances';
+    if (col) {
+      const mem = activeMembers().slice().sort((x, y) => x.full_name.localeCompare(y.full_name, 'fr'));
+      return `${subHead(type === 'out' ? 'Remise de la collecte' : 'Contribution', back)}
+      <p class="note"><b>${esc(col.title)}</b>${col.beneficiary ? ' · ' + esc(col.beneficiary) : ''}${approval ? '<br>La remise sera envoyée au président ou au vice-président pour approbation.' : ''}</p>
+      <form class="stack" data-form="op" data-type="${type}" novalidate><input type="hidden" name="collection_id" value="${esc(col.id)}">
+        <input type="hidden" name="category" value="${type === 'out' ? 'Autres' : 'Contributions exceptionnelles'}">
+        ${type === 'in' ? `<div class="field"><label for="op-m">Contributeur</label><select id="op-m" name="member_id"><option value="">Une personne hors de l’association</option>${mem.map(m => opt(m.id, m.full_name)).join('')}</select></div>` : ''}
+        ${fxFields('op')}
+        <div class="field"><label for="op-a">Montant (${esc(CUR_LABEL[S.ctx.assoc.currency] || S.ctx.assoc.currency)})</label><input id="op-a" name="amount" type="number" inputmode="decimal" min="0" step="1" value="${type === 'in' && col.suggested ? esc(col.suggested) : ''}" required><p class="help num" id="op-conv" hidden></p></div>
+        <div class="field"><label for="op-d">Description</label><input id="op-d" name="description" maxlength="300" value="${type === 'out' ? esc('Remise de la collecte à ' + (col.beneficiary || 'la famille')) : ''}" placeholder="${type === 'out' ? '' : 'Ex. contribution de la famille Bah (hors association)'}"><p class="help">${type === 'in' ? 'Laissez vide pour un membre : « Contribution de … » sera écrit pour vous.' : 'Qui a reçu l’argent, et comment.'}</p></div>
+        ${type === 'in' ? `<div class="field"><label for="op-mode">Mode de paiement</label><select id="op-mode" name="payment_method">${MODES.map(x => opt(x, x)).join('')}</select></div>` : ''}
+        <div class="field"><label for="op-date">Date</label><input id="op-date" name="occurred_on" type="date" value="${todayISO()}" max="${todayISO()}"></div>
+        ${type === 'out' ? '<div class="field"><label for="op-f">Justificatif (photo de la remise, facultatif)</label><input id="op-f" name="proof" type="file" accept="image/*,application/pdf"></div>' : ''}
+        <div class="field"><label for="op-c">Commentaire (facultatif)</label><input id="op-c" name="comment"></div>
+        <p class="err" hidden></p><button class="btn primary block" type="submit">${type === 'out' ? (approval ? 'Envoyer pour approbation' : 'Enregistrer la remise') : 'Enregistrer la contribution'}</button></form>`;
+    }
     return `${subHead(approval ? 'Proposer une dépense' : type === 'out' ? 'Nouvelle dépense' : 'Nouvelle recette', B() + '/finances')}
       ${approval ? '<p class="note">Double validation : la dépense n’entrera dans la caisse qu’après l’approbation du président ou du vice-président. Joignez le reçu pour l’aider à décider.</p>' : ''}
       ${type === 'in' ? `<p class="note">Pour une cotisation mensuelle, utilisez plutôt <a class="link" href="${B()}/encaisser">Enregistrer un paiement</a> : le membre sera marqué à jour.</p>` : ''}
@@ -799,6 +823,74 @@
     const a = S.ctx.assoc;
     return `Reçu ${txRef(t.id)}\n${a.name}\n\n${m ? 'Membre : ' + m.full_name + '\n' : ''}${t.description}\nMontant : ${money(t.amount)}${t.orig_currency ? ' (' + origTag(t) + ')' : ''}\nMode : ${t.payment_method || '—'}\nDate : ${whenTx(t)}\nEnregistré par : ${author ? author.full_name : S.ctx.me.full_name}\n\nMerci pour votre contribution au développement de ${a.village || 'notre village'}.`;
   }
+
+  /* Collectes de solidarité ----------------------------------------- */
+  async function colTotals(ids) {
+    if (!ids.length) return new Map();
+    const r = must(await sb.from('v_collection_totals').select('*').in('collection_id', ids));
+    return new Map(r.map(x => [x.collection_id, x]));
+  }
+  const colCard = (c, t, compact) => {
+    const got = Number((t || {}).collected || 0), n = Number((t || {}).contributions || 0), pc = c.goal ? pct(got, c.goal) : 0;
+    return `<a class="card stack col-card ${c.status === 'Ouverte' ? 'open' : ''}" href="${B()}/collecte/${c.id}"><div class="between"><span class="eyebrow">${I.heart} ${esc(c.kind)}</span><span class="pill ${c.status === 'Ouverte' ? 'p-late' : 'p-blue'}">${c.status === 'Ouverte' ? 'En cours' : 'Close'}</span></div>
+      <h2>${esc(c.title)}</h2>${c.beneficiary && !compact ? `<span class="muted" style="font-size:13.5px">Pour ${esc(c.beneficiary)}</span>` : ''}
+      <div class="between num"><b style="font-family:var(--f-display);font-size:20px">${money(got)}</b><span class="muted" style="font-size:13px">${n} contribution${n > 1 ? 's' : ''}${c.goal ? ' · objectif ' + money(c.goal) : ''}</span></div>
+      ${c.goal ? `<div class="bar"><i style="width:${pc}%"></i></div>` : ''}</a>`;
+  };
+  V.collectes = async (sub) => {
+    if (sub[1] === 'nouvelle') return collectionForm(null);
+    const rows = must(await sb.from('collections').select('*').eq('association_id', S.ctx.assoc.id).order('created_at', { ascending: false }).limit(60));
+    const tot = await colTotals(rows.map(c => c.id));
+    const open = rows.filter(c => c.status === 'Ouverte'), closed = rows.filter(c => c.status !== 'Ouverte');
+    return `${subHead('Collectes de solidarité', B() + '/plus')}
+      ${can('collections') ? `<a class="btn primary block" href="${B()}/collectes/nouvelle">${I.plus} Lancer une collecte</a>` : ''}
+      <p class="note">Un décès, une maladie, un mariage : l’association se mobilise. Chaque contribution est enregistrée par le trésorier et visible par tous, jusqu’à la remise à la famille.</p>
+      ${open.map(c => colCard(c, tot.get(c.id))).join('')}
+      ${closed.length ? `<h2>Collectes closes</h2>${closed.map(c => colCard(c, tot.get(c.id), true)).join('')}` : ''}
+      ${rows.length ? '' : '<div class="empty">Aucune collecte pour le moment.</div>'}`;
+  };
+  function collectionForm(c) {
+    if (!can('collections')) return `${subHead('Collecte', B() + '/collectes')}<p class="note">Réservé au bureau.</p>`;
+    const cur = esc(CUR_LABEL[S.ctx.assoc.currency] || S.ctx.assoc.currency);
+    return `${subHead(c ? 'Modifier la collecte' : 'Lancer une collecte', c ? B() + '/collecte/' + c.id : B() + '/collectes')}
+      <form class="stack" data-form="collection" data-id="${c ? c.id : ''}" novalidate>
+        <div class="field"><label for="cl-k">Occasion</label><select id="cl-k" name="kind">${COL_KINDS.map(k => opt(k, k, c ? c.kind : 'Décès')).join('')}</select></div>
+        <div class="field"><label for="cl-t">Titre</label><input id="cl-t" name="title" maxlength="160" value="${esc(c && c.title)}" placeholder="Ex. Soutien à la famille de Thierno Bah" required></div>
+        <div class="field"><label for="cl-b">Pour qui</label><input id="cl-b" name="beneficiary" maxlength="160" value="${esc(c && c.beneficiary)}" placeholder="Ex. la famille de Thierno Bah, à Kansaghel"></div>
+        <div class="row2"><div class="field"><label for="cl-s">Participation conseillée (${cur})</label><input id="cl-s" name="suggested" type="number" inputmode="numeric" min="1" step="1" value="${esc(c && c.suggested)}" placeholder="Libre"></div>
+        <div class="field"><label for="cl-g">Objectif (${cur})</label><input id="cl-g" name="goal" type="number" inputmode="numeric" min="1" step="1" value="${esc(c && c.goal)}" placeholder="Aucun"></div></div>
+        <div class="field"><label for="cl-e">Date limite (facultatif)</label><input id="cl-e" name="ends_on" type="date" value="${esc(c && c.ends_on)}"></div>
+        <div class="field"><label for="cl-d">Message aux membres</label><textarea id="cl-d" name="description" rows="4" maxlength="2000" placeholder="Ex. Nous avons appris avec tristesse le décès de… Que chacun participe selon ses moyens.">${esc(c && c.description)}</textarea></div>
+        <p class="err" hidden></p><button class="btn primary block" type="submit">${c ? 'Enregistrer' : 'Lancer la collecte'}</button></form>`;
+  }
+  V.collecte = async (sub) => {
+    const c = must(await sb.from('collections').select('*').eq('association_id', S.ctx.assoc.id).eq('id', sub[1]).maybeSingle());
+    if (!c) return subHead('Collecte introuvable', B() + '/collectes');
+    if (sub[2] === 'modifier') return collectionForm(c);
+    const ops = must(await sb.from('transactions').select('*').eq('association_id', S.ctx.assoc.id).eq('collection_id', c.id).order('id', { ascending: false }).limit(300));
+    const rset = await reversedSet(ops);
+    const t = (await colTotals([c.id])).get(c.id) || { collected: 0, given: 0, contributions: 0 };
+    const got = Number(t.collected), given = Number(t.given), open = c.status === 'Ouverte';
+    const tres = activeMembers().find(m => m.role === 'tresorier' && m.phone);
+    const share = `🤲 ${c.title}\n${c.beneficiary ? 'Pour ' + c.beneficiary + '\n' : ''}${c.description ? '\n' + c.description + '\n' : ''}\nDéjà collecté : ${money(got)} (${t.contributions} contributions)${c.goal ? ' sur ' + money(c.goal) : ''}${c.suggested ? '\nParticipation conseillée : ' + money(c.suggested) : ''}${tres ? '\nVersez auprès du trésorier : ' + tres.full_name + ' (' + tres.phone + ')' : ''}\n\nChaque contribution est visible par tous dans VillageLink.`;
+    const mine = S.ctx.me && ops.some(o => o.member_id === S.ctx.me.id && o.kind === 'in' && !o.reversal_of && !rset.has(o.id));
+    return `${subHead('Collecte', B() + '/collectes')}
+      <section class="card hero col-hero"><div class="eyebrow">${I.heart} ${esc(c.kind)}${open ? '' : ' · close'}</div><h2 style="color:inherit">${esc(c.title)}</h2>${c.beneficiary ? `<span style="opacity:.85">Pour ${esc(c.beneficiary)}</span>` : ''}
+        <div class="big num">${num(got)} <span class="cur">${esc(CUR_LABEL[S.ctx.assoc.currency] || '')}</span></div>
+        ${c.goal ? `<div class="bar"><i style="width:${pct(got, c.goal)}%"></i></div>` : ''}
+        <div class="boxes num"><div><small>Contributions</small><b>${t.contributions}</b></div><div><small>Remis</small><b>${money(given)}</b></div></div></section>
+      ${c.description ? `<p class="card" style="white-space:pre-line;margin:0">${esc(c.description)}</p>` : ''}
+      <dl class="kv num card" style="margin:0">${c.suggested ? `<dt>Participation conseillée</dt><dd>${money(c.suggested)}</dd>` : ''}${c.goal ? `<dt>Objectif</dt><dd>${money(c.goal)}</dd>` : ''}${c.ends_on ? `<dt>Jusqu’au</dt><dd>${dFR(c.ends_on)}</dd>` : ''}<dt>Lancée par</dt><dd>${esc(c.created_label)}</dd><dt>Le</dt><dd>${dFR(c.created_at)}</dd>${c.closed_at ? `<dt>Close le</dt><dd>${dFR(c.closed_at)}</dd>` : ''}</dl>
+      <div class="stack" style="gap:10px">
+        ${open && can('collect') ? `<a class="btn primary block" href="${B()}/operation?type=in&collecte=${c.id}">${I.plus} Enregistrer une contribution</a>` : ''}
+        ${open && !can('collect') && tres ? `<a class="btn primary block" target="_blank" rel="noopener" href="${waTo(tres.phone, 'Salam ' + tres.full_name + ', je participe à la collecte « ' + c.title + ' ». Comment vous envoyer ma contribution ?')}">${I.wa} ${mine ? 'Participer encore' : 'Je participe'}</a>` : ''}
+        <a class="btn wa block" target="_blank" rel="noopener" href="${waShare(share)}">${I.wa} Partager l’appel sur WhatsApp</a>
+        ${can('spend') && got - given > 0 ? `<a class="btn ghost block" href="${B()}/operation?type=out&collecte=${c.id}">Remettre l’argent à la famille</a>` : ''}
+        ${can('collections') ? `<div class="row" style="flex-wrap:wrap"><a class="btn ghost sm" href="${B()}/collecte/${c.id}/modifier">Modifier</a>${open ? `<button class="btn danger sm" data-act="colstatus" data-id="${c.id}" data-status="Close">Clore la collecte</button>` : `<button class="btn ghost sm" data-act="colstatus" data-id="${c.id}" data-status="Ouverte">Rouvrir</button>`}</div>` : ''}
+      </div>
+      <h2>Contributions et remises</h2>
+      <div class="list">${ops.map(o => txItem(o, rset)).join('') || '<div class="empty">Aucune contribution pour le moment.</div>'}</div>`;
+  };
 
   /* Double validation des dépenses ----------------------------------- */
   const EXP_PILL = { 'En attente': 'p-late', 'Approuvée': 'p-ok', 'Refusée': 'p-red', 'Annulée': 'p-blue' };
@@ -1143,7 +1235,7 @@ Abstention</textarea><p class="help">Entre 2 et 10 choix.</p></div>
 
   /* Notifications ---------------------------------------------------- */
   const NOTIF_LINKS = [[/annonce/i, 'annonces', I.mega], [/réunion|compte rendu|convocation/i, 'reunions', I.cal], [/vote/i, 'votes', I.vote], [/document/i, 'documents', I.doc],
-    [/approbation|approuvé la dépense|refusé la dépense|demande de dépense|double validation/i, 'depenses', I.list], [/cotisation|recette|dépense|opération|contre-écriture/i, 'finances', I.list], [/projet|mise à jour/i, 'projets', I.drop], [/membre|adhésion|rôle|retiré|réintégré|bureau|rejoindre|demande de/i, 'membres', I.users], [/message|discussion/i, 'discussion', I.chat]];
+    [/collecte/i, 'collectes', I.heart], [/approbation|approuvé la dépense|refusé la dépense|demande de dépense|double validation/i, 'depenses', I.list], [/cotisation|recette|dépense|opération|contre-écriture/i, 'finances', I.list], [/projet|mise à jour/i, 'projets', I.drop], [/membre|adhésion|rôle|retiré|réintégré|bureau|rejoindre|demande de/i, 'membres', I.users], [/message|discussion/i, 'discussion', I.chat]];
   V.notifications = async () => {
     const a = S.ctx.assoc, seenKey = 'vl:notif:' + a.id, seen = Number(store.get(seenKey) || 0);
     const rows = must(await sb.from('activity_log').select('*').eq('association_id', a.id).order('id', { ascending: false }).limit(40));
@@ -1194,14 +1286,14 @@ Abstention</textarea><p class="help">Entre 2 et 10 choix.</p></div>
   };
 
   V.plus = async () => {
-    const items = [['discussion', 'Discussion', 'Messages, idées et réclamations des membres', I.chat.replace('width="24" height="24" ', '')], ['transparence', 'Transparence', 'Où va l’argent, en clair', I.eye], ['finances', 'Finances', 'Recettes, dépenses et justificatifs', I.list], ['reunions', 'Réunions', 'Convocations, présence et comptes rendus', I.cal], ['votes', 'Votes', 'Décisions et sondages de l’association', I.vote], ['documents', 'Documents', 'Statuts, règlement, procès-verbaux', I.doc], ['rapport', 'Rapport mensuel', 'Le bilan du mois, en PDF ou sur WhatsApp', I.report], ['annonces', 'Annonces', 'Nouvelles du village', I.mega], ['journal', 'Journal d’activité', 'Qui a fait quoi, et quand', I.clock], ['parametres', 'Association', 'Fiche, cotisation, code d’invitation', I.gear]];
+    const items = [['discussion', 'Discussion', 'Messages, idées et réclamations des membres', I.chat.replace('width="24" height="24" ', '')], ['collectes', 'Collectes de solidarité', 'Décès, maladie, mariage : s’entraider', I.heart], ['transparence', 'Transparence', 'Où va l’argent, en clair', I.eye], ['finances', 'Finances', 'Recettes, dépenses et justificatifs', I.list], ['reunions', 'Réunions', 'Convocations, présence et comptes rendus', I.cal], ['votes', 'Votes', 'Décisions et sondages de l’association', I.vote], ['documents', 'Documents', 'Statuts, règlement, procès-verbaux', I.doc], ['rapport', 'Rapport mensuel', 'Le bilan du mois, en PDF ou sur WhatsApp', I.report], ['annonces', 'Annonces', 'Nouvelles du village', I.mega], ['journal', 'Journal d’activité', 'Qui a fait quoi, et quand', I.clock], ['parametres', 'Association', 'Fiche, cotisation, code d’invitation', I.gear]];
     return `<h1>Plus</h1>
       <div class="rolebar"><span>Connecté en tant que <b>${esc(S.ctx.me.full_name)}</b>, ${esc(ROLES[S.ctx.me.role].toLowerCase())}</span></div>
       <div class="list menu">${items.map(([k, t, s, ic]) => `<a class="item" href="${B()}/${k}"><span class="ico">${ic}</span><div class="body"><div class="t">${t}</div><div class="s">${s}</div></div><span class="chev">${I.chev}</span></a>`).join('')}</div>
       <div class="list menu"><a class="item" href="#/bienvenue"><span class="ico">${I.swap}</span><div class="body"><div class="t">Mes associations</div><div class="s">Changer, rejoindre ou créer une association</div></div><span class="chev">${I.chev}</span></a>
       <button class="item" data-act="signout"><span class="ico">${I.out}</span><div class="body"><div class="t">Se déconnecter</div><div class="s">${esc(S.user.email || '')}</div></div></button></div>
       <section class="card stack"><h2>Affichage</h2><div class="seg seg3" role="group" aria-label="Thème">${THEMES.map(([k, l]) => `<button data-act="theme" data-theme="${k}" aria-pressed="${themeNow() === k}">${l}</button>`).join('')}</div><p class="help">« Auto » suit le réglage clair ou sombre de votre téléphone.</p></section>
-      <p class="muted" style="font-size:12.5px;text-align:center">VillageLink · version 1.13 · <a class="link" href="confidentialite.html">Confidentialité</a> · <a class="link" href="conditions.html">Conditions</a></p>`;
+      <p class="muted" style="font-size:12.5px;text-align:center">VillageLink · version 1.14 · <a class="link" href="confidentialite.html">Confidentialité</a> · <a class="link" href="conditions.html">Conditions</a></p>`;
   };
 
   V.parametres = async () => {
@@ -1346,7 +1438,9 @@ Abstention</textarea><p class="help">Entre 2 et 10 choix.</p></div>
       await refresh(); toast('Paiement enregistré'); go(B() + '/op/' + t.id + '?recu=1');
     },
     async op(fd, form) {
-      const kind = form.dataset.type === 'out' ? 'out' : 'in', desc = val(fd, 'description');
+      const kind = form.dataset.type === 'out' ? 'out' : 'in', colId = val(fd, 'collection_id') || null, mid = val(fd, 'member_id') || null;
+      let desc = val(fd, 'description');
+      if (colId && kind === 'in' && !desc) { if (!mid) fail('Indiquez le nom de la personne qui contribue dans la description.'); desc = 'Contribution de ' + memberName(mid); }
       const { amount, fx } = readAmount(fd);
       if (desc.length < 2) fail('Ajoutez une description pour que les membres comprennent l’opération.');
       if (kind === 'out' && amount > S.ctx.bal.in - S.ctx.bal.out) fail(`Le montant dépasse le solde disponible (${money(S.ctx.bal.in - S.ctx.bal.out)}).`);
@@ -1361,21 +1455,34 @@ Abstention</textarea><p class="help">Entre 2 et 10 choix.</p></div>
       if (kind === 'out' && S.ctx.assoc.expense_approval) {
         const r = must(await sb.from('expense_requests').insert({
           association_id: S.ctx.assoc.id, category: val(fd, 'category'), amount, occurred_on: val(fd, 'occurred_on') || todayISO(),
-          description: desc, project_id: val(fd, 'project_id') || null, comment: val(fd, 'comment'), proof_path, ...fx
+          description: desc, project_id: val(fd, 'project_id') || null, comment: val(fd, 'comment'), proof_path, collection_id: colId, ...fx
         }).select('id').single());
         await refresh(); toast('Dépense envoyée pour approbation'); return go(B() + '/depense/' + r.id);
       }
       const t = must(await sb.from('transactions').insert({
         association_id: S.ctx.assoc.id, kind, category: val(fd, 'category'), amount, occurred_on: val(fd, 'occurred_on') || todayISO(),
-        description: desc, project_id: val(fd, 'project_id') || null, payment_method: val(fd, 'payment_method'), comment: val(fd, 'comment'), proof_path, ...fx
+        description: desc, project_id: val(fd, 'project_id') || null, payment_method: val(fd, 'payment_method'), comment: val(fd, 'comment'), proof_path, collection_id: colId, member_id: mid, ...fx
       }).select('*').single());
-      await refresh(); toast(kind === 'out' ? 'Dépense enregistrée' : 'Recette enregistrée'); go(B() + '/op/' + t.id);
+      await refresh();
+      if (colId) { toast(kind === 'out' ? 'Remise enregistrée' : 'Contribution enregistrée'); return go(B() + '/collecte/' + colId); }
+      toast(kind === 'out' ? 'Dépense enregistrée' : 'Recette enregistrée'); go(B() + '/op/' + t.id);
     },
     async reverse(fd, form) {
       const reason = val(fd, 'reason');
       if (reason.length < 4) fail('Indiquez le motif de l’annulation.');
       const nid = must(await sb.rpc('reverse_transaction', { p_id: Number(form.dataset.id), p_reason: reason }));
       await refresh(); toast('Contre-écriture enregistrée'); go(B() + '/op/' + nid);
+    },
+    async collection(fd, form) {
+      const id = form.dataset.id, title = val(fd, 'title'), goal = intVal(fd, 'goal'), sug = intVal(fd, 'suggested');
+      if (title.length < 3) fail('Donnez un titre à la collecte.');
+      if (!isNaN(goal) && goal <= 0) fail('L’objectif doit être supérieur à 0, ou laissé vide.');
+      if (!isNaN(sug) && sug <= 0) fail('La participation conseillée doit être supérieure à 0, ou laissée vide.');
+      const row = { title, kind: val(fd, 'kind'), beneficiary: val(fd, 'beneficiary'), description: val(fd, 'description'), goal: isNaN(goal) ? null : goal, suggested: isNaN(sug) ? null : sug, ends_on: val(fd, 'ends_on') || null };
+      let cid = id;
+      if (id) must(await sb.from('collections').update(row).eq('id', id).select('id').single());
+      else { row.association_id = S.ctx.assoc.id; cid = must(await sb.from('collections').insert(row).select('id').single()).id; }
+      toast(id ? 'Collecte enregistrée' : 'Collecte lancée'); go(B() + '/collecte/' + cid);
     },
     async rejectexp(fd, form) {
       const reason = val(fd, 'reason');
@@ -1545,6 +1652,12 @@ Abstention</textarea><p class="help">Entre 2 et 10 choix.</p></div>
         toast('Document retiré'); route();
       }
       else if (act === 'print') { window.print(); }
+      else if (act === 'colstatus') {
+        const st = b.dataset.status;
+        if (st === 'Close' && b.dataset.confirm !== '1') { b.dataset.confirm = '1'; b.textContent = 'Confirmer : clore la collecte'; return; }
+        must(await sb.from('collections').update({ status: st }).eq('id', b.dataset.id).select('id').single());
+        toast(st === 'Close' ? 'Collecte close' : 'Collecte rouverte'); route();
+      }
       else if (act === 'approveexp') {
         if (b.dataset.confirm !== '1') { b.dataset.confirm = '1'; b.textContent = 'Confirmer : la dépense sort de la caisse'; return; }
         b.disabled = true;
