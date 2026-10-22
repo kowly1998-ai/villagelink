@@ -292,3 +292,13 @@ textarea.mono{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:13px}
 .col-card.open{border-color:var(--gold)}
 .col-hero h2{margin:2px 0 0}
 .col-hero .bar{background:rgba(255,255,255,.25)}.col-hero .bar>i{background:var(--gold)}
+
+/* --- messages vocaux (1.16) --- */
+.voice{display:flex;flex-wrap:wrap;align-items:center;gap:10px}
+.voice .btn svg{vertical-align:-3px}
+.voice-state{display:flex;align-items:center;gap:10px;flex-wrap:wrap;font-variant-numeric:tabular-nums;color:var(--muted);min-width:0}
+.voice-state audio,.voice-play audio{max-width:100%;height:40px}
+.voice-play{margin-top:6px}
+.voice-play audio{width:260px}
+.rec-dot{width:10px;height:10px;border-radius:50%;background:#d93025;display:inline-block;animation:recblink 1s infinite}
+@keyframes recblink{50%{opacity:.25}}

@@ -117,6 +117,7 @@
     swap: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M7 7h12l-3-3M17 17H5l3 3"/></svg>',
     out: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M15 4h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-3M10 17l5-5-5-5M15 12H4"/></svg>',
     chat: '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round"><path d="M4 5h16v11H9l-5 4z"/><path d="M8 9.5h8M8 12.5h5" stroke-linecap="round"/></svg>',
+    mic: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>',
     heart: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round"><path d="M12 20s-7.5-4.6-9-9.3C1.9 7.2 4.1 4 7.4 4c2 0 3.6 1.1 4.6 2.7C13 5.1 14.6 4 16.6 4c3.3 0 5.5 3.2 4.4 6.7C19.5 15.4 12 20 12 20z"/></svg>',
     wa: '<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2a10 10 0 0 0-8.6 15.1L2 22l5-1.3A10 10 0 1 0 12 2zm0 18.2a8.2 8.2 0 0 1-4.2-1.2l-.3-.2-3 .8.8-2.9-.2-.3A8.2 8.2 0 1 1 12 20.2zm4.5-6.1c-.2-.1-1.5-.7-1.7-.8s-.4-.1-.6.1-.6.8-.8 1-.3.2-.5.1a6.7 6.7 0 0 1-3.3-2.9c-.3-.4.2-.4.7-1.4.1-.2 0-.3 0-.4l-.8-1.8c-.2-.5-.4-.4-.6-.4h-.5a1 1 0 0 0-.7.3 3 3 0 0 0-.9 2.2 5.2 5.2 0 0 0 1.1 2.7 11.8 11.8 0 0 0 4.5 4c1.7.7 2.3.8 3.2.6a2.7 2.7 0 0 0 1.8-1.2 2.2 2.2 0 0 0 .2-1.2c-.1-.1-.3-.2-.5-.3z"/></svg>'
   };
@@ -840,6 +841,59 @@
     return `Reçu ${txRef(t.id)}\n${a.name}\n\n${m ? 'Membre : ' + m.full_name + '\n' : ''}${t.description}\nMontant : ${money(t.amount)}${t.orig_currency ? ' (' + origTag(t) + ')' : ''}\nMode : ${t.payment_method || '—'}\nDate : ${whenTx(t)}\nEnregistré par : ${author ? author.full_name : S.ctx.me.full_name}\n\nMerci pour votre contribution au développement de ${a.village || 'notre village'}.`;
   }
 
+  /* Messages vocaux ------------------------------------------------- */
+  const VOICE = {}; // clé du formulaire → { blob, secs, mime } ou { rec, stream, t0 }
+  const fmtSecs = n => `${Math.floor(n / 60)}:${String(Math.round(n) % 60).padStart(2, '0')}`;
+  const voiceBox = key => `<div class="voice" data-voice="${key}"><button type="button" class="btn ghost sm" data-act="rec" data-key="${key}">${I.mic} Message vocal</button><span class="voice-state"></span></div>`;
+  const voicePlay = (path, secs) => path ? `<div class="voice-play"><button type="button" class="btn ghost sm" data-act="play" data-path="${esc(path)}">▶ Écouter${secs ? ' · ' + fmtSecs(secs) : ''}</button></div>` : '';
+  function voiceMime() {
+    const c = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/ogg;codecs=opus', 'audio/ogg'];
+    return c.find(t => window.MediaRecorder && MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(t)) || '';
+  }
+  function voiceDraw(key) {
+    const box = document.querySelector(`[data-voice="${key}"]`); if (!box) return;
+    const v = VOICE[key], btn = box.querySelector('[data-act=rec]'), st = box.querySelector('.voice-state');
+    if (v && v.rec) { btn.innerHTML = '■ Arrêter'; btn.classList.add('danger'); st.innerHTML = `<span class="rec-dot"></span> ${fmtSecs((Date.now() - v.t0) / 1000)}`; return; }
+    btn.classList.remove('danger'); btn.innerHTML = `${I.mic} ${v && v.blob ? 'Recommencer' : 'Message vocal'}`;
+    st.innerHTML = v && v.blob ? `<audio controls preload="metadata" src="${v.url}"></audio><button type="button" class="link" data-act="recdel" data-key="${key}">Supprimer</button>` : '';
+  }
+  async function voiceToggle(key) {
+    const v = VOICE[key];
+    if (v && v.rec) { v.rec.stop(); return; }
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || !window.MediaRecorder) fail('Votre navigateur ne permet pas d’enregistrer un message vocal. Essayez avec Chrome.');
+    let stream;
+    try { stream = await navigator.mediaDevices.getUserMedia({ audio: true }); }
+    catch (e) { fail('Autorisez le micro pour VillageLink dans les réglages du navigateur, puis réessayez.'); }
+    const mime = voiceMime(), chunks = [];
+    const rec = new MediaRecorder(stream, mime ? { mimeType: mime, audioBitsPerSecond: 32000 } : undefined);
+    const cur = { rec, stream, t0: Date.now() };
+    VOICE[key] = cur;
+    rec.ondataavailable = e => { if (e.data && e.data.size) chunks.push(e.data); };
+    rec.onstop = () => {
+      clearInterval(cur.tick); clearTimeout(cur.cap); stream.getTracks().forEach(t => t.stop());
+      const type = (rec.mimeType || mime || 'audio/webm').split(';')[0];
+      const blob = new Blob(chunks, { type }), secs = Math.max(1, Math.round((Date.now() - cur.t0) / 1000));
+      VOICE[key] = blob.size ? { blob, secs, mime: type, url: URL.createObjectURL(blob) } : null;
+      voiceDraw(key);
+    };
+    rec.start(1000);
+    cur.tick = setInterval(() => voiceDraw(key), 500);
+    cur.cap = setTimeout(() => { if (rec.state === 'recording') rec.stop(); }, 180000);
+    voiceDraw(key);
+  }
+  // Envoie le vocal du formulaire (s'il y en a un) et renvoie { audio_path, audio_seconds }.
+  async function voiceUpload(key) {
+    const v = VOICE[key];
+    if (v && v.rec) fail('Arrêtez d’abord l’enregistrement.');
+    if (!v || !v.blob) return {};
+    if (v.blob.size > 3 * 1024 * 1024) fail('Le message vocal est trop long (3 Mo maximum).');
+    const ext = { 'audio/webm': 'webm', 'audio/mp4': 'm4a', 'audio/ogg': 'ogg', 'audio/mpeg': 'mp3', 'audio/aac': 'aac' }[v.mime] || 'webm';
+    const path = `${S.ctx.assoc.id}/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
+    must(await sb.storage.from('voice').upload(path, v.blob, { contentType: v.mime, upsert: false }));
+    return { audio_path: path, audio_seconds: Math.min(v.secs, 600) };
+  }
+  const voiceDone = key => { const v = VOICE[key]; if (v && v.url) URL.revokeObjectURL(v.url); delete VOICE[key]; };
+
   /* Sections ------------------------------------------------------- */
   V.sections = async (sub) => {
     const secs = S.ctx.sections || [], mg = can('sections');
@@ -1053,9 +1107,10 @@
       ${can('announce') ? `<form class="card stack" data-form="announce" novalidate><h2>Publier une annonce</h2>
         <div class="field"><label for="an-k">Type</label><select id="an-k" name="kind">${ANN_KINDS.map(k => opt(k, k)).join('')}</select></div>
         <div class="field"><label for="an-t">Titre</label><input id="an-t" name="title" maxlength="160"></div>
-        <div class="field"><label for="an-b">Message</label><textarea id="an-b" name="body" rows="4"></textarea></div>
+        <div class="field"><label for="an-b">Message</label><textarea id="an-b" name="body" rows="4" placeholder="Écrivez, ou enregistrez l’annonce en vocal"></textarea></div>
+        ${voiceBox('ann')}
         <p class="err" hidden></p><button class="btn primary" type="submit">Publier</button><p class="help">Pensez à la partager dans le groupe WhatsApp après publication.</p></form>` : ''}
-      ${rows.map(x => `<section class="card stack"><div class="between"><span class="pill ${col[x.kind] || 'p-blue'}">${esc(x.kind)}</span><span class="muted" style="font-size:13px">${dFR(x.created_at)}</span></div><h2>${esc(x.title)}</h2><p style="margin:0;white-space:pre-line">${esc(x.body)}</p><div class="between"><span class="muted" style="font-size:13px">${esc(by(x.created_by))}</span><a class="link" target="_blank" rel="noopener" href="${waShare(x.kind + ' · ' + x.title + '\n\n' + x.body + '\n\n' + a.name)}">Partager sur WhatsApp</a></div></section>`).join('') || '<div class="empty">Aucune annonce pour le moment.</div>'}`;
+      ${rows.map(x => `<section class="card stack"><div class="between"><span class="pill ${col[x.kind] || 'p-blue'}">${esc(x.kind)}</span><span class="muted" style="font-size:13px">${dFR(x.created_at)}</span></div><h2>${esc(x.title)}</h2>${x.audio_path && x.body === 'Annonce vocale' ? '' : `<p style="margin:0;white-space:pre-line">${esc(x.body)}</p>`}${voicePlay(x.audio_path, x.audio_seconds)}<div class="between"><span class="muted" style="font-size:13px">${esc(by(x.created_by))}</span><a class="link" target="_blank" rel="noopener" href="${waShare(x.kind + ' · ' + x.title + '\n\n' + x.body + '\n\n' + a.name)}">Partager sur WhatsApp</a></div></section>`).join('') || '<div class="empty">Aucune annonce pour le moment.</div>'}`;
   };
 
   /* Réunions --------------------------------------------------------- */
@@ -1310,11 +1365,12 @@ Abstention</textarea><p class="help">Entre 2 et 10 choix.</p></div>
       <div class="chips" role="group" aria-label="Filtrer">${[['', 'Tout'], ['Idée', 'Idées'], ['Réclamation', 'Réclamations']].map(([k, l]) => `<a class="chip" style="text-decoration:none" href="${B()}/discussion${k ? '?f=' + encodeURIComponent(k) : ''}" aria-pressed="${f === k}">${l}</a>`).join('')}</div>
       <div class="chat" id="chat">${rows.map(m => { const mine = m.author_id === S.user.id; return `<div class="msg ${mine ? 'mine' : ''} ${m.hidden ? 'hidden-msg' : ''}">
         <div class="msg-head"><b>${esc(mine ? 'Vous' : m.author_label)}</b>${m.kind !== 'Message' ? ` <span class="pill ${pill[m.kind]}">${esc(m.kind)}</span>` : ''}</div>
-        <div class="msg-body">${m.hidden ? 'Message masqué' + (m.hidden_by ? ' par ' + esc(m.hidden_by) : '') : esc(m.body)}</div>
+        <div class="msg-body">${m.hidden ? 'Message masqué' + (m.hidden_by ? ' par ' + esc(m.hidden_by) : '') : (m.audio_path && m.body === 'Message vocal' ? '' : esc(m.body))}${m.hidden ? '' : voicePlay(m.audio_path, m.audio_seconds)}</div>
         <div class="msg-foot"><span>${dFR(localDay(m.created_at))} à ${hm(m.created_at)}</span>${!m.hidden && (mine || canHideAll) ? `<button class="link" data-act="hidemsg" data-id="${m.id}">Masquer</button>` : ''}</div></div>`; }).join('') || `<div class="empty">Aucun message${f ? ' dans cette catégorie' : ''}. Écrivez le premier !</div>`}</div>
       <form class="card stack" data-form="message" novalidate>
         <div class="field"><label for="ms-k">Type</label><select id="ms-k" name="kind">${MSG_KINDS.map(k => opt(k, k, f || 'Message')).join('')}</select></div>
-        <div class="field"><label for="ms-b">Votre message</label><textarea id="ms-b" name="body" rows="3" maxlength="1000" placeholder="Écrivez à tous les membres de l’association"></textarea></div>
+        <div class="field"><label for="ms-b">Votre message</label><textarea id="ms-b" name="body" rows="3" maxlength="1000" placeholder="Écrivez, ou enregistrez un message vocal"></textarea></div>
+        ${voiceBox('msg')}
         <p class="err" hidden></p><button class="btn primary block" type="submit">Envoyer</button>
         <p class="help">Visible par tous les membres validés. Le président, le vice-président et le secrétaire peuvent masquer un message déplacé.</p></form>`;
   };
@@ -1337,7 +1393,7 @@ Abstention</textarea><p class="help">Entre 2 et 10 choix.</p></div>
       <div class="list menu"><a class="item" href="#/bienvenue"><span class="ico">${I.swap}</span><div class="body"><div class="t">Mes associations</div><div class="s">Changer, rejoindre ou créer une association</div></div><span class="chev">${I.chev}</span></a>
       <button class="item" data-act="signout"><span class="ico">${I.out}</span><div class="body"><div class="t">Se déconnecter</div><div class="s">${esc(S.user.email || '')}</div></div></button></div>
       <section class="card stack"><h2>Affichage</h2><div class="seg seg3" role="group" aria-label="Thème">${THEMES.map(([k, l]) => `<button data-act="theme" data-theme="${k}" aria-pressed="${themeNow() === k}">${l}</button>`).join('')}</div><p class="help">« Auto » suit le réglage clair ou sombre de votre téléphone.</p></section>
-      <p class="muted" style="font-size:12.5px;text-align:center">VillageLink · version 1.15 · <a class="link" href="confidentialite.html">Confidentialité</a> · <a class="link" href="conditions.html">Conditions</a></p>`;
+      <p class="muted" style="font-size:12.5px;text-align:center">VillageLink · version 1.16 · <a class="link" href="confidentialite.html">Confidentialité</a> · <a class="link" href="conditions.html">Conditions</a></p>`;
   };
 
   V.parametres = async () => {
@@ -1562,11 +1618,13 @@ Abstention</textarea><p class="help">Entre 2 et 10 choix.</p></div>
       toast('Mise à jour publiée'); route();
     },
     async message(fd) {
-      const body = val(fd, 'body'), kind = val(fd, 'kind');
-      if (!body) fail('Écrivez votre message.');
+      let body = val(fd, 'body'); const kind = val(fd, 'kind'), hasVoice = !!(VOICE.msg && (VOICE.msg.blob || VOICE.msg.rec));
+      if (!body && !hasVoice) fail('Écrivez votre message ou enregistrez un vocal.');
       if (body.length > 1000) fail('1 000 caractères maximum.');
-      must(await sb.from('messages').insert({ association_id: S.ctx.assoc.id, kind: MSG_KINDS.includes(kind) ? kind : 'Message', body }));
-      S.ctx.loadedAt = 0; toast('Message envoyé'); route();
+      const voice = await voiceUpload('msg');
+      if (!body) body = 'Message vocal';
+      must(await sb.from('messages').insert({ association_id: S.ctx.assoc.id, kind: MSG_KINDS.includes(kind) ? kind : 'Message', body, ...voice }));
+      voiceDone('msg'); S.ctx.loadedAt = 0; toast('Message envoyé'); route();
     },
     async meeting(fd, form) {
       const title = val(fd, 'title'), date = val(fd, 'date'), time = val(fd, 'time') || '00:00';
@@ -1609,10 +1667,14 @@ Abstention</textarea><p class="help">Entre 2 et 10 choix.</p></div>
       toast('Document ajouté'); route();
     },
     async announce(fd) {
-      const title = val(fd, 'title'), body = val(fd, 'body');
-      if (title.length < 2 || body.length < 2) fail('Ajoutez un titre et un message.');
-      must(await sb.from('announcements').insert({ association_id: S.ctx.assoc.id, kind: val(fd, 'kind'), title, body }));
-      toast('Annonce publiée'); route();
+      const title = val(fd, 'title'); let body = val(fd, 'body');
+      const hasVoice = !!(VOICE.ann && (VOICE.ann.blob || VOICE.ann.rec));
+      if (title.length < 2) fail('Ajoutez un titre.');
+      if (body.length < 2 && !hasVoice) fail('Ajoutez un message, écrit ou vocal.');
+      const voice = await voiceUpload('ann');
+      if (body.length < 2) body = 'Annonce vocale';
+      must(await sb.from('announcements').insert({ association_id: S.ctx.assoc.id, kind: val(fd, 'kind'), title, body, ...voice }));
+      voiceDone('ann'); toast('Annonce publiée'); route();
     },
     async assoc(fd) {
       if (!can('settings')) fail('Réservé au président.');
@@ -1706,6 +1768,14 @@ Abstention</textarea><p class="help">Entre 2 et 10 choix.</p></div>
         toast('Document retiré'); route();
       }
       else if (act === 'print') { window.print(); }
+      else if (act === 'rec') { await voiceToggle(b.dataset.key); }
+      else if (act === 'recdel') { voiceDone(b.dataset.key); voiceDraw(b.dataset.key); }
+      else if (act === 'play') {
+        b.disabled = true; b.textContent = 'Chargement…';
+        const r = must(await sb.storage.from('voice').createSignedUrl(b.dataset.path, 3600));
+        const au = document.createElement('audio'); au.controls = true; au.autoplay = true; au.preload = 'auto'; au.src = r.signedUrl;
+        b.replaceWith(au); au.play().catch(() => {});
+      }
       else if (act === 'delsection') {
         if (b.dataset.confirm !== '1') { b.dataset.confirm = '1'; b.textContent = 'Confirmer la suppression'; return; }
         must(await sb.from('sections').delete().eq('id', b.dataset.id));
