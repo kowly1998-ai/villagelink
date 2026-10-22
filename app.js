@@ -36,6 +36,10 @@
   const num = n => nf.format(Math.round(Number(n) || 0)).replace(/[   ]/g, NB);
   const money = (n, cur) => num(n) + NB + (CUR_LABEL[cur || (S.ctx && S.ctx.assoc.currency)] || 'FCFA');
   const moneyW = n => money(n).replace(/\u00a0(\S+)$/, ' $1');
+  const nf2 = new Intl.NumberFormat('fr-FR', { maximumFractionDigits: 2 });
+  const moneyD = (n, cur) => nf2.format(Number(n) || 0).replace(/[\u202f\u00a0 ]/g, NB) + NB + (CUR_LABEL[cur] || cur);
+  const rateFmt = r => new Intl.NumberFormat('fr-FR', { maximumFractionDigits: 6 }).format(Number(r)).replace(/[\u202f\u00a0 ]/g, NB);
+  const origTag = t => (t && t.orig_currency ? moneyD(Math.abs(t.orig_amount), t.orig_currency) : '');
   const todayISO = () => { const d = new Date(); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`; };
   const curYM = () => todayISO().slice(0, 7);
   const ym = d => String(d || '').slice(0, 7);
@@ -370,7 +374,7 @@
     const reversed = reversedIds && reversedIds.has(t.id);
     const title = t.category === 'Cotisations' && t.member_id ? 'Cotisation · ' + memberName(t.member_id) : t.description;
     const fx = effect(t);
-    return `<a class="item" href="${B()}/op/${t.id}"><div class="body"><div class="t ${reversed ? 'strike' : ''}">${esc(title)}</div><div class="s wrap">${whenTx(t)} · ${esc(t.category)}${t.reversal_of ? ' · contre-écriture' : ''}${reversed ? ' · annulée' : ''}</div></div><span class="amt num ${fx >= 0 ? 'in' : 'out'}">${fx >= 0 ? '+' : '−'}${money(Math.abs(fx))}</span></a>`;
+    return `<a class="item" href="${B()}/op/${t.id}"><div class="body"><div class="t ${reversed ? 'strike' : ''}">${esc(title)}</div><div class="s wrap">${whenTx(t)} · ${esc(t.category)}${t.orig_currency ? ' · ' + origTag(t) : ''}${t.reversal_of ? ' · contre-écriture' : ''}${reversed ? ' · annulée' : ''}</div></div><span class="amt num ${fx >= 0 ? 'in' : 'out'}">${fx >= 0 ? '+' : '−'}${money(Math.abs(fx))}</span></a>`;
   };
   async function reversedSet(rows) {
     const ids = rows.filter(t => !t.reversal_of).map(t => t.id);
@@ -593,7 +597,8 @@
       <form class="stack" data-form="pay" novalidate>
         <div class="field"><label for="pay-m">Membre</label><select id="pay-m" name="member_id">${list.map(m => opt(m.id, m.full_name + (dues(m).isLate ? ' · en retard' : ''), sel)).join('')}</select></div>
         <div class="field"><label for="pay-p">Mois concerné</label><select id="pay-p" name="period"></select></div>
-        <div class="field"><label for="pay-a">Montant (${esc(CUR_LABEL[a.currency] || a.currency)})</label><input id="pay-a" name="amount" type="number" inputmode="numeric" min="1" step="1"></div>
+        ${fxFields('pay')}
+        <div class="field"><label for="pay-a">Montant (${esc(CUR_LABEL[a.currency] || a.currency)})</label><input id="pay-a" name="amount" type="number" inputmode="decimal" min="0" step="1"><p class="help num" id="pay-conv" hidden></p></div>
         <div class="field"><label for="pay-mode">Mode de paiement</label><select id="pay-mode" name="payment_method">${MODES.map(x => opt(x, x)).join('')}</select></div>
         <div class="field"><label for="pay-date">Date du paiement</label><input id="pay-date" name="occurred_on" type="date" value="${todayISO()}" max="${todayISO()}"></div>
         <div class="field"><label for="pay-c">Commentaire (facultatif)</label><input id="pay-c" name="comment" placeholder="Ex. remis en main propre à l’AG"></div>
@@ -612,10 +617,55 @@
       const first = opts.find(p => paidFor(m.id, p) < fee) || cur; ps.value = first;
       am.value = Math.max(fee - paidFor(m.id, first), 0) || fee;
     };
-    ms.addEventListener('change', fill);
-    ps.addEventListener('change', () => { am.value = Math.max(fee - paidFor(ms.value, ps.value), 0) || fee; });
+    // Montant proposé = reste dû, converti dans la monnaie reçue.
+    const due = () => Math.max(fee - paidFor(ms.value, ps.value), 0) || fee;
+    const curSel = $('#pay-cur'), rateIn = $('#pay-rate');
+    const suggest = () => { const r = Number(rateIn.value); am.value = curSel.value === S.ctx.assoc.currency ? due() : (r > 0 ? Math.round(due() / r * 100) / 100 : ''); };
+    const show = wireFx('pay', 'pay-a', suggest);
+    ms.addEventListener('change', () => { fill(); suggest(); show(); });
+    ps.addEventListener('change', () => { suggest(); show(); });
     fill();
   };
+
+  /* Plusieurs devises ------------------------------------------------ */
+  // Parités fixes du franc CFA ; les autres taux se saisissent et sont retenus sur ce téléphone.
+  const FX_FIXED = { 'EUR>XOF': 655.957, 'EUR>XAF': 655.957, 'XOF>XAF': 1, 'XAF>XOF': 1, 'XOF>EUR': 1 / 655.957, 'XAF>EUR': 1 / 655.957 };
+  const fxRate = (from, to) => { if (from === to) return 1; const k = from + '>' + to; return FX_FIXED[k] || Number(store.get('vl:fx:' + k)) || 0; };
+  const r6 = x => Math.round(x * 1e6) / 1e6;
+  const fxFields = pfx => `<div class="row2"><div class="field"><label for="${pfx}-cur">Monnaie</label><select id="${pfx}-cur" name="pay_cur">${CURRENCIES.map(([k]) => opt(k, (CUR_LABEL[k] === k ? k : CUR_LABEL[k] + ' · ' + k), S.ctx.assoc.currency)).join('')}</select></div>
+    <div class="field" id="${pfx}-ratebox" hidden><label for="${pfx}-rate">Taux : 1 <span data-fxcur></span> =</label><input id="${pfx}-rate" name="rate" type="number" inputmode="decimal" step="any" min="0" placeholder="en ${esc(CUR_LABEL[S.ctx.assoc.currency] || S.ctx.assoc.currency)}"></div></div>`;
+  // Relie la monnaie, le taux et le montant d'un formulaire ; onCur(ancienne, nouvelle, taux) permet de recalculer le montant proposé.
+  function wireFx(pfx, amountId, onCur) {
+    const sel = $('#' + pfx + '-cur'), box = $('#' + pfx + '-ratebox'), rate = $('#' + pfx + '-rate'), conv = $('#' + pfx + '-conv'), am = $('#' + amountId);
+    if (!sel || !am) return;
+    const base = S.ctx.assoc.currency, lab = document.querySelector('label[for=' + amountId + ']');
+    const show = () => {
+      const c = sel.value, foreign = c !== base, r = Number(rate.value), v = Number(String(am.value).replace(',', '.'));
+      box.hidden = !foreign; conv.hidden = !foreign;
+      am.step = foreign ? 'any' : '1';
+      if (lab) lab.textContent = `Montant (${CUR_LABEL[c] || c})`;
+      box.querySelector('[data-fxcur]').textContent = CUR_LABEL[c] || c;
+      if (foreign) conv.innerHTML = r > 0 && v > 0 ? `Soit <b>${money(Math.round(Math.round(v * 100) / 100 * r6(r)))}</b> enregistrés dans la caisse.` : 'Indiquez le taux pour voir le montant en ' + esc(CUR_LABEL[base] || base) + '.';
+    };
+    let prev = sel.value;
+    sel.addEventListener('change', () => { const r = fxRate(sel.value, base); rate.value = sel.value === base ? '' : (r ? String(r6(r)) : ''); if (onCur) onCur(prev, sel.value, r); prev = sel.value; show(); });
+    rate.addEventListener('input', () => { if (onCur) onCur(sel.value, sel.value, Number(rate.value)); show(); });
+    am.addEventListener('input', show);
+    show();
+    return show;
+  }
+  // Lit le montant d'un formulaire : montant dans la monnaie de la caisse + infos d'origine éventuelles.
+  function readAmount(fd) {
+    const base = S.ctx.assoc.currency, c = val(fd, 'pay_cur') || base, raw = Number(val(fd, 'amount').replace(',', '.'));
+    if (!(raw > 0)) fail('Saisissez un montant supérieur à 0.');
+    if (c === base) return { amount: Math.round(raw), fx: {} };
+    const rate = r6(Number(val(fd, 'rate').replace(',', '.')));
+    if (!(rate > 0)) fail(`Indiquez le taux : combien vaut 1 ${CUR_LABEL[c] || c} en ${CUR_LABEL[base] || base} ?`);
+    const orig = Math.round(raw * 100) / 100, amount = Math.round(orig * rate);
+    if (!(amount > 0)) fail('Le montant converti est trop petit.');
+    if (!FX_FIXED[c + '>' + base]) store.set('vl:fx:' + c + '>' + base, String(rate));
+    return { amount, fx: { orig_amount: orig, orig_currency: c, fx_rate: rate } };
+  }
 
   /* Finances --------------------------------------------------------- */
   const PAGE = 30;
@@ -650,7 +700,8 @@
       ${type === 'in' ? `<p class="note">Pour une cotisation mensuelle, utilisez plutôt <a class="link" href="${B()}/encaisser">Enregistrer un paiement</a> : le membre sera marqué à jour.</p>` : ''}
       <form class="stack" data-form="op" data-type="${type}" novalidate>
         <div class="field"><label for="op-cat">Catégorie</label><select id="op-cat" name="category">${cats.map(c => opt(c, c, pre && type === 'in' ? 'Dons' : pre ? 'Projet' : '')).join('')}</select></div>
-        <div class="field"><label for="op-a">Montant (${esc(CUR_LABEL[S.ctx.assoc.currency] || S.ctx.assoc.currency)})</label><input id="op-a" name="amount" type="number" inputmode="numeric" min="1" step="1" required></div>
+        ${fxFields('op')}
+        <div class="field"><label for="op-a">Montant (${esc(CUR_LABEL[S.ctx.assoc.currency] || S.ctx.assoc.currency)})</label><input id="op-a" name="amount" type="number" inputmode="decimal" min="0" step="1" required><p class="help num" id="op-conv" hidden></p></div>
         <div class="field"><label for="op-p">Projet lié (facultatif)</label><select id="op-p" name="project_id"><option value="">Aucun, fonds général</option>${projects.map(p => opt(p.id, p.name, pre)).join('')}</select></div>
         <div class="field"><label for="op-d">Description</label><input id="op-d" name="description" maxlength="300" placeholder="${type === 'out' ? 'Ex. achat de 20 sacs de ciment' : 'Ex. don de la famille Bah'}" required></div>
         ${type === 'in' ? `<div class="field"><label for="op-mode">Mode de paiement</label><select id="op-mode" name="payment_method">${MODES.map(x => opt(x, x)).join('')}</select></div>` : ''}
@@ -660,6 +711,7 @@
         <p class="err" hidden></p><button class="btn primary block" type="submit">${approval ? 'Envoyer pour approbation' : 'Enregistrer'}</button></form>`;
   };
 
+  AFTER.operation = () => wireFx('op', 'op-a');
   V.op = async (sub, q) => {
     const id = Number(sub[1]);
     const t = must(await sb.from('transactions').select('*').eq('association_id', S.ctx.assoc.id).eq('id', id).maybeSingle());
@@ -674,12 +726,12 @@
     const isReceipt = q.get('recu') === '1' && m;
     const receipt = receiptText(t, m, author);
     return `${subHead(isReceipt ? 'Paiement enregistré' : 'Opération ' + txRef(t.id), m ? B() + '/m/' + m.id : B() + '/finances')}
-      ${isReceipt ? `<div class="receipt stack num"><div class="between"><b>Reçu ${txRef(t.id)}</b><span class="pill p-ok">Payé</span></div><dl class="kv" style="margin:0"><dt>Membre</dt><dd>${esc(m.full_name)}</dd><dt>Objet</dt><dd>${esc(t.description)}</dd><dt>Montant</dt><dd>${money(t.amount)}</dd><dt>Mode</dt><dd>${esc(t.payment_method || '—')}</dd><dt>Date</dt><dd>${whenTx(t)}</dd></dl>
+      ${isReceipt ? `<div class="receipt stack num"><div class="between"><b>Reçu ${txRef(t.id)}</b><span class="pill p-ok">Payé</span></div><dl class="kv" style="margin:0"><dt>Membre</dt><dd>${esc(m.full_name)}</dd><dt>Objet</dt><dd>${esc(t.description)}</dd><dt>Montant</dt><dd>${money(t.amount)}${t.orig_currency ? ` (${origTag(t)})` : ''}</dd><dt>Mode</dt><dd>${esc(t.payment_method || '—')}</dd><dt>Date</dt><dd>${whenTx(t)}</dd></dl>
         ${t.period && paidFor(m.id, t.period) < Number(S.ctx.assoc.fee_amount) ? `<span class="pill p-late">Reste ${money(Number(S.ctx.assoc.fee_amount) - paidFor(m.id, t.period))} pour ${pFR(t.period)}</span>` : ''}</div>
         <a class="btn wa block" target="_blank" rel="noopener" href="${waTo(m.phone, receipt)}">${I.wa} Envoyer le reçu sur WhatsApp</a>
         <a class="btn ghost block" href="${B()}/encaisser">Enregistrer un autre paiement</a>` : `
       <section class="card stack num"><div class="between"><span class="pill ${t.kind === 'in' ? 'p-ok' : 'p-red'}">${t.kind === 'in' ? 'Recette' : 'Dépense'} · ${esc(t.category)}</span><span class="amt ${effect(t) >= 0 ? 'in' : 'out'}" style="font-size:18px">${effect(t) >= 0 ? '+' : '−'}${money(Math.abs(t.amount))}</span></div>
-        <dl class="kv" style="margin:0"><dt>Objet</dt><dd>${esc(t.description)}</dd>${m ? `<dt>Membre</dt><dd>${esc(m.full_name)}</dd>` : ''}${t.period ? `<dt>Mois</dt><dd>${pFR(t.period)}</dd>` : ''}${proj ? `<dt>Projet</dt><dd>${esc(proj.name)}</dd>` : ''}<dt>Date</dt><dd>${dFR(t.occurred_on)}</dd>${t.payment_method ? `<dt>Mode</dt><dd>${esc(t.payment_method)}</dd>` : ''}<dt>${t.approved_label ? 'Proposé par' : 'Saisi par'}</dt><dd>${esc(author ? author.full_name : t.requested_label || '—')}</dd>${t.approved_label ? `<dt>Approuvé par</dt><dd>${esc(t.approved_label)}</dd>` : ''}<dt>Saisi le</dt><dd>${dFR(t.created_at)} à ${hm(t.created_at)}</dd>${t.comment ? `<dt>${t.reversal_of ? 'Motif' : 'Commentaire'}</dt><dd>${esc(t.comment)}</dd>` : ''}</dl>
+        <dl class="kv" style="margin:0"><dt>Objet</dt><dd>${esc(t.description)}</dd>${t.orig_currency ? `<dt>Montant reçu</dt><dd>${origTag(t)}</dd><dt>Taux</dt><dd>1 ${esc(CUR_LABEL[t.orig_currency] || t.orig_currency)} = ${rateFmt(t.fx_rate)} ${esc(CUR_LABEL[S.ctx.assoc.currency] || S.ctx.assoc.currency)}</dd>` : ''}${m ? `<dt>Membre</dt><dd>${esc(m.full_name)}</dd>` : ''}${t.period ? `<dt>Mois</dt><dd>${pFR(t.period)}</dd>` : ''}${proj ? `<dt>Projet</dt><dd>${esc(proj.name)}</dd>` : ''}<dt>Date</dt><dd>${dFR(t.occurred_on)}</dd>${t.payment_method ? `<dt>Mode</dt><dd>${esc(t.payment_method)}</dd>` : ''}<dt>${t.approved_label ? 'Proposé par' : 'Saisi par'}</dt><dd>${esc(author ? author.full_name : t.requested_label || '—')}</dd>${t.approved_label ? `<dt>Approuvé par</dt><dd>${esc(t.approved_label)}</dd>` : ''}<dt>Saisi le</dt><dd>${dFR(t.created_at)} à ${hm(t.created_at)}</dd>${t.comment ? `<dt>${t.reversal_of ? 'Motif' : 'Commentaire'}</dt><dd>${esc(t.comment)}</dd>` : ''}</dl>
         ${t.proof_path ? `<button class="btn ghost sm" data-act="proof" data-path="${esc(t.proof_path)}">Voir le justificatif</button><div id="proof-box"></div>` : '<span class="muted" style="font-size:13px">Aucun justificatif</span>'}</section>
       ${rev ? `<p class="note">Opération annulée le ${dFR(rev.occurred_on)} par la contre-écriture <a class="link" href="${B()}/op/${rev.id}">${txRef(rev.id)}</a>. Motif : ${esc(rev.comment)}</p>` : ''}
       ${orig ? `<p class="note">Cette ligne annule <a class="link" href="${B()}/op/${orig.id}">${txRef(orig.id)}</a>. Les deux restent visibles dans l’historique.</p>` : ''}
@@ -688,7 +740,7 @@
   };
   function receiptText(t, m, author) {
     const a = S.ctx.assoc;
-    return `Reçu ${txRef(t.id)}\n${a.name}\n\n${m ? 'Membre : ' + m.full_name + '\n' : ''}${t.description}\nMontant : ${money(t.amount)}\nMode : ${t.payment_method || '—'}\nDate : ${whenTx(t)}\nEnregistré par : ${author ? author.full_name : S.ctx.me.full_name}\n\nMerci pour votre contribution au développement de ${a.village || 'notre village'}.`;
+    return `Reçu ${txRef(t.id)}\n${a.name}\n\n${m ? 'Membre : ' + m.full_name + '\n' : ''}${t.description}\nMontant : ${money(t.amount)}${t.orig_currency ? ' (' + origTag(t) + ')' : ''}\nMode : ${t.payment_method || '—'}\nDate : ${whenTx(t)}\nEnregistré par : ${author ? author.full_name : S.ctx.me.full_name}\n\nMerci pour votre contribution au développement de ${a.village || 'notre village'}.`;
   }
 
   /* Double validation des dépenses ----------------------------------- */
@@ -710,7 +762,7 @@
     const pending = r.status === 'En attente', mine = r.requested_by === S.user.id, solde = S.ctx.bal.in - S.ctx.bal.out;
     return `${subHead('Proposition de dépense', B() + '/depenses')}
       <section class="card stack num"><div class="between"><span class="pill ${EXP_PILL[r.status]}">${esc(r.status)}</span><span class="amt out" style="font-size:18px">−${money(r.amount)}</span></div>
-        <dl class="kv" style="margin:0"><dt>Objet</dt><dd>${esc(r.description)}</dd><dt>Catégorie</dt><dd>${esc(r.category)}</dd>${proj ? `<dt>Projet</dt><dd>${esc(proj.name)}</dd>` : ''}<dt>Date</dt><dd>${dFR(r.occurred_on)}</dd><dt>Proposé par</dt><dd>${esc(r.requested_label)}</dd><dt>Le</dt><dd>${dFR(r.created_at)} à ${hm(r.created_at)}</dd>${r.comment ? `<dt>Commentaire</dt><dd>${esc(r.comment)}</dd>` : ''}${r.decided_at ? `<dt>${r.status === 'Annulée' ? 'Retiré par' : r.status === 'Approuvée' ? 'Approuvé par' : 'Refusé par'}</dt><dd>${esc(r.decided_label)}, le ${dFR(r.decided_at)}</dd>` : ''}${r.decision_note ? `<dt>Motif</dt><dd>${esc(r.decision_note)}</dd>` : ''}</dl>
+        <dl class="kv" style="margin:0"><dt>Objet</dt><dd>${esc(r.description)}</dd>${r.orig_currency ? `<dt>Montant payé</dt><dd>${origTag(r)} (1 ${esc(CUR_LABEL[r.orig_currency] || r.orig_currency)} = ${rateFmt(r.fx_rate)})</dd>` : ''}<dt>Catégorie</dt><dd>${esc(r.category)}</dd>${proj ? `<dt>Projet</dt><dd>${esc(proj.name)}</dd>` : ''}<dt>Date</dt><dd>${dFR(r.occurred_on)}</dd><dt>Proposé par</dt><dd>${esc(r.requested_label)}</dd><dt>Le</dt><dd>${dFR(r.created_at)} à ${hm(r.created_at)}</dd>${r.comment ? `<dt>Commentaire</dt><dd>${esc(r.comment)}</dd>` : ''}${r.decided_at ? `<dt>${r.status === 'Annulée' ? 'Retiré par' : r.status === 'Approuvée' ? 'Approuvé par' : 'Refusé par'}</dt><dd>${esc(r.decided_label)}, le ${dFR(r.decided_at)}</dd>` : ''}${r.decision_note ? `<dt>Motif</dt><dd>${esc(r.decision_note)}</dd>` : ''}</dl>
         ${r.proof_path ? `<button class="btn ghost sm" data-act="proof" data-path="${esc(r.proof_path)}">Voir le justificatif</button><div id="proof-box"></div>` : '<span class="muted" style="font-size:13px">Aucun justificatif joint</span>'}</section>
       ${r.tx_id ? `<a class="btn ghost block" href="${B()}/op/${r.tx_id}">Voir l’opération dans la caisse</a>` : ''}
       ${pending && can('approve') && !mine ? `<section class="card stack"><h2>Votre décision</h2><p class="muted num" style="margin:0;font-size:13.5px">Solde actuel de la caisse : ${money(solde)}${r.amount > solde ? ' : <b style="color:var(--danger)">insuffisant pour cette dépense</b>' : ''}.</p>
@@ -1092,7 +1144,7 @@ Abstention</textarea><p class="help">Entre 2 et 10 choix.</p></div>
       <div class="list menu"><a class="item" href="#/bienvenue"><span class="ico">${I.swap}</span><div class="body"><div class="t">Mes associations</div><div class="s">Changer, rejoindre ou créer une association</div></div><span class="chev">${I.chev}</span></a>
       <button class="item" data-act="signout"><span class="ico">${I.out}</span><div class="body"><div class="t">Se déconnecter</div><div class="s">${esc(S.user.email || '')}</div></div></button></div>
       <section class="card stack"><h2>Affichage</h2><div class="seg seg3" role="group" aria-label="Thème">${THEMES.map(([k, l]) => `<button data-act="theme" data-theme="${k}" aria-pressed="${themeNow() === k}">${l}</button>`).join('')}</div><p class="help">« Auto » suit le réglage clair ou sombre de votre téléphone.</p></section>
-      <p class="muted" style="font-size:12.5px;text-align:center">VillageLink · version 1.11 · <a class="link" href="confidentialite.html">Confidentialité</a> · <a class="link" href="conditions.html">Conditions</a></p>`;
+      <p class="muted" style="font-size:12.5px;text-align:center">VillageLink · version 1.12 · <a class="link" href="confidentialite.html">Confidentialité</a> · <a class="link" href="conditions.html">Conditions</a></p>`;
   };
 
   V.parametres = async () => {
@@ -1225,20 +1277,20 @@ Abstention</textarea><p class="help">Entre 2 et 10 choix.</p></div>
       go(B() + '/membres');
     },
     async pay(fd) {
-      const mid = val(fd, 'member_id'), period = val(fd, 'period'), amount = intVal(fd, 'amount'), fee = Number(S.ctx.assoc.fee_amount);
+      const mid = val(fd, 'member_id'), period = val(fd, 'period'), fee = Number(S.ctx.assoc.fee_amount);
       const m = S.ctx.byId.get(mid); if (!m) fail('Choisissez un membre.');
       if (!/^\d{4}-\d{2}$/.test(period)) fail('Choisissez le mois concerné.');
-      if (!(amount > 0)) fail('Saisissez un montant supérieur à 0.');
+      const { amount, fx } = readAmount(fd);
       if (paidFor(mid, period) >= fee) fail(`${pFR(period)} est déjà réglé pour ce membre. Choisissez un autre mois.`);
       const t = must(await sb.from('transactions').insert({
         association_id: S.ctx.assoc.id, kind: 'in', category: 'Cotisations', amount, occurred_on: val(fd, 'occurred_on') || todayISO(),
-        description: 'Cotisation de ' + pFR(period), member_id: mid, period, payment_method: val(fd, 'payment_method'), comment: val(fd, 'comment')
+        description: 'Cotisation de ' + pFR(period), member_id: mid, period, payment_method: val(fd, 'payment_method'), comment: val(fd, 'comment'), ...fx
       }).select('*').single());
       await refresh(); toast('Paiement enregistré'); go(B() + '/op/' + t.id + '?recu=1');
     },
     async op(fd, form) {
-      const kind = form.dataset.type === 'out' ? 'out' : 'in', amount = intVal(fd, 'amount'), desc = val(fd, 'description');
-      if (!(amount > 0)) fail('Saisissez un montant supérieur à 0.');
+      const kind = form.dataset.type === 'out' ? 'out' : 'in', desc = val(fd, 'description');
+      const { amount, fx } = readAmount(fd);
       if (desc.length < 2) fail('Ajoutez une description pour que les membres comprennent l’opération.');
       if (kind === 'out' && amount > S.ctx.bal.in - S.ctx.bal.out) fail(`Le montant dépasse le solde disponible (${money(S.ctx.bal.in - S.ctx.bal.out)}).`);
       let proof_path = '';
@@ -1252,13 +1304,13 @@ Abstention</textarea><p class="help">Entre 2 et 10 choix.</p></div>
       if (kind === 'out' && S.ctx.assoc.expense_approval) {
         const r = must(await sb.from('expense_requests').insert({
           association_id: S.ctx.assoc.id, category: val(fd, 'category'), amount, occurred_on: val(fd, 'occurred_on') || todayISO(),
-          description: desc, project_id: val(fd, 'project_id') || null, comment: val(fd, 'comment'), proof_path
+          description: desc, project_id: val(fd, 'project_id') || null, comment: val(fd, 'comment'), proof_path, ...fx
         }).select('id').single());
         await refresh(); toast('Dépense envoyée pour approbation'); return go(B() + '/depense/' + r.id);
       }
       const t = must(await sb.from('transactions').insert({
         association_id: S.ctx.assoc.id, kind, category: val(fd, 'category'), amount, occurred_on: val(fd, 'occurred_on') || todayISO(),
-        description: desc, project_id: val(fd, 'project_id') || null, payment_method: val(fd, 'payment_method'), comment: val(fd, 'comment'), proof_path
+        description: desc, project_id: val(fd, 'project_id') || null, payment_method: val(fd, 'payment_method'), comment: val(fd, 'comment'), proof_path, ...fx
       }).select('*').single());
       await refresh(); toast(kind === 'out' ? 'Dépense enregistrée' : 'Recette enregistrée'); go(B() + '/op/' + t.id);
     },
