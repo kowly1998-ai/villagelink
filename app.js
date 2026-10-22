@@ -1092,10 +1092,29 @@
         <dl class="kv num" style="margin:0"><dt>Objectif</dt><dd>${money(p.goal)}</dd><dt>Collecté</dt><dd style="color:var(--green)">${money(c)}</dd><dt>Dépensé</dt><dd style="color:var(--danger)">${money(s)}</dd><dt>Reste à collecter</dt><dd>${money(Math.max(0, p.goal - c))}</dd><dt>En caisse pour ce projet</dt><dd>${money(c - s)}</dd></dl></section>
       <section class="card"><dl class="kv" style="margin:0"><dt>Responsable</dt><dd>${p.lead_member_id ? esc(memberName(p.lead_member_id)) : '<span class="muted">À désigner</span>'}</dd><dt>Début</dt><dd>${dFR(p.start_on)}</dd><dt>Fin prévue</dt><dd>${p.end_on ? dFR(p.end_on) : '<span class="muted">—</span>'}</dd></dl></section>
       <div class="row" style="flex-wrap:wrap">${can('collect') && p.status !== 'Terminé' ? `<a class="btn primary sm" href="${B()}/operation?type=in&projet=${p.id}">+ Contribution</a>` : ''}${can('spend') && p.status !== 'Terminé' ? `<a class="btn ghost sm" href="${B()}/operation?type=out&projet=${p.id}">+ Dépense</a>` : ''}${can('projects') ? `<a class="btn ghost sm" href="${B()}/p/${p.id}/modifier">Modifier</a>` : ''}<a class="btn wa sm" target="_blank" rel="noopener" href="${waShare(share)}">${I.wa} Partager</a></div>
+      ${pubCard(p, c, pc)}
       ${can('projects') ? `<form class="card stack" data-form="pupdate" data-id="${p.id}" novalidate><h2>Donner des nouvelles</h2><div class="field"><label for="pu-t">Ce qui a avancé</label><textarea id="pu-t" name="body" rows="3" placeholder="Ex. le château d’eau est monté, il reste la pompe solaire"></textarea></div><p class="err" hidden></p><button class="btn primary" type="submit">Publier</button></form>` : ''}
       <section class="stack"><span class="eyebrow">Mises à jour</span>${updates.length ? `<div class="timeline">${updates.map(u => `<div><div class="d">${dFR(u.created_at)} · ${esc(by(u.created_by))}</div><div>${esc(u.body)}</div></div>`).join('')}</div>` : '<span class="muted">Aucune mise à jour pour le moment.</span>'}</section>
       <section class="stack"><span class="eyebrow">Opérations du projet</span><div class="list">${ops.map(x => txItem(x, rset)).join('') || '<div class="empty">Aucune opération.</div>'}</div></section>`;
   };
+
+  const pubUrl = p => location.origin + location.pathname.replace(/[^/]*$/, '') + 'projet.html?id=' + p.public_slug;
+  function pubCard(p, c, pc) {
+    if (p.public_slug) {
+      const url = pubUrl(p), share = `${p.name} — ${S.ctx.assoc.name}\nDéjà ${money(c)} collectés sur ${money(p.goal)} (${pc} %).\nSuivez le projet en toute transparence, et participez :\n${url}`;
+      return `<section class="card stack pub-card"><div class="between"><h2>Page publique</h2><span class="pill p-ok">En ligne</span></div>
+        <p class="muted" style="margin:0;font-size:13.5px">Tout le monde peut voir ce projet avec ce lien, même sans compte : objectif, argent collecté, dépenses et nouvelles. Aucun nom ni numéro de membre n’y apparaît.</p>
+        <a class="link" style="word-break:break-all" target="_blank" rel="noopener" href="${esc(url)}">${esc(url)}</a>
+        <a class="btn wa block" target="_blank" rel="noopener" href="${waShare(share)}">${I.wa} Partager la page sur WhatsApp</a>
+        ${can('projects') ? `<form class="stack" data-form="ppublic" data-id="${p.id}" data-on="1" novalidate><div class="field"><label for="pp-c">Comment donner (affiché sur la page)</label><input id="pp-c" name="contact" maxlength="300" value="${esc(p.public_contact)}" placeholder="Ex. Wave ou Orange Money au +221 77 000 00 00 (trésorier)"></div><p class="err" hidden></p><button class="btn ghost sm" type="submit">Enregistrer</button></form>
+        <button class="btn danger sm" data-act="unpublish" data-id="${p.id}">Retirer la page publique</button>` : ''}</section>`;
+    }
+    if (!can('projects')) return '';
+    return `<form class="card stack" data-form="ppublic" data-id="${p.id}" novalidate><h2>Faire connaître le projet</h2>
+      <p class="muted" style="margin:0;font-size:13.5px">Publiez une page ouverte à tous, à partager sur Facebook et WhatsApp : la diaspora et les amis du village voient l’avancement et peuvent donner. Aucune donnée de membre n’y apparaît.</p>
+      <div class="field"><label for="pp-c">Comment donner</label><input id="pp-c" name="contact" maxlength="300" placeholder="Ex. Wave ou Orange Money au +221 77 000 00 00 (trésorier)"><p class="help">Ce texte sera visible par tout le monde. Mettez un numéro qui accepte d’être public.</p></div>
+      <p class="err" hidden></p><button class="btn primary block" type="submit">Publier la page du projet</button></form>`;
+  }
 
   /* Annonces, journal, plus, paramètres ------------------------------ */
   V.annonces = async () => {
@@ -1393,7 +1412,7 @@ Abstention</textarea><p class="help">Entre 2 et 10 choix.</p></div>
       <div class="list menu"><a class="item" href="#/bienvenue"><span class="ico">${I.swap}</span><div class="body"><div class="t">Mes associations</div><div class="s">Changer, rejoindre ou créer une association</div></div><span class="chev">${I.chev}</span></a>
       <button class="item" data-act="signout"><span class="ico">${I.out}</span><div class="body"><div class="t">Se déconnecter</div><div class="s">${esc(S.user.email || '')}</div></div></button></div>
       <section class="card stack"><h2>Affichage</h2><div class="seg seg3" role="group" aria-label="Thème">${THEMES.map(([k, l]) => `<button data-act="theme" data-theme="${k}" aria-pressed="${themeNow() === k}">${l}</button>`).join('')}</div><p class="help">« Auto » suit le réglage clair ou sombre de votre téléphone.</p></section>
-      <p class="muted" style="font-size:12.5px;text-align:center">VillageLink · version 1.16 · <a class="link" href="confidentialite.html">Confidentialité</a> · <a class="link" href="conditions.html">Conditions</a></p>`;
+      <p class="muted" style="font-size:12.5px;text-align:center">VillageLink · version 1.17 · <a class="link" href="confidentialite.html">Confidentialité</a> · <a class="link" href="conditions.html">Conditions</a></p>`;
   };
 
   V.parametres = async () => {
@@ -1573,6 +1592,15 @@ Abstention</textarea><p class="help">Entre 2 et 10 choix.</p></div>
       if (reason.length < 4) fail('Indiquez le motif de l’annulation.');
       const nid = must(await sb.rpc('reverse_transaction', { p_id: Number(form.dataset.id), p_reason: reason }));
       await refresh(); toast('Contre-écriture enregistrée'); go(B() + '/op/' + nid);
+    },
+    async ppublic(fd, form) {
+      const row = { public_contact: val(fd, 'contact') };
+      if (form.dataset.on !== '1') {
+        const a = new Uint8Array(12); crypto.getRandomValues(a);
+        row.public_slug = Array.from(a, x => 'abcdefghijkmnpqrstuvwxyz23456789'[x % 32]).join('');
+      }
+      must(await sb.from('projects').update(row).eq('id', form.dataset.id).select('id').single());
+      toast(form.dataset.on === '1' ? 'Page mise à jour' : 'Page publique en ligne'); route();
     },
     async section(fd, form) {
       const id = form.dataset.id, name = val(fd, 'name');
@@ -1775,6 +1803,11 @@ Abstention</textarea><p class="help">Entre 2 et 10 choix.</p></div>
         const r = must(await sb.storage.from('voice').createSignedUrl(b.dataset.path, 3600));
         const au = document.createElement('audio'); au.controls = true; au.autoplay = true; au.preload = 'auto'; au.src = r.signedUrl;
         b.replaceWith(au); au.play().catch(() => {});
+      }
+      else if (act === 'unpublish') {
+        if (b.dataset.confirm !== '1') { b.dataset.confirm = '1'; b.textContent = 'Confirmer : le lien ne marchera plus'; return; }
+        must(await sb.from('projects').update({ public_slug: null }).eq('id', b.dataset.id).select('id').single());
+        toast('Page publique retirée'); route();
       }
       else if (act === 'delsection') {
         if (b.dataset.confirm !== '1') { b.dataset.confirm = '1'; b.textContent = 'Confirmer la suppression'; return; }
