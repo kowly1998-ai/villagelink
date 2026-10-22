@@ -729,6 +729,7 @@
       ${isReceipt ? `<div class="receipt stack num"><div class="between"><b>Reçu ${txRef(t.id)}</b><span class="pill p-ok">Payé</span></div><dl class="kv" style="margin:0"><dt>Membre</dt><dd>${esc(m.full_name)}</dd><dt>Objet</dt><dd>${esc(t.description)}</dd><dt>Montant</dt><dd>${money(t.amount)}${t.orig_currency ? ` (${origTag(t)})` : ''}</dd><dt>Mode</dt><dd>${esc(t.payment_method || '—')}</dd><dt>Date</dt><dd>${whenTx(t)}</dd></dl>
         ${t.period && paidFor(m.id, t.period) < Number(S.ctx.assoc.fee_amount) ? `<span class="pill p-late">Reste ${money(Number(S.ctx.assoc.fee_amount) - paidFor(m.id, t.period))} pour ${pFR(t.period)}</span>` : ''}</div>
         <a class="btn wa block" target="_blank" rel="noopener" href="${waTo(m.phone, receipt)}">${I.wa} Envoyer le reçu sur WhatsApp</a>
+        <a class="btn ghost block" href="${B()}/recu/${t.id}">Reçu en PDF</a>
         <a class="btn ghost block" href="${B()}/encaisser">Enregistrer un autre paiement</a>` : `
       <section class="card stack num"><div class="between"><span class="pill ${t.kind === 'in' ? 'p-ok' : 'p-red'}">${t.kind === 'in' ? 'Recette' : 'Dépense'} · ${esc(t.category)}</span><span class="amt ${effect(t) >= 0 ? 'in' : 'out'}" style="font-size:18px">${effect(t) >= 0 ? '+' : '−'}${money(Math.abs(t.amount))}</span></div>
         <dl class="kv" style="margin:0"><dt>Objet</dt><dd>${esc(t.description)}</dd>${t.orig_currency ? `<dt>Montant reçu</dt><dd>${origTag(t)}</dd><dt>Taux</dt><dd>1 ${esc(CUR_LABEL[t.orig_currency] || t.orig_currency)} = ${rateFmt(t.fx_rate)} ${esc(CUR_LABEL[S.ctx.assoc.currency] || S.ctx.assoc.currency)}</dd>` : ''}${m ? `<dt>Membre</dt><dd>${esc(m.full_name)}</dd>` : ''}${t.period ? `<dt>Mois</dt><dd>${pFR(t.period)}</dd>` : ''}${proj ? `<dt>Projet</dt><dd>${esc(proj.name)}</dd>` : ''}<dt>Date</dt><dd>${dFR(t.occurred_on)}</dd>${t.payment_method ? `<dt>Mode</dt><dd>${esc(t.payment_method)}</dd>` : ''}<dt>${t.approved_label ? 'Proposé par' : 'Saisi par'}</dt><dd>${esc(author ? author.full_name : t.requested_label || '—')}</dd>${t.approved_label ? `<dt>Approuvé par</dt><dd>${esc(t.approved_label)}</dd>` : ''}<dt>Saisi le</dt><dd>${dFR(t.created_at)} à ${hm(t.created_at)}</dd>${t.comment ? `<dt>${t.reversal_of ? 'Motif' : 'Commentaire'}</dt><dd>${esc(t.comment)}</dd>` : ''}</dl>
@@ -736,8 +737,64 @@
       ${rev ? `<p class="note">Opération annulée le ${dFR(rev.occurred_on)} par la contre-écriture <a class="link" href="${B()}/op/${rev.id}">${txRef(rev.id)}</a>. Motif : ${esc(rev.comment)}</p>` : ''}
       ${orig ? `<p class="note">Cette ligne annule <a class="link" href="${B()}/op/${orig.id}">${txRef(orig.id)}</a>. Les deux restent visibles dans l’historique.</p>` : ''}
       ${m && !t.reversal_of ? `<a class="btn wa block" target="_blank" rel="noopener" href="${waTo(m.phone, receipt)}">${I.wa} Envoyer le reçu</a>` : ''}
+      ${t.kind === 'in' && !t.reversal_of && !rev ? `<a class="btn ghost block" href="${B()}/recu/${t.id}">Reçu en PDF</a>` : ''}
       ${can('reverse') && !rev && !t.reversal_of ? `<form class="card stack" data-form="reverse" data-id="${t.id}" novalidate><h2>Corriger une erreur</h2><p class="muted" style="margin:0;font-size:13.5px">L’opération ne sera pas effacée. Une contre-écriture du même montant sera ajoutée, visible par tous les membres.</p><div class="field"><label for="rv-r">Motif de l’annulation</label><input id="rv-r" name="reason" placeholder="Ex. montant saisi deux fois"></div><p class="err" hidden></p><button class="btn danger block" type="submit">Annuler par contre-écriture</button></form>` : ''}`}`;
   };
+  // Montant en toutes lettres (règles de 1990 : traits d'union partout).
+  function enLettres(n) {
+    n = Math.floor(Math.abs(Number(n) || 0));
+    if (n === 0) return 'zéro';
+    const U = ['', 'un', 'deux', 'trois', 'quatre', 'cinq', 'six', 'sept', 'huit', 'neuf', 'dix', 'onze', 'douze', 'treize', 'quatorze', 'quinze', 'seize', 'dix-sept', 'dix-huit', 'dix-neuf'];
+    const D = ['', '', 'vingt', 'trente', 'quarante', 'cinquante', 'soixante', 'soixante', 'quatre-vingt', 'quatre-vingt'];
+    const below100 = x => {
+      if (x < 20) return U[x];
+      const d = Math.floor(x / 10), u = x % 10;
+      if (d === 7 || d === 9) return D[d] + (d === 7 && u === 1 ? '-et-' : '-') + U[10 + u];
+      if (d === 8) return u ? D[8] + '-' + U[u] : 'quatre-vingts';
+      return D[d] + (u === 1 ? '-et-un' : u ? '-' + U[u] : '');
+    };
+    const below1000 = (x, last) => {
+      const c = Math.floor(x / 100), r = x % 100;
+      let out = c ? (c > 1 ? U[c] + '-cent' + (r === 0 && last ? 's' : '') : 'cent') : '';
+      if (r) out += (out ? '-' : '') + below100(r);
+      if (!last && out.endsWith('quatre-vingts')) out = out.slice(0, -1);
+      return out;
+    };
+    const parts = [];
+    [[1e9, 'milliard'], [1e6, 'million'], [1e3, 'mille']].forEach(([v, w]) => {
+      const k = Math.floor(n / v); n %= v;
+      if (!k) return;
+      if (w === 'mille') parts.push(k === 1 ? 'mille' : below1000(k, false) + '-mille');
+      else parts.push(below1000(k, true) + '-' + w + (k > 1 ? 's' : ''));
+    });
+    if (n) parts.push(below1000(n, true));
+    return parts.join('-');
+  }
+  const CUR_WORDS = { XOF: 'francs CFA', XAF: 'francs CFA', GNF: 'francs guinéens', EUR: 'euros', USD: 'dollars', CAD: 'dollars canadiens', GBP: 'livres sterling' };
+
+  V.recu = async (sub) => {
+    const a = S.ctx.assoc, id = Number(sub[1]);
+    const t = must(await sb.from('transactions').select('*').eq('association_id', a.id).eq('id', id).maybeSingle());
+    if (!t || t.kind !== 'in' || t.reversal_of) return subHead('Reçu introuvable', B() + '/finances');
+    const rev = must(await sb.from('transactions').select('id').eq('reversal_of', t.id).maybeSingle());
+    const m = t.member_id ? S.ctx.byId.get(t.member_id) : null;
+    const author = S.ctx.members.find(x => x.user_id && x.user_id === t.created_by);
+    const words = enLettres(t.amount);
+    return `<div class="no-print">${subHead('Reçu ' + txRef(t.id), B() + '/op/' + t.id)}</div>
+      ${rev ? '<p class="note">Ce paiement a été annulé par contre-écriture : le reçu n’est plus valable.</p>' : ''}
+      <article class="receipt-doc ${rev ? 'void' : ''}">
+        <header><div class="rd-logo">${esc(initials(a.name).slice(0, 1))}</div><div><b>${esc(a.name)}</b><small>${esc([a.village, a.region, a.origin_country].filter(Boolean).join(' · '))}${a.residence_city ? ' — ' + esc(a.residence_city) : ''}</small></div></header>
+        <div class="rd-title"><span>Reçu de paiement</span><b class="num">N° ${txRef(t.id)}</b></div>
+        <dl class="kv num"><dt>Reçu de</dt><dd>${esc(m ? m.full_name : t.description)}</dd><dt>Objet</dt><dd>${esc(t.category === 'Cotisations' && t.period ? 'Cotisation de ' + pFR(t.period) : t.description)}</dd>${t.payment_method ? `<dt>Mode</dt><dd>${esc(t.payment_method)}</dd>` : ''}<dt>Date</dt><dd>${dFR(t.occurred_on)}</dd>${t.orig_currency ? `<dt>Montant versé</dt><dd>${origTag(t)} (1 ${esc(CUR_LABEL[t.orig_currency] || t.orig_currency)} = ${rateFmt(t.fx_rate)} ${esc(CUR_LABEL[a.currency] || a.currency)})</dd>` : ''}</dl>
+        <div class="rd-amount num">${money(t.amount)}</div>
+        <p class="rd-words">Arrêté le présent reçu à la somme de <b>${esc(words)} ${esc(CUR_WORDS[a.currency] || a.currency)}</b>.</p>
+        <footer><div><small>Enregistré par</small><b>${esc(author ? author.full_name : '—')}</b><small>${esc(author ? ROLES[author.role] || '' : '')} · le ${dFR(t.created_at)} à ${hm(t.created_at)}</small></div><div class="rd-stamp">${rev ? 'Annulé' : 'Payé'}</div></footer>
+        <p class="rd-check">Reçu vérifiable par tous les membres dans VillageLink, opération ${txRef(t.id)}. Aucune opération ne peut être modifiée ni effacée.</p>
+      </article>
+      <div class="row no-print" style="flex-wrap:wrap">${rev ? '' : '<button class="btn primary sm" data-act="print">Télécharger en PDF</button>'}${m && !rev ? `<a class="btn wa sm" target="_blank" rel="noopener" href="${waTo(m.phone, receiptText(t, m, author))}">${I.wa} Envoyer sur WhatsApp</a>` : ''}</div>
+      <p class="help no-print">Sur le téléphone : « Télécharger en PDF », puis choisissez « Enregistrer au format PDF » comme imprimante.</p>`;
+  };
+
   function receiptText(t, m, author) {
     const a = S.ctx.assoc;
     return `Reçu ${txRef(t.id)}\n${a.name}\n\n${m ? 'Membre : ' + m.full_name + '\n' : ''}${t.description}\nMontant : ${money(t.amount)}${t.orig_currency ? ' (' + origTag(t) + ')' : ''}\nMode : ${t.payment_method || '—'}\nDate : ${whenTx(t)}\nEnregistré par : ${author ? author.full_name : S.ctx.me.full_name}\n\nMerci pour votre contribution au développement de ${a.village || 'notre village'}.`;
@@ -1144,7 +1201,7 @@ Abstention</textarea><p class="help">Entre 2 et 10 choix.</p></div>
       <div class="list menu"><a class="item" href="#/bienvenue"><span class="ico">${I.swap}</span><div class="body"><div class="t">Mes associations</div><div class="s">Changer, rejoindre ou créer une association</div></div><span class="chev">${I.chev}</span></a>
       <button class="item" data-act="signout"><span class="ico">${I.out}</span><div class="body"><div class="t">Se déconnecter</div><div class="s">${esc(S.user.email || '')}</div></div></button></div>
       <section class="card stack"><h2>Affichage</h2><div class="seg seg3" role="group" aria-label="Thème">${THEMES.map(([k, l]) => `<button data-act="theme" data-theme="${k}" aria-pressed="${themeNow() === k}">${l}</button>`).join('')}</div><p class="help">« Auto » suit le réglage clair ou sombre de votre téléphone.</p></section>
-      <p class="muted" style="font-size:12.5px;text-align:center">VillageLink · version 1.12 · <a class="link" href="confidentialite.html">Confidentialité</a> · <a class="link" href="conditions.html">Conditions</a></p>`;
+      <p class="muted" style="font-size:12.5px;text-align:center">VillageLink · version 1.13 · <a class="link" href="confidentialite.html">Confidentialité</a> · <a class="link" href="conditions.html">Conditions</a></p>`;
   };
 
   V.parametres = async () => {
