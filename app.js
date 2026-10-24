@@ -1459,7 +1459,7 @@ Abstention</textarea><p class="help">Entre 2 et 10 choix.</p></div>
       <section class="card stack"><h2>Affichage</h2><div class="seg seg3" role="group" aria-label="Thème">${THEMES.map(([k, l]) => `<button data-act="theme" data-theme="${k}" aria-pressed="${themeNow() === k}">${l}</button>`).join('')}</div><p class="help">« Auto » suit le réglage clair ou sombre de votre téléphone.</p>
         <span class="eyebrow">Langue</span><div class="seg" role="group" aria-label="Langue">${LANGS.map(([k, l]) => `<button data-act="lang" data-lang="${k}" aria-pressed="${langNow() === k}">${l}</button>`).join('')}</div>
         <p class="help">Le pular est en essai : certains textes restent en français.</p></section>
-      <p class="muted" style="font-size:12.5px;text-align:center">VillageLink · version 1.21 · <a class="link" href="confidentialite.html">Confidentialité</a> · <a class="link" href="conditions.html">Conditions</a></p>`;
+      <p class="muted" style="font-size:12.5px;text-align:center">VillageLink · version 1.21.1 · <a class="link" href="confidentialite.html">Confidentialité</a> · <a class="link" href="conditions.html">Conditions</a></p>`;
   };
 
   /* Notifications sur le téléphone ----------------------------------- */
@@ -1734,7 +1734,7 @@ Abstention</textarea><p class="help">Entre 2 et 10 choix.</p></div>
       if ((S.ctx.cats || []).some(c => c.id !== id && c.name.toLowerCase() === name.toLowerCase())) fail('Une catégorie porte déjà ce nom.');
       if (id) must(await sb.from('member_categories').update({ name, fee_amount: fee }).eq('id', id).select('id').single());
       else must(await sb.from('member_categories').insert({ association_id: S.ctx.assoc.id, name, fee_amount: fee }).select('id').single());
-      await refresh(); toast(id ? 'Catégorie enregistrée' : 'Catégorie ajoutée'); route();
+      await refresh(); toast(id ? 'Catégorie enregistrée' : 'Catégorie ajoutée'); await route(); const cc = $('#categories'); if (cc) cc.scrollIntoView({ block: 'start' });
     },
     async section(fd, form) {
       const id = form.dataset.id, name = val(fd, 'name');
@@ -1950,7 +1950,7 @@ Abstention</textarea><p class="help">Entre 2 et 10 choix.</p></div>
       else if (act === 'delcat') {
         if (b.dataset.confirm !== '1') { b.dataset.confirm = '1'; b.textContent = 'Supprimer ?'; b.classList.add('confirm'); return; }
         must(await sb.from('member_categories').delete().eq('id', b.dataset.id));
-        await refresh(); toast('Catégorie supprimée : ses membres paient la cotisation générale'); route();
+        await refresh(); toast('Catégorie supprimée : ses membres paient la cotisation générale'); await route(); const cc = $('#categories'); if (cc) cc.scrollIntoView({ block: 'start' });
       }
       else if (act === 'delsection') {
         if (b.dataset.confirm !== '1') { b.dataset.confirm = '1'; b.textContent = 'Confirmer la suppression'; return; }

@@ -312,7 +312,8 @@ textarea.mono{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:13px}
 .admin .stat{cursor:default}
 
 /* --- catégories de membres (1.21) --- */
-.cat-row{display:grid;grid-template-columns:minmax(0,1fr) 96px auto auto;gap:8px;align-items:center;border-top:1px solid var(--line);padding-top:10px}
-.cat-row input{min-height:42px;padding:8px 10px}
+.cat-row{display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:8px;align-items:center;border-top:1px solid var(--line);padding-top:12px}
+.cat-row input{border:1px solid var(--line);background:var(--surface);border-radius:12px;min-height:44px;padding:8px 12px;width:100%;min-width:0}
+.cat-row input[name=name]{grid-column:1/-1}
 .cat-row .cat-n{grid-column:1/-1;font-size:12.5px;margin-top:-2px}
 .cat-row .err{grid-column:1/-1}
