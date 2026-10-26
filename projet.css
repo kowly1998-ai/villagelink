@@ -34,3 +34,15 @@ main{max-width:640px;margin:0 auto;padding:18px 16px 56px;display:flex;flex-dire
 .foot{text-align:center;color:var(--muted);font-size:13px}
 .foot a{color:inherit}
 .pill{display:inline-block;background:rgba(255,255,255,.16);border-radius:99px;padding:2px 10px;font-size:12.5px;font-weight:600;width:max-content}
+/* Bleu nuit, effet verre (1.22) */
+:root{--bg:#08163A;--surface:rgba(255,255,255,.08);--ink:#fff;--muted:#B8C7EE;--accent:#F4C25B;--gold:#F4C25B;--line:rgba(255,255,255,.16);--ok:#86EBBB;--out:#FFA899;color-scheme:dark}
+body{font-family:"Poppins",system-ui,sans-serif;background:#08163A}
+body::before{content:"";position:fixed;inset:0;z-index:-1;background:radial-gradient(circle at 92% 2%,rgba(110,150,255,.42),transparent 38%),radial-gradient(circle at -8% 46%,rgba(80,120,230,.3),transparent 42%),linear-gradient(170deg,#08163A 0%,#122961 55%,#1E4088 100%)}
+.logo{background:#17336F;border:2px solid #F4C25B;font-weight:700}
+.hero{background:linear-gradient(135deg,rgba(255,255,255,.22),rgba(255,255,255,.05));border:1px solid rgba(255,255,255,.24);-webkit-backdrop-filter:blur(24px);backdrop-filter:blur(24px);box-shadow:0 24px 50px rgba(2,8,30,.45),inset 0 1px 0 rgba(255,255,255,.3)}
+.hero .eyebrow{color:#F4C25B}
+.big{font-weight:700}
+.bar i{background:linear-gradient(135deg,#FFD98A,#F4C25B,#E9A93A)}
+.boxes div{background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.1)}
+.card{-webkit-backdrop-filter:blur(18px);backdrop-filter:blur(18px);box-shadow:0 14px 34px rgba(2,8,30,.32)}
+.give{border:1.5px solid rgba(244,194,91,.7)}

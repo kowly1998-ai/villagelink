@@ -61,12 +61,8 @@
   const go = h => { if (location.hash === h) route(); else location.hash = h; };
   const store = { get(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }, set(k, v) { try { localStorage.setItem(k, v); } catch (e) { /* stockage indisponible */ } } };
 
-  /* Thème : clair par défaut, comme la maquette ; sombre ou automatique au choix dans Plus */
-  const THEMES = [['light', 'Clair'], ['dark', 'Sombre'], ['auto', 'Auto']];
-  const themeNow = () => { const t = store.get('vl:theme'); return t === 'dark' || t === 'auto' ? t : 'light'; };
-  const applyTheme = () => { const t = themeNow(), el = document.documentElement; if (t === 'auto') el.removeAttribute('data-theme'); else el.setAttribute('data-theme', t);
-    const dark = t === 'dark' || (t === 'auto' && window.matchMedia && matchMedia('(prefers-color-scheme: dark)').matches);
-    const meta = document.querySelector('meta[name=theme-color]'); if (meta) meta.setAttribute('content', dark ? '#140C1F' : '#F5F2FA'); };
+  /* Thème : bleu nuit pour tous (1.22) */
+  const applyTheme = () => { document.documentElement.setAttribute('data-theme', 'dark'); const meta = document.querySelector('meta[name=theme-color]'); if (meta) meta.setAttribute('content', '#08163A'); };
   applyTheme();
 
   function errMsg(e) {
@@ -423,6 +419,15 @@
   const effect = t => (t.kind === 'in' ? 1 : -1) * Number(t.amount);
   const subHead = (t, back) => `<div class="subhead"><a class="iconbtn" href="${back || B()}" aria-label="Retour">${I.back}</a><h1>${t}</h1></div>`;
   const pct = (a, b) => (b > 0 ? Math.max(0, Math.min(100, Math.round(a / b * 100))) : 0);
+  // Courbe dorée du solde (6 derniers mois)
+  const spark = pts => {
+    const W = 300, H = 46, lo = Math.min(...pts), hi = Math.max(...pts), span = hi - lo || 1;
+    const xy = pts.map((v, k) => [Math.round(k * W / (pts.length - 1)), Math.round(H - 6 - (v - lo) / span * (H - 14))]);
+    let d = `M${xy[0][0]} ${xy[0][1]}`;
+    for (let k = 1; k < xy.length; k++) { const [x0, y0] = xy[k - 1], [x1, y1] = xy[k], c = (x1 - x0) / 2; d += ` C${x0 + c} ${y0} ${x1 - c} ${y1} ${x1} ${y1}`; }
+    const [lx, ly] = xy[xy.length - 1];
+    return `<svg class="spark" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-hidden="true"><defs><linearGradient id="spk" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#F4C25B" stop-opacity=".35"/><stop offset="1" stop-color="#F4C25B" stop-opacity="0"/></linearGradient></defs><path d="${d} V${H} H0Z" fill="url(#spk)"/><path d="${d}" fill="none" stroke="#F4C25B" stroke-width="2.4" stroke-linecap="round" vector-effect="non-scaling-stroke"/><circle cx="${lx - 2}" cy="${ly}" r="3.5" fill="#fff"/></svg>`;
+  };
   const txItem = (t, reversedIds) => {
     const reversed = reversedIds && reversedIds.has(t.id);
     const title = t.category === 'Cotisations' && t.member_id ? 'Cotisation · ' + memberName(t.member_id) : t.description;
@@ -458,6 +463,8 @@
       sb.from('activity_log').select('*').eq('association_id', a.id).order('id', { ascending: false }).limit(5).then(must)
     ]);
     const lastRev = await reversedSet(lastOps);
+    const since = addMonth(curYM(), -5) + '-01';
+    const recentTx = await sb.from('transactions').select('kind,amount,occurred_on').eq('association_id', a.id).gte('occurred_on', since).then(r => (r.error ? [] : r.data || []), () => []);
     const openCols = await sb.from('collections').select('*').eq('association_id', a.id).eq('status', 'Ouverte').order('created_at', { ascending: false }).limit(3).then(r => (r.error ? [] : r.data || []), () => []);
     const colTot = openCols.length ? await colTotals(openCols.map(c => c.id)) : new Map();
     let projCard = '';
@@ -477,21 +484,36 @@
     const paidCount = dueNow.filter(m => paidFor(m.id, cur) >= feeOf(m)).length;
     const onApp = act.filter(m => m.user_id).length;
     const bal = S.ctx.bal;
+    const solde = bal.in - bal.out;
+    const months = [0, 1, 2, 3, 4, 5].map(k => addMonth(cur, k - 5));
+    const net = months.map(mo => recentTx.filter(t => ym(t.occurred_on) === mo).reduce((x, t) => x + effect(t), 0));
+    const pts = months.map((_, k) => solde - net.slice(k + 1).reduce((x, y) => x + y, 0));
+    const inMonth = recentTx.filter(t => t.kind === 'in' && ym(t.occurred_on) === cur).reduce((x, t) => x + Number(t.amount), 0);
+    const late3 = lateMembers().sort((x, y) => dues(y).remaining - dues(x).remaining).slice(0, 3);
+    const qa = (href, label, icon, main) => `<a class="qa${main ? ' main' : ''}" href="${href}"><span class="q">${icon}</span>${label}</a>`;
     return `
-      <section class="card hero"><div class="eyebrow">Solde de la caisse</div><div class="big num">${num(bal.in - bal.out)} <span class="cur">${esc(CUR_LABEL[a.currency] || 'FCFA')}</span></div>
-        <div class="boxes num"><div><small>Collecté</small><b>${money(bal.in)}</b></div><div><small>Dépensé</small><b>${money(bal.out)}</b></div></div>
-        ${canCollectAny() ? `<a class="btn gold block" href="${B()}/encaisser">${I.plus} Encaisser une cotisation</a>` : ''}
-        <div><a class="link" href="${B()}/transparence">Voir où va l’argent</a></div></section>
+      <section class="card hero"><div class="between"><span class="eyebrow" style="text-transform:none;letter-spacing:.01em;font-size:12.5px">Solde de la caisse</span><svg width="30" height="22" viewBox="0 0 30 22" aria-hidden="true"><rect x="1" y="1" width="28" height="20" rx="5" fill="rgba(244,194,91,.25)" stroke="#F4C25B" stroke-width="1.4"/><path d="M1 8h9M1 14h9M20 8h9M20 14h9M10 1v20M20 1v20" stroke="#F4C25B" stroke-width="1.1"/></svg></div>
+        <div class="big num">${num(solde)} <span class="cur">${esc(CUR_LABEL[a.currency] || 'FCFA')}</span></div>
+        <div class="trend num"><span class="pill p-ok">+${num(inMonth)}</span><span>reçus ce mois-ci</span></div>
+        ${spark(pts)}
+        <div class="foot num"><span>${act.length} membre${act.length > 1 ? 's' : ''} · vérifiable par tous</span><a href="${B()}/transparence">Où va l’argent</a></div></section>
+      <nav class="quick" aria-label="Actions rapides">
+        ${canCollectAny() ? qa(B() + '/encaisser', 'Encaisser', I.plus, 1) : qa(B() + '/cotisations', 'Cotisations', I.wallet, 1)}
+        ${can('spend') ? qa(B() + '/operation?type=out', 'Dépense', '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 17 17 7M9 7h8v8"/></svg>') : qa(B() + '/finances', 'Finances', I.list)}
+        ${qa(B() + '/cotisations?f=late', 'Relancer', I.chat)}
+        ${qa(B() + '/rapport', 'Rapport', I.report)}
+      </nav>
       ${openCols.map(c => colCard(c, colTot.get(c.id), true)).join('')}
       ${toVote.length && S.ctx.me.user_id ? `<a class="card poll-next" href="${B()}/vote/${toVote[0].id}"><span class="ico">${I.vote}</span><span class="body"><span class="eyebrow">Vote en cours${toVote.length > 1 ? ' · ' + toVote.length + ' votes' : ''}</span><b>${esc(toVote[0].question)}</b><span class="muted">Donnez votre avis</span></span><span class="chev">${I.chev}</span></a>` : ''}
       ${nextMeet.length ? `<a class="card meet-next" href="${B()}/r/${nextMeet[0].id}">${dateBox(nextMeet[0].starts_at)}<span class="body"><span class="eyebrow">Prochaine réunion</span><b>${esc(nextMeet[0].title)}</b><span class="muted">${esc(hm(nextMeet[0].starts_at))}${nextMeet[0].place ? ' · ' + esc(nextMeet[0].place) : ''}</span></span><span class="chev">${I.chev}</span></a>` : ''}
-      <div class="grid2">
-        ${fee ? `<a class="stat" href="${B()}/cotisations"><div class="ring num" style="--p:${pct(paidCount, dueNow.length)}"><span>${pct(paidCount, dueNow.length)}${NB}%</span></div><span class="t">${esc(pFR(cur).replace(/^./, c => c.toUpperCase()))}</span><span class="l num">${paidCount} sur ${dueNow.length} ont payé · ${money(collected)} sur ${money(expected)}</span></a>`
-          : (can('settings') ? `<a class="stat" href="${B()}/parametres"><span class="t">Cotisation</span><span class="l">Fixez le montant mensuel pour suivre qui est à jour.</span></a>` : `<a class="stat" href="${B()}/membres"><span class="l">Membres</span><span class="v num">${act.length}</span><span class="l">${onApp} sur l’application</span></a>`)}
-        <a class="stat ${late ? 'warn' : ''}" href="${B()}/cotisations"><span class="v num">${late}</span><span class="l">En retard</span><span class="l">${late ? 'Relancer sur WhatsApp' : 'Tout le monde est à jour'}</span></a>
-      </div>
-      <section class="stack"><div class="between"><h2>Derniers mouvements</h2><a class="link" href="${B()}/finances">Tout voir</a></div>
-        <div class="list">${lastOps.map(t => txItem(t, lastRev)).join('') || '<div class="empty">Aucune opération pour le moment. Elles s’afficheront ici avec leur date et leur heure.</div>'}</div></section>
+      <section class="light" aria-label="Cotisations et mouvements"><div class="grab" aria-hidden="true"></div>
+        ${fee ? `<div class="between"><h2>${esc(pFR(cur).replace(/^./, c => c.toUpperCase()))}</h2>${late ? `<a class="link" href="${B()}/cotisations" style="color:var(--warn)">${late} en retard</a>` : '<span class="pill p-ok">Tous à jour</span>'}</div>
+        <div class="between num" style="font-size:12.5px;color:var(--muted)"><span><b style="color:var(--ink)">${num(collected)}</b> sur ${money(expected)}</span><span>${paidCount}/${dueNow.length} ont payé</span></div>
+        <div class="bar thin"><i style="width:${pct(collected, expected)}%"></i></div>
+        <div>${late3.map(m => { const d = dues(m); return `<div class="item"><div class="av">${esc(initials(m.full_name))}</div><div class="body"><a class="t" href="${B()}/m/${m.id}" style="display:block;text-decoration:none">${esc(m.full_name)}</a><div class="s wrap num" style="color:var(--warn)">${catOf(m) ? esc(catOf(m).name) + ' · ' : ''}${d.late.length} mois de retard · ${money(d.remaining)}</div></div><a class="btn relance" target="_blank" rel="noopener" href="${waTo(m.phone, relanceText(m, d))}">Relancer</a></div>`; }).join('')}</div>`
+          : (can('settings') ? `<a class="between" href="${B()}/parametres" style="text-decoration:none"><span><b>Cotisation</b><br><span class="muted" style="font-size:13px">Fixez le montant mensuel pour suivre qui est à jour.</span></span><span class="chev">${I.chev}</span></a>` : '')}
+        <div class="between" style="margin-top:4px"><h2>Derniers mouvements</h2><a class="link" href="${B()}/finances">Tout voir</a></div>
+        <div id="home-ops">${lastOps.map(t => txItem(t, lastRev)).join('') || '<div class="empty">Aucune opération pour le moment. Elles s’afficheront ici avec leur date et leur heure.</div>'}</div></section>
       <a class="card between" href="${B()}/membres"><span><span class="t" style="font-weight:700">${act.length} membre${act.length > 1 ? 's' : ''}</span><br><span class="muted" style="font-size:13px">${onApp} sur l’application</span></span><span class="chev">${I.chev}</span></a>
       ${S.ctx.expPending && can('approve') ? `<a class="card stack" href="${B()}/depenses" style="border-color:var(--warn)"><span class="eyebrow">À approuver</span><h2>${S.ctx.expPending} dépense${S.ctx.expPending > 1 ? 's' : ''} en attente</h2><span class="muted">Le trésorier attend votre accord avant de sortir l’argent de la caisse.</span></a>` : ''}
       ${pendingMembers().length && can('members') ? `<a class="card stack" href="${B()}/membres?f=pending" style="border-color:var(--warn)"><span class="eyebrow">À valider</span><h2>${pendingMembers().length} demande${pendingMembers().length > 1 ? 's' : ''} d’adhésion</h2><span class="muted">Vérifiez que ce sont bien des ressortissants du village avant de valider.</span></a>` : ''}
@@ -660,17 +682,20 @@
     const list = activeMembers().filter(m => canCollectFor(m) && feeOf(m) > 0).sort((x, y) => x.full_name.localeCompare(y.full_name, 'fr'));
     const sel = q.get('m') || (list.find(m => dues(m).isLate) || list[0] || {}).id || '';
     if (!list.length) return `${subHead('Encaisser', B() + '/cotisations')}<p class="note">Ajoutez d’abord des membres.</p>`;
-    return `${subHead('Enregistrer un paiement', B() + '/cotisations')}
+    const sm = S.ctx.byId.get(sel) || list[0];
+    return `${subHead('Encaisser une cotisation', B() + '/cotisations')}
       <form class="stack" data-form="pay" novalidate>
-        <div class="field"><label for="pay-m">Membre</label><select id="pay-m" name="member_id">${list.map(m => opt(m.id, m.full_name + (catOf(m) ? ' · ' + catOf(m).name : '') + (dues(m).isLate ? ' · en retard' : ''), sel)).join('')}</select></div>
+        <div class="card pay-member"><div class="av" id="pay-av" aria-hidden="true">${esc(initials(sm.full_name))}</div><div style="flex:1;min-width:0"><label for="pay-m" class="sub">Membre</label><select id="pay-m" name="member_id">${list.map(m => opt(m.id, m.full_name + (dues(m).isLate ? ' · en retard' : ''), sel)).join('')}</select><div class="sub" id="pay-cat"></div></div></div>
         <div class="field"><label for="pay-p">Mois concerné</label><select id="pay-p" name="period"></select></div>
+        <div class="big-amount"><label for="pay-a" class="muted" style="font-size:12.5px">Montant (${esc(CUR_LABEL[a.currency] || a.currency)})</label><input id="pay-a" name="amount" type="number" inputmode="decimal" min="0" step="1"><span class="muted num" id="pay-rule" style="font-size:11.5px"></span><p class="help num" id="pay-conv" hidden></p></div>
         ${fxFields('pay')}
-        <div class="field"><label for="pay-a">Montant (${esc(CUR_LABEL[a.currency] || a.currency)})</label><input id="pay-a" name="amount" type="number" inputmode="decimal" min="0" step="1"><p class="help num" id="pay-conv" hidden></p></div>
-        <div class="field"><label for="pay-mode">Mode de paiement</label><select id="pay-mode" name="payment_method">${MODES.map(x => opt(x, x)).join('')}</select></div>
+        <div class="field"><span style="font-size:13px;font-weight:500;color:var(--muted)" id="pay-mode-l">Mode de paiement</span><div class="radios" role="radiogroup" aria-labelledby="pay-mode-l">${MODES.map((x, k) => `<label><input type="radio" name="payment_method" value="${esc(x)}" ${k === 0 ? 'checked' : ''}>${esc(x)}</label>`).join('')}</div></div>
+        <details class="more"><summary>Date et commentaire</summary><div class="stack" style="margin-top:8px">
         <div class="field"><label for="pay-date">Date du paiement</label><input id="pay-date" name="occurred_on" type="date" value="${todayISO()}" max="${todayISO()}"></div>
-        <div class="field"><label for="pay-c">Commentaire (facultatif)</label><input id="pay-c" name="comment" placeholder="Ex. remis en main propre à l’AG"></div>
-        <p class="err" hidden></p><button class="btn primary block" type="submit">Enregistrer</button>
-        <p class="help">Aucun argent ne passe par l’application : vous enregistrez un paiement déjà reçu.</p></form>`;
+        <div class="field"><label for="pay-c">Commentaire (facultatif)</label><input id="pay-c" name="comment" placeholder="Ex. remis en main propre à l’AG"></div></div></details>
+        <dl class="card recap num" id="pay-recap" style="margin:0"></dl>
+        <p class="err" hidden></p><button class="btn primary block" type="submit" style="min-height:54px;font-size:15.5px">${I.plus.replace('M12 5v14M5 12h14', 'M5 12l5 5 9-10')} Enregistrer le paiement</button>
+        <p class="help">Aucun argent ne passe par l’application : vous enregistrez un paiement déjà reçu. Le reçu se partage ensuite sur WhatsApp.</p></form>`;
   };
   AFTER.encaisser = () => {
     const ms = $('#pay-m'), ps = $('#pay-p'), am = $('#pay-a');
@@ -683,15 +708,25 @@
       ps.innerHTML = opts.map(p => opt(p, `${pFR(p)} · ${paidFor(m.id, p) >= fee ? 'déjà payé' : 'reste ' + money(fee - paidFor(m.id, p))}`)).join('');
       const first = opts.find(p => paidFor(m.id, p) < fee) || cur; ps.value = first;
       am.value = Math.max(fee - paidFor(m.id, first), 0) || fee;
+      $('#pay-av').textContent = initials(m.full_name);
+      const c = catOf(m); $('#pay-cat').textContent = [c ? c.name : '', d.isLate ? d.late.length + ' mois de retard' : 'à jour'].filter(Boolean).join(' · ');
+      $('#pay-rule').textContent = 'Cotisation' + (c ? ' ' + c.name.toLowerCase() : '') + ' : ' + money(fee) + ' / mois';
+    };
+    const recap = () => {
+      const m = S.ctx.byId.get(ms.value); if (!m) return;
+      const base = S.ctx.assoc.currency, c = $('#pay-cur') ? $('#pay-cur').value : base, r = Number(($('#pay-rate') || {}).value), v = Number(String(am.value).replace(',', '.')) || 0;
+      const got = c === base ? v : (r > 0 ? Math.round(v * r) : 0), left = Math.max(dues(m).remaining - got, 0);
+      $('#pay-recap').innerHTML = `<dt>Mois couvert</dt><dd>${esc(pFR(ps.value))}</dd><dt>Reste dû après</dt><dd class="${left ? 'due' : ''}">${left ? money(left) : 'À jour'}</dd>${m.phone ? `<dt>Reçu à envoyer à</dt><dd>${esc(m.phone)}</dd>` : ''}`;
     };
     // Montant proposé = reste dû, converti dans la monnaie reçue.
     const due = () => Math.max(feeSel() - paidFor(ms.value, ps.value), 0) || feeSel();
     const curSel = $('#pay-cur'), rateIn = $('#pay-rate');
     const suggest = () => { const r = Number(rateIn.value); am.value = curSel.value === S.ctx.assoc.currency ? due() : (r > 0 ? Math.round(due() / r * 100) / 100 : ''); };
     const show = wireFx('pay', 'pay-a', suggest);
-    ms.addEventListener('change', () => { fill(); suggest(); show(); });
-    ps.addEventListener('change', () => { suggest(); show(); });
-    fill();
+    ms.addEventListener('change', () => { fill(); suggest(); show(); recap(); });
+    ps.addEventListener('change', () => { suggest(); show(); recap(); });
+    am.addEventListener('input', recap); $('#pay-rate').addEventListener('input', recap); $('#pay-cur').addEventListener('change', () => setTimeout(recap));
+    fill(); recap();
   };
 
   /* Plusieurs devises ------------------------------------------------ */
@@ -1456,10 +1491,9 @@ Abstention</textarea><p class="help">Entre 2 et 10 choix.</p></div>
       <div class="list menu"><a class="item" href="#/bienvenue"><span class="ico">${I.swap}</span><div class="body"><div class="t">Mes associations</div><div class="s">Changer, rejoindre ou créer une association</div></div><span class="chev">${I.chev}</span></a>
       <button class="item" data-act="signout"><span class="ico">${I.out}</span><div class="body"><div class="t">Se déconnecter</div><div class="s">${esc(S.user.email || '')}</div></div></button></div>
       <section class="card stack" id="push-card"><h2>Rappels sur ce téléphone</h2><p class="muted" style="margin:0;font-size:13.5px">Recevez une notification 3 jours avant l’échéance de votre cotisation, le jour même, et en cas de retard.</p><div id="push-state" class="stack"><span class="muted">Vérification…</span></div></section>
-      <section class="card stack"><h2>Affichage</h2><div class="seg seg3" role="group" aria-label="Thème">${THEMES.map(([k, l]) => `<button data-act="theme" data-theme="${k}" aria-pressed="${themeNow() === k}">${l}</button>`).join('')}</div><p class="help">« Auto » suit le réglage clair ou sombre de votre téléphone.</p>
-        <span class="eyebrow">Langue</span><div class="seg" role="group" aria-label="Langue">${LANGS.map(([k, l]) => `<button data-act="lang" data-lang="${k}" aria-pressed="${langNow() === k}">${l}</button>`).join('')}</div>
+      <section class="card stack"><h2>Langue</h2><div class="seg" role="group" aria-label="Langue">${LANGS.map(([k, l]) => `<button data-act="lang" data-lang="${k}" aria-pressed="${langNow() === k}">${l}</button>`).join('')}</div>
         <p class="help">Le pular est en essai : certains textes restent en français.</p></section>
-      <p class="muted" style="font-size:12.5px;text-align:center">VillageLink · version 1.21.1 · <a class="link" href="confidentialite.html">Confidentialité</a> · <a class="link" href="conditions.html">Conditions</a></p>`;
+      <p class="muted" style="font-size:12.5px;text-align:center">VillageLink · version 1.22 · <a class="link" href="confidentialite.html">Confidentialité</a> · <a class="link" href="conditions.html">Conditions</a></p>`;
   };
 
   /* Notifications sur le téléphone ----------------------------------- */
@@ -1878,7 +1912,6 @@ Abstention</textarea><p class="help">Entre 2 et 10 choix.</p></div>
       else if (act === 'signout') { await pushOff(true).catch(() => {}); clearOfflineData(); await sb.auth.signOut(); S.ctx = null; S.authMode = 'login'; S.authMsg = ''; S.session = null; S.user = null; location.hash = '#/'; renderAuth(); }
       else if (act === 'reload') location.reload();
       else if (act === 'lang') { store.set('vl:lang', b.dataset.lang); if (b.dataset.lang === 'fr' && langNow() === 'fr') { location.reload(); return; } applyLang(); route(); }
-      else if (act === 'theme') { store.set('vl:theme', b.dataset.theme); applyTheme(); document.querySelectorAll('[data-act=theme]').forEach(x => x.setAttribute('aria-pressed', String(x === b))); }
       else if (act === 'hidemsg') {
         if (b.dataset.confirm !== '1') { b.dataset.confirm = '1'; b.textContent = 'Confirmer le masquage'; return; }
         must(await sb.rpc('hide_message', { p_id: Number(b.dataset.id) }));
