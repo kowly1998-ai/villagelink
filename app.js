@@ -10,7 +10,7 @@
      Démarrage
   ------------------------------------------------------------------ */
   if (!window.supabase || !CFG.supabaseUrl || /COLLEZ/.test(CFG.supabaseUrl + CFG.supabaseAnonKey)) {
-    root.innerHTML = `<div class="auth"><div class="brand"><div class="logo">V</div><b>VillageLink</b></div>
+    root.innerHTML = `<div class="auth"><div class="brand"><img class="logo brand-ic" src="icon.svg" alt="" width="44" height="44"><b>VillageLink</b></div>
       <section class="card stack"><h2>Configuration incomplète</h2>
       <p class="muted" style="margin:0">${!window.supabase
         ? 'La bibliothèque Supabase n’a pas pu se charger. Vérifiez votre connexion internet puis rechargez la page.'
@@ -280,7 +280,7 @@
   function renderAuth() {
     const m = S.authMode;
     root.innerHTML = `<div class="auth">
-      <div class="brand"><div class="logo">V</div><b>VillageLink</b></div>
+      <div class="brand"><img class="logo brand-ic" src="icon.svg" alt="" width="44" height="44"><b>VillageLink</b></div>
       <p class="lead">L’argent de l’association, visible par tous les membres.</p>
       ${m !== 'reset' ? `<div class="seg" role="group"><button data-act="auth-mode" data-mode="login" aria-pressed="${m === 'login'}">Se connecter</button><button data-act="auth-mode" data-mode="signup" aria-pressed="${m === 'signup'}">Créer un compte</button></div>` : ''}
       ${S.authMsg ? `<p class="note">${esc(S.authMsg)}</p>` : ''}
@@ -299,7 +299,7 @@
   }
 
   function renderNewPassword() {
-    root.innerHTML = `<div class="auth"><div class="brand"><div class="logo">V</div><b>VillageLink</b></div>
+    root.innerHTML = `<div class="auth"><div class="brand"><img class="logo brand-ic" src="icon.svg" alt="" width="44" height="44"><b>VillageLink</b></div>
       <form class="card stack" data-form="newpw" novalidate><h2>Nouveau mot de passe</h2>
       <div class="field"><label for="np-pw">Mot de passe</label><input id="np-pw" name="password" type="password" autocomplete="new-password" minlength="8" required></div>
       <p class="err" hidden></p><button class="btn primary block" type="submit">Enregistrer</button></form></div>`;
@@ -319,7 +319,7 @@
     const health = a => { const h = a.last_activity ? (Date.now() - new Date(a.last_activity)) / 864e5 : 999; return h <= 7 ? ['p-ok', 'Active'] : h <= 30 ? ['p-late', 'Ralentit'] : ['p-red', 'Endormie']; };
     const tile = (v, l, s2) => `<div class="stat"><span class="v num">${v}</span><span class="l">${l}</span>${s2 ? `<span class="l">${s2}</span>` : ''}</div>`;
     root.innerHTML = `<div class="auth admin" style="max-width:720px">
-      <div class="between"><a class="brand" href="#/bienvenue" style="text-decoration:none;color:inherit"><div class="logo">V</div><b>Tableau de bord</b></a><button class="btn ghost sm" data-act="reload">Actualiser</button></div>
+      <div class="between"><a class="brand" href="#/bienvenue" style="text-decoration:none;color:inherit"><img class="logo brand-ic" src="icon.svg" alt="" width="44" height="44"><b>Tableau de bord</b></a><button class="btn ghost sm" data-act="reload">Actualiser</button></div>
       <p class="muted" style="margin:0;font-size:13px">Chiffres de toutes les associations, au ${dFR(d.generated_at)} à ${hm(d.generated_at)}.</p>
       <div class="grid2">
         ${tile(N(d.associations), 'Associations', d.associations_30d ? '+' + N(d.associations_30d) + ' en 30 jours' : 'aucune nouvelle en 30 jours')}
@@ -343,7 +343,7 @@
     const owner = await sb.rpc('am_owner').then(r => !r.error && r.data === true, () => false);
     root.innerHTML = `<div class="auth" style="max-width:520px">
       ${owner ? `<a class="card between" href="#/admin" style="border-color:var(--gold)"><span><span class="eyebrow">Propriétaire</span><br><b>Tableau de bord VillageLink</b></span><span class="chev">${I.chev}</span></a>` : ''}
-      <div class="between"><div class="brand"><div class="logo">V</div><b>VillageLink</b></div><button class="btn ghost sm" data-act="signout">Déconnexion</button></div>
+      <div class="between"><div class="brand"><img class="logo brand-ic" src="icon.svg" alt="" width="44" height="44"><b>VillageLink</b></div><button class="btn ghost sm" data-act="signout">Déconnexion</button></div>
       ${list.some(a => a.pending) ? '<button class="btn ghost block" data-act="reload">Actualiser : ma demande a-t-elle été validée ?</button>' : ''}
       ${list.length ? `<section class="stack"><span class="eyebrow">Mes associations</span><div class="list">${list.map(a => a.pending
         ? `<div class="item"><div class="logo" style="width:40px;height:40px;font-size:18px">${esc(initials(a.name).slice(0, 1))}</div><div class="body"><div class="t">${esc(a.name)}</div><div class="s wrap">Demande envoyée. Un membre du bureau doit la valider.</div></div><span class="pill p-late">En attente</span></div>`
