@@ -144,6 +144,11 @@
   const mySections = () => (S.ctx.sections || []).filter(x => S.ctx.me && x.treasurer_member_id === S.ctx.me.id).map(x => x.id);
   const canCollectFor = m => can('collect') || !!(m && m.section_id && mySections().includes(m.section_id));
   const canCollectAny = () => can('collect') || mySections().length > 0;
+  // Mobile money : numéros de réception de l'association et déclarations à confirmer
+  const MM = [['Wave', 'wave'], ['Orange Money', 'orange'], ['Free Money', 'free']];
+  const mmAvail = () => { const p = S.ctx.payNums; return p ? MM.filter(([, k]) => p[k]) : []; };
+  const claimsToConfirm = () => (S.ctx.claims || []).filter(c => canCollectFor(S.ctx.byId.get(c.member_id)));
+  const canSetPayNums = () => !!(S.ctx && S.ctx.me && ['president', 'tresorier'].includes(S.ctx.me.role));
   const secName = id => ((S.ctx.sections || []).find(x => x.id === id) || {}).name || '';
   const CAT_IN = ['Dons', 'Contributions exceptionnelles', 'Autres'];
   const CAT_OUT = ['Projet', 'Transport', 'Réunion', 'Communication', 'Administration', 'Autres'];
@@ -182,13 +187,16 @@
     try { const r = await sb.from('sections').select('*').eq('association_id', id).order('name'); if (!r.error) sections = r.data || []; } catch (e) { /* sections pas encore installées */ }
     let cats = [];
     try { const r = await sb.from('member_categories').select('*').eq('association_id', id).order('fee_amount', { ascending: false }); if (!r.error) cats = r.data || []; } catch (e) { /* catégories pas encore installées */ }
+    let payNums = null, claims = [];
+    try { const r = await sb.from('pay_numbers').select('*').eq('association_id', id).maybeSingle(); if (!r.error) payNums = r.data || null; } catch (e) { /* mobile money pas encore installé */ }
+    try { const r = await sb.from('payment_claims').select('*').eq('association_id', id).eq('status', 'pending').order('id', { ascending: true }).limit(99); if (!r.error) claims = r.data || []; } catch (e) { /* idem */ }
     let expPending = 0;
     try { const r = await sb.from('expense_requests').select('id').eq('association_id', id).eq('status', 'En attente').limit(99); if (!r.error) expPending = r.data.length; } catch (e) { /* double validation pas encore installée */ }
     try { if (navigator.setAppBadge) { if (notif) navigator.setAppBadge(notif); else navigator.clearAppBadge(); } } catch (e) { /* non pris en charge */ }
     const paidMap = new Map();
     paid.forEach(r => paidMap.set(r.member_id + '|' + r.period, Number(r.paid)));
     const me = members.find(m => m.user_id === S.user.id) || null;
-    S.ctx = { loadedAt: Date.now(), lastMsg, notif, expPending, sections, cats, lastLog, assoc: a, me, members, byId: new Map(members.map(m => [m.id, m])), paidMap,
+    S.ctx = { loadedAt: Date.now(), lastMsg, notif, expPending, payNums, claims, sections, cats, lastLog, assoc: a, me, members, byId: new Map(members.map(m => [m.id, m])), paidMap,
       bal: { in: Number(bal ? bal.total_in : 0), out: Number(bal ? bal.total_out : 0) } };
     store.set('vl:last', id);
     return S.ctx;
@@ -373,7 +381,7 @@
      Cadre d'une association
   ------------------------------------------------------------------ */
   const TABS = [['', 'Accueil', I.home], ['membres', 'Membres', I.users], ['cotisations', 'Cotisations', I.wallet], ['projets', 'Projets', I.drop], ['plus', 'Plus', I.more]];
-  const TAB_OF = { '': '', membres: 'membres', m: 'membres', cotisations: 'cotisations', encaisser: 'cotisations', projets: 'projets', p: 'projets', plus: 'plus' };
+  const TAB_OF = { '': '', membres: 'membres', m: 'membres', cotisations: 'cotisations', encaisser: 'cotisations', payer: 'cotisations', projets: 'projets', p: 'projets', plus: 'plus' };
 
   async function renderAssoc(id, sub, q) {
     if (!S.ctx || S.ctx.assoc.id !== id) {
@@ -451,6 +459,20 @@
 
   V.notfound = async () => `${subHead('Page introuvable')}<p class="muted">Cette page n’existe pas.</p>`;
 
+  // Carte « Payer ma cotisation » (membre) et « Paiements à confirmer » (trésorier)
+  const payCard = () => {
+    let out = '';
+    const n = claimsToConfirm().length;
+    if (n) out += `<a class="card between pay-cta" href="${B()}/cotisations?f=claims"><span><span class="eyebrow">À vérifier dans votre Wave ou Orange Money</span><br><b>${n} paiement${n > 1 ? 's' : ''} à confirmer</b></span><span class="pill p-late num">${n}</span></a>`;
+    const me = S.ctx.me;
+    if (me && hasFees() && feeOf(me) > 0 && mmAvail().length) {
+      const d = dues(me), cur = curYM(), due = d.remaining || Math.max(feeOf(me) - paidFor(me.id, cur), 0);
+      const pend = (S.ctx.claims || []).some(c => c.member_id === me.id);
+      if (due > 0 || pend) out += `<a class="card between pay-cta gold" href="${B()}/payer"><span><span class="eyebrow">${pend ? 'Paiement en attente de confirmation' : d.isLate ? d.late.length + ' mois en retard' : 'Cotisation de ' + esc(pFR(cur))}</span><br><b class="num">${pend && !due ? 'Voir mon paiement' : 'Payer ' + money(due)}</b><br><span class="muted" style="font-size:12.5px">${mmAvail().map(([l]) => l).join(' · ')}</span></span><span class="q-ico">${I.wallet}</span></a>`;
+    }
+    return out;
+  };
+
   V.home = async () => {
     const a = S.ctx.assoc, fee = hasFees() ? 1 : 0, cur = curYM();
     const openPolls = await sb.from('polls').select('*').eq('association_id', a.id).eq('status', 'Ouvert').order('created_at', { ascending: false }).limit(5).then(r => (r.error ? [] : r.data || []), () => []);
@@ -503,6 +525,7 @@
         ${qa(B() + '/cotisations?f=late', 'Relancer', I.chat)}
         ${qa(B() + '/rapport', 'Rapport', I.report)}
       </nav>
+      ${payCard()}
       ${openCols.map(c => colCard(c, colTot.get(c.id), true)).join('')}
       ${toVote.length && S.ctx.me.user_id ? `<a class="card poll-next" href="${B()}/vote/${toVote[0].id}"><span class="ico">${I.vote}</span><span class="body"><span class="eyebrow">Vote en cours${toVote.length > 1 ? ' · ' + toVote.length + ' votes' : ''}</span><b>${esc(toVote[0].question)}</b><span class="muted">Donnez votre avis</span></span><span class="chev">${I.chev}</span></a>` : ''}
       ${nextMeet.length ? `<a class="card meet-next" href="${B()}/r/${nextMeet[0].id}">${dateBox(nextMeet[0].starts_at)}<span class="body"><span class="eyebrow">Prochaine réunion</span><b>${esc(nextMeet[0].title)}</b><span class="muted">${esc(hm(nextMeet[0].starts_at))}${nextMeet[0].place ? ' · ' + esc(nextMeet[0].place) : ''}</span></span><span class="chev">${I.chev}</span></a>` : ''}
@@ -647,13 +670,19 @@
   V.cotisations = async (sub, q) => {
     const a = S.ctx.assoc, fee = Number(a.fee_amount) || 0, cur = curYM(), cats = S.ctx.cats || [];
     if (!hasFees()) return `<h1>Cotisations</h1><section class="card stack"><h2>Aucune cotisation définie</h2><p class="muted" style="margin:0">Fixez le montant mensuel et le jour d’échéance pour suivre qui est à jour.</p>${can('settings') ? `<a class="btn primary" href="${B()}/parametres">Définir la cotisation</a>` : '<p class="help">Seul le président peut la définir.</p>'}</section>`;
-    const f = q.get('f') || 'late';
+    const toConf = claimsToConfirm();
+    const f = q.get('f') || (toConf.length ? 'claims' : 'late');
     const late = lateMembers().sort((x, y) => dues(y).remaining - dues(x).remaining || x.full_name.localeCompare(y.full_name, 'fr'));
     const dueNow = activeMembers().filter(m => dueIn(m, cur));
     const collected = dueNow.reduce((s, m) => s + Math.min(paidFor(m.id, cur), feeOf(m)), 0), expected = dueNow.reduce((s, m) => s + feeOf(m), 0);
     const paidCount = dueNow.filter(m => paidFor(m.id, cur) >= feeOf(m)).length;
     let list = '';
-    if (f === 'late') {
+    if (f === 'claims') {
+      list = `<p class="note" style="margin:0"><b>Avant de confirmer</b>, ouvrez VOTRE application Wave, Orange Money ou Free Money et vérifiez que l’argent est bien arrivé. Ne vous fiez jamais à un SMS ni à une capture d’écran.</p>
+        <div class="list">${toConf.map(c => { const m = S.ctx.byId.get(c.member_id) || { full_name: '?' }; return `<div class="item" style="flex-wrap:wrap"><div class="av">${esc(initials(m.full_name))}</div><div class="body"><div class="t">${esc(m.full_name)}</div><div class="s wrap num"><b style="color:var(--ink)">${money(c.amount)}</b> par ${esc(c.method)} · ${esc(pFR(c.period))}<br>Envoyé au ${esc(c.sent_to)} · déclaré le ${dFR(localDay(c.created_at))} à ${hm(c.created_at)}${c.reference ? '<br>Réf. ' + esc(c.reference) : '<br>Sans référence'}</div>
+          <div class="row" style="margin-top:8px;flex-wrap:wrap"><button class="btn primary sm" data-act="claim-ok" data-id="${c.id}">Confirmer la réception</button><button class="btn ghost sm" data-act="claim-no" data-id="${c.id}">Refuser</button></div>
+          <form class="stack" data-form="rejectclaim" data-id="${c.id}" id="rjc-${c.id}" hidden style="margin-top:8px" novalidate><div class="field"><label for="rjc-r-${c.id}">Motif du refus</label><input id="rjc-r-${c.id}" name="reason" placeholder="Ex. rien reçu sur Wave"></div><p class="err" hidden></p><button class="btn danger sm" type="submit">Refuser ce paiement</button></form></div></div>`; }).join('') || '<div class="empty">Aucun paiement à confirmer.</div>'}</div>`;
+    } else if (f === 'late') {
       list = `<div class="list">${late.map(m => { const d = dues(m); return `<div class="item"><div class="av">${esc(initials(m.full_name))}</div><div class="body"><a class="t" href="${B()}/m/${m.id}" style="display:block;text-decoration:none">${esc(m.full_name)}</a><div class="s wrap num">${d.late.map(pFR).join(', ')} · reste ${money(d.remaining)}</div><div class="row" style="margin-top:8px;flex-wrap:wrap">${canCollectFor(m) ? `<a class="btn primary sm" href="${B()}/encaisser?m=${m.id}">Encaisser</a>` : ''}<a class="btn wa sm" target="_blank" rel="noopener" href="${waTo(m.phone, relanceText(m, d))}">${I.wa} Relancer</a></div></div></div>`; }).join('') || '<div class="empty">Tout le monde est à jour.</div>'}</div>`;
     } else {
       const recent = must(await sb.from('transactions').select('*').eq('association_id', a.id).eq('category', 'Cotisations').order('id', { ascending: false }).limit(40));
@@ -665,13 +694,14 @@
     const noSec = dueNow.filter(m => !m.section_id);
     const secCard = secs.length ? `<section class="card stack"><div class="between"><h2>Par section</h2><a class="link" href="${B()}/sections">Gérer</a></div>${secRows.map(r => `<a class="between num" href="${B()}/membres?f=s:${r.x.id}" style="text-decoration:none;color:inherit;gap:10px"><span style="min-width:0"><b>${esc(r.x.name)}</b><br><span class="muted" style="font-size:13px">${r.paid}/${r.n} à jour${r.late ? ' · ' + r.late + ' en retard' : ''}</span></span><b>${money(r.got)}</b></a>`).join('')}${noSec.length ? `<span class="muted" style="font-size:13px">${noSec.length} membre${noSec.length > 1 ? 's' : ''} sans section</span>` : ''}</section>` : '';
     return `<div class="between"><h1>Cotisations</h1>${canCollectAny() ? `<a class="btn primary sm" href="${B()}/encaisser">+ Paiement</a>` : ''}</div>
+      ${payCard()}
       <section class="card stack"><span class="eyebrow">Règle en vigueur</span><dl class="kv num" style="margin:0">${cats.length ? cats.map(c => `<dt>${esc(c.name)}</dt><dd>${Number(c.fee_amount) ? money(c.fee_amount) : 'Dispensé'}</dd>`).join('') + (activeMembers().some(m => !m.category_id) ? `<dt>Sans catégorie</dt><dd>${fee ? money(fee) : 'Dispensé'}</dd>` : '') : `<dt>Montant</dt><dd>${money(fee)}</dd>`}<dt>Fréquence</dt><dd>Mensuelle</dd><dt>Échéance</dt><dd>Le ${a.fee_due_day} de chaque mois</dd><dt>Suivi depuis</dt><dd>${pFR(ym(a.dues_start))}</dd></dl></section>
       <section class="card stack"><div class="between"><span class="eyebrow">${pFR(cur)}</span><span class="pill p-blue num">${paidCount}/${dueNow.length} membres</span></div>
         <div class="num" style="font-family:var(--f-display);font-size:24px;font-weight:700">${money(collected)} <span class="muted" style="font-size:14px;font-family:var(--f-body);font-weight:500">sur ${money(expected)}</span></div>
         <div class="bar"><i style="width:${pct(collected, expected)}%"></i></div>
         <span class="muted num" style="font-size:13px">Reste à encaisser, arriérés compris : ${money(activeMembers().reduce((s, m) => s + dues(m).remaining, 0))}</span></section>
       ${secCard}
-      <div class="chips" role="group" aria-label="Filtrer"><a class="chip" style="text-decoration:none" href="${B()}/cotisations?f=late" aria-pressed="${f === 'late'}">En retard (${late.length})</a><a class="chip" style="text-decoration:none" href="${B()}/cotisations?f=recent" aria-pressed="${f === 'recent'}">Derniers paiements</a></div>
+      <div class="chips" role="group" aria-label="Filtrer">${toConf.length ? `<a class="chip" style="text-decoration:none" href="${B()}/cotisations?f=claims" aria-pressed="${f === 'claims'}">À confirmer (${toConf.length})</a>` : ''}<a class="chip" style="text-decoration:none" href="${B()}/cotisations?f=late" aria-pressed="${f === 'late'}">En retard (${late.length})</a><a class="chip" style="text-decoration:none" href="${B()}/cotisations?f=recent" aria-pressed="${f === 'recent'}">Derniers paiements</a></div>
       ${list}`;
   };
 
@@ -727,6 +757,51 @@
     ps.addEventListener('change', () => { suggest(); show(); recap(); });
     am.addEventListener('input', recap); $('#pay-rate').addEventListener('input', recap); $('#pay-cur').addEventListener('change', () => setTimeout(recap));
     fill(); recap();
+  };
+
+  /* Payer sa cotisation par mobile money ------------------------------ */
+  V.payer = async () => {
+    const me = S.ctx.me, pn = S.ctx.payNums, avail = mmAvail();
+    const head = subHead('Payer ma cotisation', B());
+    if (!hasFees() || !me) return `${head}<p class="note">Aucune cotisation n’est définie pour le moment.</p>`;
+    const fee = feeOf(me);
+    if (!fee) return `${head}<p class="note">Vous êtes dispensé de cotisation.</p>`;
+    if (!avail.length) return `${head}<p class="note">Le trésorier n’a pas encore indiqué de numéro Wave ou Orange Money pour recevoir les cotisations.</p>${canSetPayNums() ? `<a class="btn primary" href="${B()}/parametres">Ajouter les numéros de réception</a>` : ''}`;
+    const mine = must(await sb.from('payment_claims').select('*').eq('member_id', me.id).order('id', { ascending: false }).limit(12));
+    const pendP = new Set(mine.filter(c => c.status === 'pending').map(c => c.period));
+    const d = dues(me), cur = curYM();
+    const opts = [...new Set([...d.owed, cur, addMonth(cur, 1), addMonth(cur, 2)])].sort().filter(p => paidFor(me.id, p) < fee && !pendP.has(p));
+    const ST = { pending: ['p-late', 'En attente du trésorier'], confirmed: ['p-ok', 'Confirmé'], rejected: ['p-red', 'Refusé'], cancelled: ['p-blue', 'Annulé'] };
+    const hist = mine.length ? `<section class="stack"><h2>Mes paiements déclarés</h2><div class="list">${mine.map(c => `<div class="item" style="align-items:flex-start"><div class="body"><div class="t num" style="white-space:normal">${money(c.amount)} · ${esc(c.method)}</div><div class="s wrap">${esc(pFR(c.period))} · ${dFR(localDay(c.created_at))} à ${hm(c.created_at)}${c.reference ? ' · réf. ' + esc(c.reference) : ''}${c.status === 'rejected' && c.reason ? '<br>Motif : ' + esc(c.reason) : ''}</div>${c.status === 'pending' ? `<button class="btn ghost sm" style="margin-top:8px" data-act="claim-cancel" data-id="${c.id}">Annuler cette déclaration</button>` : ''}${c.status === 'confirmed' && c.transaction_id ? `<a class="link" style="display:inline-block;margin-top:6px" href="${B()}/op/${c.transaction_id}?recu=1">Voir le reçu</a>` : ''}</div><span class="pill ${ST[c.status][0]}">${ST[c.status][1]}</span></div>`).join('')}</div></section>` : '';
+    if (!opts.length) return `${head}<p class="note">${pendP.size ? 'Votre paiement est en attente : le trésorier doit vérifier qu’il a bien reçu l’argent.' : 'Vous êtes à jour. Merci !'}</p>${hist}`;
+    return `${head}
+      <form class="stack" data-form="claim" novalidate>
+        <div class="field"><label for="cl-p">Mois à payer</label><select id="cl-p" name="period">${opts.map(p => opt(p, `${pFR(p)} · ${money(fee - paidFor(me.id, p))}`)).join('')}</select></div>
+        <div class="big-amount"><label for="cl-a" class="muted" style="font-size:12.5px">Montant à envoyer (${esc(CUR_LABEL[S.ctx.assoc.currency] || 'FCFA')})</label><input id="cl-a" name="amount" type="number" inputmode="numeric" min="1" step="1"></div>
+        <div class="field"><span style="font-size:13px;font-weight:500;color:var(--muted)" id="cl-m-l">Payer avec</span><div class="radios" role="radiogroup" aria-labelledby="cl-m-l">${avail.map(([l], k) => `<label><input type="radio" name="method" value="${esc(l)}" ${k === 0 ? 'checked' : ''}>${esc(l)}</label>`).join('')}</div></div>
+        <section class="card stack" id="cl-dest"></section>
+        <div class="field"><label for="cl-r">Référence de la transaction (conseillé)</label><input id="cl-r" name="reference" maxlength="60" autocapitalize="characters" placeholder="Dans le SMS ou l’historique Wave"><p class="help">Elle prouve votre paiement si le trésorier ne le retrouve pas.</p></div>
+        <p class="err" hidden></p><button class="btn primary block" type="submit" style="min-height:54px;font-size:15.5px">J’ai payé</button>
+        <p class="help">Votre cotisation sera marquée payée dès que le trésorier aura vu l’argent arriver dans son application. VillageLink ne touche jamais à votre argent ni à votre code secret.</p></form>
+      ${hist}`;
+  };
+  AFTER.payer = () => {
+    const ps = $('#cl-p'), am = $('#cl-a'), box = $('#cl-dest');
+    if (!ps) return;
+    const me = S.ctx.me, fee = feeOf(me), pn = S.ctx.payNums;
+    const fill = () => { am.value = Math.max(fee - paidFor(me.id, ps.value), 0) || fee; dest(); };
+    const dest = () => {
+      const m = (document.querySelector('input[name=method]:checked') || {}).value || '';
+      const k = (MM.find(([l]) => l === m) || [])[1], num = k ? pn[k] : '';
+      box.innerHTML = `<span class="eyebrow">Envoyez avec votre application ${esc(m)}</span>
+        <div class="between" style="flex-wrap:wrap"><span><span class="muted" style="font-size:12.5px">Au numéro</span><br><b class="num" style="font-size:20px">${esc(num)}</b></span><button type="button" class="btn ghost sm" data-act="copy" data-v="${esc(num.replace(/\s/g, ''))}">Copier le numéro</button></div>
+        <div class="between" style="flex-wrap:wrap"><span><span class="muted" style="font-size:12.5px">Montant</span><br><b class="num" style="font-size:20px">${money(Number(am.value) || 0)}</b></span><button type="button" class="btn ghost sm" data-act="copy" data-v="${esc(String(Number(am.value) || 0))}">Copier le montant</button></div>
+        <p class="note" style="margin:0">Avant de valider dans ${esc(m)}, vérifiez que le nom affiché est bien <b>${esc(pn.holder)}</b>. Sinon, n’envoyez rien et prévenez le bureau.</p>`;
+    };
+    ps.addEventListener('change', fill);
+    am.addEventListener('input', dest);
+    document.querySelectorAll('input[name=method]').forEach(r => r.addEventListener('change', dest));
+    fill();
   };
 
   /* Plusieurs devises ------------------------------------------------ */
@@ -1431,7 +1506,7 @@ Abstention</textarea><p class="help">Entre 2 et 10 choix.</p></div>
   };
 
   /* Notifications ---------------------------------------------------- */
-  const NOTIF_LINKS = [[/annonce/i, 'annonces', I.mega], [/réunion|compte rendu|convocation/i, 'reunions', I.cal], [/vote/i, 'votes', I.vote], [/document/i, 'documents', I.doc],
+  const NOTIF_LINKS = [[/déclaré avoir payé|paiement déclaré|déclaration de paiement/i, 'cotisations?f=claims', I.wallet], [/numéros de paiement/i, 'parametres', I.gear], [/annonce/i, 'annonces', I.mega], [/réunion|compte rendu|convocation/i, 'reunions', I.cal], [/vote/i, 'votes', I.vote], [/document/i, 'documents', I.doc],
     [/collecte/i, 'collectes', I.heart], [/section/i, 'sections', I.users], [/approbation|approuvé la dépense|refusé la dépense|demande de dépense|double validation/i, 'depenses', I.list], [/cotisation|recette|dépense|opération|contre-écriture/i, 'finances', I.list], [/projet|mise à jour/i, 'projets', I.drop], [/membre|adhésion|rôle|retiré|réintégré|bureau|rejoindre|demande de/i, 'membres', I.users], [/message|discussion/i, 'discussion', I.chat]];
   V.notifications = async () => {
     const a = S.ctx.assoc, seenKey = 'vl:notif:' + a.id, seen = Number(store.get(seenKey) || 0);
@@ -1493,7 +1568,7 @@ Abstention</textarea><p class="help">Entre 2 et 10 choix.</p></div>
       <section class="card stack" id="push-card"><h2>Rappels sur ce téléphone</h2><p class="muted" style="margin:0;font-size:13.5px">Recevez une notification 3 jours avant l’échéance de votre cotisation, le jour même, et en cas de retard.</p><div id="push-state" class="stack"><span class="muted">Vérification…</span></div></section>
       <section class="card stack"><h2>Langue</h2><div class="seg" role="group" aria-label="Langue">${LANGS.map(([k, l]) => `<button data-act="lang" data-lang="${k}" aria-pressed="${langNow() === k}">${l}</button>`).join('')}</div>
         <p class="help">Le pular est en essai : certains textes restent en français.</p></section>
-      <p class="muted" style="font-size:12.5px;text-align:center">VillageLink · version 1.22 · <a class="link" href="confidentialite.html">Confidentialité</a> · <a class="link" href="conditions.html">Conditions</a></p>`;
+      <p class="muted" style="font-size:12.5px;text-align:center">VillageLink · version 1.23 · <a class="link" href="confidentialite.html">Confidentialité</a> · <a class="link" href="conditions.html">Conditions</a></p>`;
   };
 
   /* Notifications sur le téléphone ----------------------------------- */
@@ -1570,6 +1645,18 @@ Abstention</textarea><p class="help">Entre 2 et 10 choix.</p></div>
         ${cats.length ? '<p class="help">Rangez ensuite chaque membre dans sa catégorie depuis sa fiche (Modifier la fiche).</p>' : ''}` : ''}</section>`;
   }
 
+  const mmCard = () => {
+    const p = S.ctx.payNums || {}, ed = canSetPayNums(), ro = ed ? '' : 'disabled';
+    return `<form class="card stack" id="mm" data-form="paynums" novalidate><h2>Recevoir les cotisations par mobile money</h2>
+      <p class="muted" style="margin:0;font-size:13.5px">Les membres envoient l’argent à ces numéros avec leur propre application, puis touchent « J’ai payé ». La cotisation compte quand le trésorier confirme l’avoir reçue. VillageLink ne touche jamais à l’argent.</p>
+      ${ed ? '' : '<p class="help">Seuls le président et le trésorier changent ces numéros. Chaque changement est visible dans le journal.</p>'}
+      <div class="field"><label for="mm-h">Nom affiché chez Wave / Orange Money</label><input id="mm-h" name="holder" value="${esc(p.holder || '')}" placeholder="Ex. Boubacar Baldé" ${ro}></div>
+      <div class="field"><label for="mm-w">Numéro Wave</label><input id="mm-w" name="wave" type="tel" inputmode="tel" value="${esc(p.wave || '')}" placeholder="+221 77 000 00 00" ${ro}></div>
+      <div class="field"><label for="mm-o">Numéro Orange Money</label><input id="mm-o" name="orange" type="tel" inputmode="tel" value="${esc(p.orange || '')}" ${ro}></div>
+      <div class="field"><label for="mm-f">Numéro Free Money</label><input id="mm-f" name="free" type="tel" inputmode="tel" value="${esc(p.free || '')}" ${ro}></div>
+      ${ed ? '<p class="err" hidden></p><button class="btn primary block" type="submit">Enregistrer les numéros</button><p class="help">Laissez vide un service que vous n’utilisez pas. Tous les membres seront prévenus du changement.</p>' : ''}</form>`;
+  };
+
   V.parametres = async () => {
     const a = S.ctx.assoc, pres = can('settings');
     const invite = `Rejoignez « ${a.name} » sur VillageLink pour suivre les cotisations et les projets du village.\n\n1. Ouvrez ${location.origin + location.pathname}\n2. Créez votre compte\n3. Entrez le code : ${a.invite_code}`;
@@ -1580,6 +1667,7 @@ Abstention</textarea><p class="help">Entre 2 et 10 choix.</p></div>
         <a class="btn wa block" target="_blank" rel="noopener" href="${waShare(invite)}">${I.wa} Envoyer l’invitation sur WhatsApp</a>
         ${pres ? '<button class="btn ghost sm" data-act="newcode">Changer le code</button>' : ''}</section>
       ${catsCard()}
+      ${mmCard()}
       <form class="stack" data-form="assoc" novalidate>
         ${pres ? '' : '<p class="note">Seul le président peut modifier ces informations.</p>'}
         <span class="eyebrow">Cotisation</span>
@@ -1872,6 +1960,26 @@ Abstention</textarea><p class="help">Entre 2 et 10 choix.</p></div>
       must(await sb.from('announcements').insert({ association_id: S.ctx.assoc.id, kind: val(fd, 'kind'), title, body, ...voice }));
       voiceDone('ann'); toast('Annonce publiée'); route();
     },
+    async claim(fd) {
+      const me = S.ctx.me, period = val(fd, 'period'), amount = Math.round(Number(val(fd, 'amount')));
+      if (!/^\d{4}-\d{2}$/.test(period)) fail('Choisissez le mois à payer.');
+      if (!(amount > 0)) fail('Saisissez le montant envoyé.');
+      const method = val(fd, 'method'); if (!method) fail('Choisissez Wave, Orange Money ou Free Money.');
+      must(await sb.rpc('declare_payment', { p_member: me.id, p_period: period, p_amount: amount, p_method: method, p_reference: val(fd, 'reference') }));
+      await refresh(); toast('Paiement déclaré. Le trésorier va le confirmer.'); route();
+    },
+    async paynums(fd) {
+      if (!canSetPayNums()) fail('Réservé au président et au trésorier.');
+      const clean = k => val(fd, k).replace(/[^\d+ ]/g, '').trim();
+      for (const k of ['wave', 'orange', 'free']) { const v = clean(k); if (v && digits(v).length < 8) fail('Un numéro semble incomplet. Vérifiez-le.'); }
+      must(await sb.rpc('set_pay_numbers', { p_assoc: S.ctx.assoc.id, p_holder: val(fd, 'holder'), p_wave: clean('wave'), p_orange: clean('orange'), p_free: clean('free') }));
+      await refresh(); toast('Numéros enregistrés'); route();
+    },
+    async rejectclaim(fd, form) {
+      const reason = val(fd, 'reason'); if (reason.length < 3) fail('Indiquez pourquoi (par exemple : rien reçu sur Wave).');
+      must(await sb.rpc('reject_payment_claim', { p_id: Number(form.dataset.id), p_reason: reason }));
+      await refresh(); toast('Paiement refusé'); route();
+    },
     async assoc(fd) {
       if (!can('settings')) fail('Réservé au président.');
       const fee = intVal(fd, 'fee_amount'), due = intVal(fd, 'fee_due_day'), start = val(fd, 'dues_start');
@@ -1995,6 +2103,22 @@ Abstention</textarea><p class="help">Entre 2 et 10 choix.</p></div>
         if (st === 'Close' && b.dataset.confirm !== '1') { b.dataset.confirm = '1'; b.textContent = 'Confirmer : clore la collecte'; return; }
         must(await sb.from('collections').update({ status: st }).eq('id', b.dataset.id).select('id').single());
         toast(st === 'Close' ? 'Collecte close' : 'Collecte rouverte'); route();
+      }
+      else if (act === 'copy') {
+        try { await navigator.clipboard.writeText(b.dataset.v); toast('Copié'); } catch (err) { toast(b.dataset.v); }
+      }
+      else if (act === 'claim-ok') {
+        if (b.dataset.confirm !== '1') { b.dataset.confirm = '1'; b.textContent = 'Oui, l’argent est bien arrivé'; return; }
+        b.disabled = true;
+        const tid = must(await sb.rpc('confirm_payment_claim', { p_id: Number(b.dataset.id) }));
+        await refresh(); toast('Paiement confirmé'); go(B() + '/op/' + tid + '?recu=1');
+      }
+      else if (act === 'claim-no') { const f = $('#rjc-' + b.dataset.id); if (f) { f.hidden = false; f.querySelector('input').focus(); } }
+      else if (act === 'claim-cancel') {
+        if (b.dataset.confirm !== '1') { b.dataset.confirm = '1'; b.textContent = 'Confirmer l’annulation'; return; }
+        b.disabled = true;
+        must(await sb.rpc('cancel_payment_claim', { p_id: Number(b.dataset.id) }));
+        await refresh(); toast('Déclaration annulée'); route();
       }
       else if (act === 'approveexp') {
         if (b.dataset.confirm !== '1') { b.dataset.confirm = '1'; b.textContent = 'Confirmer : la dépense sort de la caisse'; return; }

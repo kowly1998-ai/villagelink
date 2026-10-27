@@ -429,3 +429,11 @@ details.more[open] summary::before{content:"− "}
 .org b{font-size:15px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
 [hidden]{display:none!important}
 .logo.brand-ic{border:0;padding:0;background:none;box-shadow:0 8px 18px rgba(2,8,30,.4)}
+/* --- paiement mobile money (1.22.1) --- */
+.pay-cta{gap:12px;text-decoration:none;color:inherit;border-color:rgba(255,170,110,.4)}
+.pay-cta b{font-size:16px}
+.pay-cta.gold{border-color:rgba(244,194,91,.55);background:linear-gradient(135deg,rgba(244,194,91,.18),rgba(255,255,255,.05))}
+.q-ico{width:48px;height:48px;border-radius:16px;flex:none;display:grid;place-items:center;background:var(--gold-grad);color:#08163A;box-shadow:0 8px 20px rgba(244,194,91,.35)}
+.q-ico svg{width:22px;height:22px}
+#cl-dest .between b{letter-spacing:.01em}
+.radios{grid-template-columns:repeat(auto-fit,minmax(96px,1fr))}
