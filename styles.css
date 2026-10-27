@@ -438,3 +438,4 @@ details.more[open] summary::before{content:"− "}
 #cl-dest .between b{letter-spacing:.01em}
 .radios{grid-template-columns:repeat(auto-fit,minmax(96px,1fr))}
 .wave-btn{background:#1DC8FF;color:#03263A;font-weight:700;min-height:54px;font-size:15.5px;box-shadow:0 10px 24px rgba(29,200,255,.35)}
+.kv.num dt{white-space:nowrap}.kv.num dd{white-space:normal;overflow-wrap:anywhere}

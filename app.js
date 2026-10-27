@@ -187,6 +187,8 @@
     try { const r = await sb.from('sections').select('*').eq('association_id', id).order('name'); if (!r.error) sections = r.data || []; } catch (e) { /* sections pas encore installées */ }
     let cats = [];
     try { const r = await sb.from('member_categories').select('*').eq('association_id', id).order('fee_amount', { ascending: false }); if (!r.error) cats = r.data || []; } catch (e) { /* catégories pas encore installées */ }
+    let exempts = [];
+    try { const r = await sb.from('member_exemptions').select('id,member_id,from_period,to_period,created_label,created_at,ended_label').eq('association_id', id).order('from_period'); if (!r.error) exempts = r.data || []; } catch (e) { /* dispenses pas encore installées */ }
     let payNums = null, claims = [];
     try { const r = await sb.from('pay_numbers').select('*').eq('association_id', id).maybeSingle(); if (!r.error) payNums = r.data || null; } catch (e) { /* mobile money pas encore installé */ }
     try { const r = await sb.from('payment_claims').select('*').eq('association_id', id).eq('status', 'pending').order('id', { ascending: true }).limit(99); if (!r.error) claims = r.data || []; } catch (e) { /* idem */ }
@@ -196,7 +198,7 @@
     const paidMap = new Map();
     paid.forEach(r => paidMap.set(r.member_id + '|' + r.period, Number(r.paid)));
     const me = members.find(m => m.user_id === S.user.id) || null;
-    S.ctx = { loadedAt: Date.now(), lastMsg, notif, expPending, payNums, claims, sections, cats, lastLog, assoc: a, me, members, byId: new Map(members.map(m => [m.id, m])), paidMap,
+    S.ctx = { loadedAt: Date.now(), lastMsg, notif, expPending, payNums, claims, exempts, sections, cats, lastLog, assoc: a, me, members, byId: new Map(members.map(m => [m.id, m])), paidMap,
       bal: { in: Number(bal ? bal.total_in : 0), out: Number(bal ? bal.total_out : 0) } };
     store.set('vl:last', id);
     return S.ctx;
@@ -207,12 +209,13 @@
   const catOf = m => (m && m.category_id ? (S.ctx.cats || []).find(c => c.id === m.category_id) : null) || null;
   const feeOf = m => { const c = catOf(m); return Number(c ? c.fee_amount : S.ctx.assoc.fee_amount) || 0; };
   const hasFees = () => Number(S.ctx.assoc.fee_amount) > 0 || (S.ctx.cats || []).some(c => Number(c.fee_amount) > 0);
-  const dueIn = (m, p) => feeOf(m) > 0 && [ym(S.ctx.assoc.dues_start), ym(m.joined_on)].sort().pop() <= p;
+  const exemptOf = (m, p) => (S.ctx.exempts || []).find(e => e.member_id === m.id && e.from_period <= p && (!e.to_period || e.to_period >= p)) || null;
+  const dueIn = (m, p) => feeOf(m) > 0 && [ym(S.ctx.assoc.dues_start), ym(m.joined_on)].sort().pop() <= p && !exemptOf(m, p);
   function dues(m) {
     const a = S.ctx.assoc, fee = feeOf(m), cur = curYM();
     if (!fee || !m.active || m.pending) return { owed: [], late: [], remaining: 0, isLate: false };
     const start = [ym(a.dues_start), ym(m.joined_on)].sort().pop();
-    const periods = start <= cur ? monthsBetween(start, cur) : [];
+    const periods = start <= cur ? monthsBetween(start, cur).filter(p => !exemptOf(m, p)) : [];
     const owed = periods.filter(p => paidFor(m.id, p) < fee);
     // Un mois est en retard quand son échéance est passée. Pour les mois suivis depuis la
     // création de l'association dans l'app, l'échéance doit aussi tomber après l'adhésion
@@ -237,6 +240,7 @@
     if (!m.active) return '<span class="pill p-blue">Retiré</span>';
     if (!feeOf(m)) return hasFees() ? '<span class="pill p-blue">Dispensé</span>' : '';
     const d = dues(m);
+    if (!d.isLate && exemptOf(m, curYM())) return '<span class="pill p-blue">Dispensé</span>';
     if (d.isLate) return `<span class="pill p-late">${d.late.length > 1 ? d.late.length + ' mois de retard' : 'En retard'}</span>`;
     if (d.owed.length) return '<span class="pill p-blue">À payer</span>';
     return '<span class="pill p-ok">À jour</span>';
@@ -466,7 +470,7 @@
     if (n) out += `<a class="card between pay-cta" href="${B()}/cotisations?f=claims"><span><span class="eyebrow">À vérifier dans votre Wave ou Orange Money</span><br><b>${n} paiement${n > 1 ? 's' : ''} à confirmer</b></span><span class="pill p-late num">${n}</span></a>`;
     const me = S.ctx.me;
     if (me && hasFees() && feeOf(me) > 0 && mmAvail().length) {
-      const d = dues(me), cur = curYM(), due = d.remaining || Math.max(feeOf(me) - paidFor(me.id, cur), 0);
+      const d = dues(me), cur = curYM(), due = d.remaining || (dueIn(me, cur) ? Math.max(feeOf(me) - paidFor(me.id, cur), 0) : 0);
       const pend = (S.ctx.claims || []).some(c => c.member_id === me.id);
       if (due > 0 || pend) out += `<a class="card between pay-cta gold" href="${B()}/payer"><span><span class="eyebrow">${pend ? 'Paiement en attente de confirmation' : d.isLate ? d.late.length + ' mois en retard' : 'Cotisation de ' + esc(pFR(cur))}</span><br><b class="num">${pend && !due ? 'Voir mon paiement' : 'Payer ' + money(due)}</b><br><span class="muted" style="font-size:12.5px">${mmAvail().map(([l]) => l).join(' · ')}</span></span><span class="q-ico">${I.wallet}</span></a>`;
     }
@@ -600,8 +604,9 @@
     return `${subHead('Fiche membre', B() + '/membres')}
       <div class="row"><div class="av lg">${esc(initials(m.full_name))}</div><div style="min-width:0"><h2 style="font-size:20px">${esc(m.full_name)}</h2><div class="row" style="flex-wrap:wrap;gap:6px;margin-top:4px"><span class="pill p-blue">${esc(ROLES[m.role])}</span>${statusPill(m)}</div></div></div>
       <section class="card"><dl class="kv num" style="margin:0"><dt>Téléphone</dt><dd>${esc(m.phone) || '<span class="muted">—</span>'}</dd><dt>Email</dt><dd>${esc(m.email) || '<span class="muted">—</span>'}</dd><dt>Résidence</dt><dd>${esc([m.city, m.country].filter(Boolean).join(', ')) || '<span class="muted">—</span>'}</dd>${m.section_id ? `<dt>Section</dt><dd>${esc(secName(m.section_id))}${(S.ctx.sections || []).some(x => x.treasurer_member_id === m.id) ? ' · trésorier de section' : ''}</dd>` : ''}${(S.ctx.cats || []).length ? `<dt>Catégorie</dt><dd>${catOf(m) ? esc(catOf(m).name) : 'Cotisation générale'}${hasFees() ? ' · ' + (fee ? money(fee) + ' par mois' : 'dispensé') : ''}</dd>` : ''}<dt>Adhésion</dt><dd>${dFR(m.joined_on)}</dd><dt>Application</dt><dd>${m.user_id ? 'Oui' : 'Non, suivi par le trésorier'}</dd></dl></section>
-      ${periods.length ? `<section class="card stack"><h2>Cotisations</h2>${periods.map(p => { const pd = paidFor(m.id, p); return `<div class="between num"><span>${pFR(p)}</span>${pd >= fee ? `<span class="pill p-ok">${money(pd)} payé</span>` : `<span class="pill ${d.late.includes(p) ? 'p-late' : 'p-blue'}">Reste ${money(fee - pd)}</span>`}</div>`; }).join('')}
+      ${periods.length ? `<section class="card stack"><h2>Cotisations</h2>${periods.map(p => { const pd = paidFor(m.id, p); return `<div class="between num"><span>${pFR(p)}</span>${pd >= fee ? `<span class="pill p-ok">${money(pd)} payé</span>` : exemptOf(m, p) ? '<span class="pill p-blue">Dispensé</span>' : `<span class="pill ${d.late.includes(p) ? 'p-late' : 'p-blue'}">Reste ${money(fee - pd)}</span>`}</div>`; }).join('')}
         ${d.remaining ? `<div class="between num" style="border-top:1px solid var(--line);padding-top:10px"><b>Total dû</b><b style="color:var(--warn)">${money(d.remaining)}</b></div>` : ''}</section>` : ''}
+      ${await exemptCard(m)}
       <div class="stack">
         ${canCollectFor(m) && m.active && !m.pending ? `<a class="btn primary block" href="${B()}/encaisser?m=${m.id}">Enregistrer un paiement</a>` : ''}
         ${d.owed.length ? `<a class="btn wa block" target="_blank" rel="noopener" href="${waTo(m.phone, relance)}">${I.wa} Relancer sur WhatsApp</a>` : ''}
@@ -613,6 +618,30 @@
       ${hist.length ? `<section class="stack"><span class="eyebrow">Historique des paiements</span><div class="list">${hist.map(t => txItem(t, rset)).join('')}</div></section>` : ''}`;
   };
   AFTER.m = () => {};
+
+  // Dispense temporaire (sans travail, au village…) : le bureau l'accorde, tout le monde la voit, seul le bureau lit le motif.
+  const EX_REASONS = ['Sans travail', 'Sans travail, au village', 'Maladie', 'Études', 'Autre'];
+  async function exemptCard(m) {
+    if (!hasFees() || !feeOf(m) || m.pending) return '';
+    const mine = (S.ctx.exempts || []).filter(e => e.member_id === m.id).sort((x, y) => y.from_period.localeCompare(x.from_period));
+    const bureau = can('members');
+    let reasons = new Map();
+    if (bureau && mine.length) { const r = await sb.rpc('exemption_reasons', { p_assoc: S.ctx.assoc.id }); if (!r.error) reasons = new Map((r.data || []).map(x => [Number(x.id), x.reason])); }
+    const cur = curYM(), now = exemptOf(m, cur);
+    if (!mine.length && !bureau) return '';
+    const per = e => `${pFR(e.from_period)} → ${e.to_period ? pFR(e.to_period) : 'jusqu’à nouvel ordre'}`;
+    return `<section class="card stack" id="dispense"><div class="between"><h2>Dispense de cotisation</h2>${now ? '<span class="pill p-blue">Dispensé</span>' : ''}</div>
+      ${mine.length ? `<div class="stack">${mine.map(e => `<div class="between" style="align-items:flex-start;gap:10px"><span style="min-width:0"><b class="num">${per(e)}</b><br><span class="muted" style="font-size:12.5px">Accordée par ${esc(String(e.created_label).replace(/\s*\(.*\)$/, ''))}${reasons.get(Number(e.id)) ? ' · ' + esc(reasons.get(Number(e.id))) : ''}</span></span>
+        ${bureau && (!e.to_period || e.to_period >= cur) ? `<button class="btn ghost sm" data-act="ex-end" data-id="${e.id}" data-from="${esc(e.from_period)}">Il reprend</button>` : ''}</div>`).join('')}</div>` : ''}
+      ${bureau && !now ? `<details class="more"><summary>Dispenser ${esc(m.full_name.split(' ')[0])}</summary>
+        <form class="stack" data-form="exempt" data-id="${m.id}" novalidate style="margin-top:8px">
+          <p class="help" style="margin:0">Pendant la dispense, aucun mois n’est dû ni relancé. Avant et après, la cotisation reste due normalement.</p>
+          <div class="row2"><div class="field"><label for="ex-f">À partir de</label><input id="ex-f" name="from" type="month" value="${cur}"></div><div class="field"><label for="ex-t">Jusqu’à (facultatif)</label><input id="ex-t" name="to" type="month"></div></div>
+          <div class="field"><label for="ex-r">Motif (visible par le bureau seulement)</label><select id="ex-r" name="reason">${EX_REASONS.map(x => opt(x, x)).join('')}</select></div>
+          <p class="err" hidden></p><button class="btn primary block" type="submit">Accorder la dispense</button>
+          <p class="help" style="margin:0">Tous les membres verront que ${esc(m.full_name)} est dispensé, sans le motif.</p></form></details>` : ''}
+      <form class="stack" data-form="exend" id="exend" hidden novalidate><div class="field"><label for="ex-l">Dernier mois dispensé</label><input id="ex-l" name="last" type="month" value="${addMonth(cur, -1)}"><p class="help">Il cotise de nouveau à partir du mois suivant.</p></div><input type="hidden" name="id"><p class="err" hidden></p><button class="btn primary block" type="submit">Mettre fin à la dispense</button></form></section>`;
+  }
 
   function relanceText(m, d) {
     const a = S.ctx.assoc;
@@ -770,7 +799,7 @@
     const mine = must(await sb.from('payment_claims').select('*').eq('member_id', me.id).order('id', { ascending: false }).limit(12));
     const pendP = new Set(mine.filter(c => c.status === 'pending').map(c => c.period));
     const d = dues(me), cur = curYM();
-    const opts = [...new Set([...d.owed, cur, addMonth(cur, 1), addMonth(cur, 2)])].sort().filter(p => paidFor(me.id, p) < fee && !pendP.has(p));
+    const opts = [...new Set([...d.owed, cur, addMonth(cur, 1), addMonth(cur, 2)])].sort().filter(p => paidFor(me.id, p) < fee && !pendP.has(p) && !exemptOf(me, p));
     const ST = { pending: ['p-late', 'En attente du trésorier'], confirmed: ['p-ok', 'Confirmé'], rejected: ['p-red', 'Refusé'], cancelled: ['p-blue', 'Annulé'] };
     const hist = mine.length ? `<section class="stack"><h2>Mes paiements déclarés</h2><div class="list">${mine.map(c => `<div class="item" style="align-items:flex-start"><div class="body"><div class="t num" style="white-space:normal">${money(c.amount)} · ${esc(c.method)}</div><div class="s wrap">${esc(pFR(c.period))} · ${dFR(localDay(c.created_at))} à ${hm(c.created_at)}${c.reference ? ' · réf. ' + esc(c.reference) : ''}${c.status === 'rejected' && c.reason ? '<br>Motif : ' + esc(c.reason) : ''}</div>${c.status === 'pending' ? `<button class="btn ghost sm" style="margin-top:8px" data-act="claim-cancel" data-id="${c.id}">Annuler cette déclaration</button>` : ''}${c.status === 'confirmed' && c.transaction_id ? `<a class="link" style="display:inline-block;margin-top:6px" href="${B()}/op/${c.transaction_id}?recu=1">Voir le reçu</a>` : ''}</div><span class="pill ${ST[c.status][0]}">${ST[c.status][1]}</span></div>`).join('')}</div></section>` : '';
     if (!opts.length) return `${head}<p class="note">${pendP.size ? 'Votre paiement est en attente : le trésorier doit vérifier qu’il a bien reçu l’argent.' : 'Vous êtes à jour. Merci !'}</p>${hist}`;
@@ -1507,7 +1536,7 @@ Abstention</textarea><p class="help">Entre 2 et 10 choix.</p></div>
   };
 
   /* Notifications ---------------------------------------------------- */
-  const NOTIF_LINKS = [[/déclaré avoir payé|paiement déclaré|déclaration de paiement/i, 'cotisations?f=claims', I.wallet], [/numéros de paiement/i, 'parametres', I.gear], [/annonce/i, 'annonces', I.mega], [/réunion|compte rendu|convocation/i, 'reunions', I.cal], [/vote/i, 'votes', I.vote], [/document/i, 'documents', I.doc],
+  const NOTIF_LINKS = [[/dispens/i, 'membres', I.users], [/déclaré avoir payé|paiement déclaré|déclaration de paiement/i, 'cotisations?f=claims', I.wallet], [/numéros de paiement/i, 'parametres', I.gear], [/annonce/i, 'annonces', I.mega], [/réunion|compte rendu|convocation/i, 'reunions', I.cal], [/vote/i, 'votes', I.vote], [/document/i, 'documents', I.doc],
     [/collecte/i, 'collectes', I.heart], [/section/i, 'sections', I.users], [/approbation|approuvé la dépense|refusé la dépense|demande de dépense|double validation/i, 'depenses', I.list], [/cotisation|recette|dépense|opération|contre-écriture/i, 'finances', I.list], [/projet|mise à jour/i, 'projets', I.drop], [/membre|adhésion|rôle|retiré|réintégré|bureau|rejoindre|demande de/i, 'membres', I.users], [/message|discussion/i, 'discussion', I.chat]];
   V.notifications = async () => {
     const a = S.ctx.assoc, seenKey = 'vl:notif:' + a.id, seen = Number(store.get(seenKey) || 0);
@@ -1569,7 +1598,7 @@ Abstention</textarea><p class="help">Entre 2 et 10 choix.</p></div>
       <section class="card stack" id="push-card"><h2>Rappels sur ce téléphone</h2><p class="muted" style="margin:0;font-size:13.5px">Recevez une notification 3 jours avant l’échéance de votre cotisation, le jour même, et en cas de retard.</p><div id="push-state" class="stack"><span class="muted">Vérification…</span></div></section>
       <section class="card stack"><h2>Langue</h2><div class="seg" role="group" aria-label="Langue">${LANGS.map(([k, l]) => `<button data-act="lang" data-lang="${k}" aria-pressed="${langNow() === k}">${l}</button>`).join('')}</div>
         <p class="help">Le pular est en essai : certains textes restent en français.</p></section>
-      <p class="muted" style="font-size:12.5px;text-align:center">VillageLink · version 1.23 · <a class="link" href="confidentialite.html">Confidentialité</a> · <a class="link" href="conditions.html">Conditions</a></p>`;
+      <p class="muted" style="font-size:12.5px;text-align:center">VillageLink · version 1.24 · <a class="link" href="confidentialite.html">Confidentialité</a> · <a class="link" href="conditions.html">Conditions</a></p>`;
   };
 
   /* Notifications sur le téléphone ----------------------------------- */
@@ -1962,6 +1991,18 @@ Abstention</textarea><p class="help">Entre 2 et 10 choix.</p></div>
       must(await sb.from('announcements').insert({ association_id: S.ctx.assoc.id, kind: val(fd, 'kind'), title, body, ...voice }));
       voiceDone('ann'); toast('Annonce publiée'); route();
     },
+    async exempt(fd, form) {
+      const from = val(fd, 'from'), to = val(fd, 'to');
+      if (!/^\d{4}-\d{2}$/.test(from)) fail('Choisissez le mois de début.');
+      if (to && to < from) fail('Le mois de fin doit venir après le mois de début.');
+      must(await sb.rpc('grant_exemption', { p_member: form.dataset.id, p_from: from, p_to: to || null, p_reason: val(fd, 'reason') }));
+      await refresh(); toast('Dispense accordée'); route();
+    },
+    async exend(fd) {
+      const last = val(fd, 'last'); if (!/^\d{4}-\d{2}$/.test(last)) fail('Choisissez le dernier mois dispensé.');
+      must(await sb.rpc('end_exemption', { p_id: Number(val(fd, 'id')), p_last: last }));
+      await refresh(); toast('Dispense terminée'); route();
+    },
     async claim(fd) {
       const me = S.ctx.me, period = val(fd, 'period'), amount = Math.round(Number(val(fd, 'amount')));
       if (!/^\d{4}-\d{2}$/.test(period)) fail('Choisissez le mois à payer.');
@@ -2118,6 +2159,7 @@ Abstention</textarea><p class="help">Entre 2 et 10 choix.</p></div>
         const tid = must(await sb.rpc('confirm_payment_claim', { p_id: Number(b.dataset.id) }));
         await refresh(); toast('Paiement confirmé'); go(B() + '/op/' + tid + '?recu=1');
       }
+      else if (act === 'ex-end') { const f = $('#exend'); if (f) { f.hidden = false; f.querySelector('[name=id]').value = b.dataset.id; const l = f.querySelector('[name=last]'); l.min = b.dataset.from; if (l.value < b.dataset.from) l.value = b.dataset.from; l.focus(); } }
       else if (act === 'claim-no') { const f = $('#rjc-' + b.dataset.id); if (f) { f.hidden = false; f.querySelector('input').focus(); } }
       else if (act === 'claim-cancel') {
         if (b.dataset.confirm !== '1') { b.dataset.confirm = '1'; b.textContent = 'Confirmer l’annulation'; return; }
