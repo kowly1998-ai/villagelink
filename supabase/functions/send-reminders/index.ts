@@ -4,7 +4,7 @@
 import webpush from "npm:web-push@3.6.7";
 import { createClient } from "npm:@supabase/supabase-js@2.45.4";
 
-const ORIGINS = ["https://kowly1998-ai.github.io", "http://127.0.0.1:8765"];
+const ORIGINS = ["https://kowly1998-ai.github.io", "https://app.villagelinkafrica.com", "https://villagelinkafrica.com", "http://127.0.0.1:8765"];
 const sb = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!, { auth: { persistSession: false } });
 
 type Target = { endpoint: string; p256dh: string; auth: string; title: string; body: string; url: string; tag: string };
