@@ -350,6 +350,13 @@
       <a class="link" href="#/bienvenue">Revenir à mes associations</a></div>`;
   }
 
+  const delAcctBox = () => `<details class="card more" id="del-acct"><summary>Supprimer mon compte</summary>
+      <form class="stack" data-form="delacct" novalidate style="margin-top:10px">
+        <p class="muted" style="margin:0;font-size:13.5px">Votre compte de connexion (${esc(S.user.email || '')}) sera supprimé définitivement, avec vos rappels sur ce téléphone. Votre fiche de membre et les opérations déjà enregistrées restent dans l’historique de l’association, pour la transparence des comptes ; le bureau peut retirer votre fiche.</p>
+        <div class="field"><label for="da-c">Tapez SUPPRIMER pour confirmer</label><input id="da-c" name="confirm" autocomplete="off" autocapitalize="characters" spellcheck="false"></div>
+        <p class="err" hidden></p><button class="btn danger block" type="submit">Supprimer définitivement mon compte</button>
+        <p class="help">Vous pouvez aussi écrire à contact@villagelinkafrica.com.</p></form></details>`;
+
   async function renderWelcome() {
     const list = must(await sb.rpc('my_memberships')).filter(a => a.active || a.pending);
     const owner = await sb.rpc('am_owner').then(r => !r.error && r.data === true, () => false);
@@ -378,6 +385,7 @@
         <div class="row2"><div class="field"><label for="cr-cur">Monnaie</label><select id="cr-cur" name="currency">${CURRENCIES.map(([k, l]) => `<option value="${k}">${l}</option>`).join('')}</select></div><div class="field"><label for="cr-fee">Montant par mois</label><input id="cr-fee" name="fee" type="number" inputmode="numeric" min="0" step="1" placeholder="Ex. 5000"></div></div>
         <div class="field"><label for="cr-due">Jour d’échéance chaque mois</label><input id="cr-due" name="due_day" type="number" inputmode="numeric" min="1" max="28" value="5"></div>
         <p class="err" hidden></p><button class="btn primary block" type="submit">Créer l’association</button></form>
+      ${delAcctBox()}
     </div>`;
   }
 
@@ -1602,7 +1610,8 @@ Abstention</textarea><p class="help">Entre 2 et 10 choix.</p></div>
       <section class="card stack" id="push-card"><h2>Rappels sur ce téléphone</h2><p class="muted" style="margin:0;font-size:13.5px">Recevez une notification 3 jours avant l’échéance de votre cotisation, le jour même, et en cas de retard.</p><div id="push-state" class="stack"><span class="muted">Vérification…</span></div></section>
       <section class="card stack"><h2>Langue</h2><div class="seg" role="group" aria-label="Langue">${LANGS.map(([k, l]) => `<button data-act="lang" data-lang="${k}" aria-pressed="${langNow() === k}">${l}</button>`).join('')}</div>
         <p class="help">Le pular est en essai : certains textes restent en français.</p></section>
-      <p class="muted" style="font-size:12.5px;text-align:center">VillageLink · version 1.24.1 · <a class="link" href="confidentialite.html">Confidentialité</a> · <a class="link" href="conditions.html">Conditions</a></p>`;
+      ${delAcctBox()}
+      <p class="muted" style="font-size:12.5px;text-align:center">VillageLink · version 1.25 · <a class="link" href="confidentialite.html">Confidentialité</a> · <a class="link" href="conditions.html">Conditions</a></p>`;
   };
 
   /* Notifications sur le téléphone ----------------------------------- */
@@ -2001,6 +2010,15 @@ Abstention</textarea><p class="help">Entre 2 et 10 choix.</p></div>
       if (to && to < from) fail('Le mois de fin doit venir après le mois de début.');
       must(await sb.rpc('grant_exemption', { p_member: form.dataset.id, p_from: from, p_to: to || null, p_reason: val(fd, 'reason') }));
       await refresh(); toast('Dispense accordée'); route();
+    },
+    async delacct(fd) {
+      if (val(fd, 'confirm').trim().toUpperCase() !== 'SUPPRIMER') fail('Tapez SUPPRIMER pour confirmer.');
+      must(await sb.rpc('delete_my_account', { p_confirm: 'SUPPRIMER' }));
+      await pushOff(true).catch(() => {}); clearOfflineData();
+      await sb.auth.signOut().catch(() => {});
+      S.ctx = null; S.session = null; S.user = null; S.authMode = 'login';
+      S.authMsg = 'Votre compte VillageLink a été supprimé. Merci de l’avoir utilisé.';
+      location.hash = '#/'; renderAuth();
     },
     async exend(fd) {
       const last = val(fd, 'last'); if (!/^\d{4}-\d{2}$/.test(last)) fail('Choisissez le dernier mois dispensé.');
