@@ -11,10 +11,60 @@
   "orientation": "portrait",
   "background_color": "#08163A",
   "theme_color": "#08163A",
-  "categories": ["finance", "productivity", "social"],
+  "categories": [
+    "finance",
+    "productivity",
+    "social"
+  ],
   "icons": [
-    {"src": "icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any"},
-    {"src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any"},
-    {"src": "icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable"}
-  ]
+    {
+      "src": "icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "icon-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ],
+  "screenshots": [
+    {
+      "src": "screenshots/caisse.jpg",
+      "sizes": "1080x1920",
+      "type": "image/jpeg",
+      "form_factor": "narrow",
+      "label": "La caisse du village, visible par tous les membres"
+    },
+    {
+      "src": "screenshots/cotisations.jpg",
+      "sizes": "1080x1920",
+      "type": "image/jpeg",
+      "form_factor": "narrow",
+      "label": "Qui a payé, qui est en retard : tout se voit"
+    },
+    {
+      "src": "screenshots/recu.jpg",
+      "sizes": "1080x1920",
+      "type": "image/jpeg",
+      "form_factor": "narrow",
+      "label": "Un reçu WhatsApp pour chaque cotisation"
+    },
+    {
+      "src": "screenshots/projet.jpg",
+      "sizes": "1080x1920",
+      "type": "image/jpeg",
+      "form_factor": "narrow",
+      "label": "Les projets du village, suivis jusqu’au bout"
+    }
+  ],
+  "prefer_related_applications": false
 }
