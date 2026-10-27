@@ -793,7 +793,8 @@
     const dest = () => {
       const m = (document.querySelector('input[name=method]:checked') || {}).value || '';
       const k = (MM.find(([l]) => l === m) || [])[1], num = k ? pn[k] : '';
-      box.innerHTML = `<span class="eyebrow">Envoyez avec votre application ${esc(m)}</span>
+      const amt = Number(am.value) || 0, wl = m === 'Wave' && /^https:\/\/pay\.wave\.com\/m\//.test(pn.wave_link || '') ? pn.wave_link.replace(/\/?$/, '/') + '?amount=' + amt : '';
+      box.innerHTML = (wl ? `<a class="btn block wave-btn" href="${esc(wl)}" target="_blank" rel="noopener">Payer ${money(amt)} avec Wave</a><p class="help" style="margin:0">Wave s’ouvre avec le montant déjà rempli. Après le paiement, revenez ici et touchez « J’ai payé ».</p><span class="eyebrow" style="margin-top:4px">Ou à la main</span>` : `<span class="eyebrow">Envoyez avec votre application ${esc(m)}</span>`) + `
         <div class="between" style="flex-wrap:wrap"><span><span class="muted" style="font-size:12.5px">Au numéro</span><br><b class="num" style="font-size:20px">${esc(num)}</b></span><button type="button" class="btn ghost sm" data-act="copy" data-v="${esc(num.replace(/\s/g, ''))}">Copier le numéro</button></div>
         <div class="between" style="flex-wrap:wrap"><span><span class="muted" style="font-size:12.5px">Montant</span><br><b class="num" style="font-size:20px">${money(Number(am.value) || 0)}</b></span><button type="button" class="btn ghost sm" data-act="copy" data-v="${esc(String(Number(am.value) || 0))}">Copier le montant</button></div>
         <p class="note" style="margin:0">Avant de valider dans ${esc(m)}, vérifiez que le nom affiché est bien <b>${esc(pn.holder)}</b>. Sinon, n’envoyez rien et prévenez le bureau.</p>`;
@@ -1652,6 +1653,7 @@ Abstention</textarea><p class="help">Entre 2 et 10 choix.</p></div>
       ${ed ? '' : '<p class="help">Seuls le président et le trésorier changent ces numéros. Chaque changement est visible dans le journal.</p>'}
       <div class="field"><label for="mm-h">Nom affiché chez Wave / Orange Money</label><input id="mm-h" name="holder" value="${esc(p.holder || '')}" placeholder="Ex. Boubacar Baldé" ${ro}></div>
       <div class="field"><label for="mm-w">Numéro Wave</label><input id="mm-w" name="wave" type="tel" inputmode="tel" value="${esc(p.wave || '')}" placeholder="+221 77 000 00 00" ${ro}></div>
+      <div class="field"><label for="mm-l">Lien de paiement Wave (conseillé)</label><input id="mm-l" name="wave_link" type="url" inputmode="url" value="${esc(p.wave_link || '')}" placeholder="https://pay.wave.com/m/…" ${ro}><p class="help">Dans Wave : <b>Envoi de lien</b>, puis copiez le lien. Les membres auront un bouton qui ouvre Wave avec le bon montant déjà rempli.</p></div>
       <div class="field"><label for="mm-o">Numéro Orange Money</label><input id="mm-o" name="orange" type="tel" inputmode="tel" value="${esc(p.orange || '')}" ${ro}></div>
       <div class="field"><label for="mm-f">Numéro Free Money</label><input id="mm-f" name="free" type="tel" inputmode="tel" value="${esc(p.free || '')}" ${ro}></div>
       ${ed ? '<p class="err" hidden></p><button class="btn primary block" type="submit">Enregistrer les numéros</button><p class="help">Laissez vide un service que vous n’utilisez pas. Tous les membres seront prévenus du changement.</p>' : ''}</form>`;
@@ -1972,7 +1974,10 @@ Abstention</textarea><p class="help">Entre 2 et 10 choix.</p></div>
       if (!canSetPayNums()) fail('Réservé au président et au trésorier.');
       const clean = k => val(fd, k).replace(/[^\d+ ]/g, '').trim();
       for (const k of ['wave', 'orange', 'free']) { const v = clean(k); if (v && digits(v).length < 8) fail('Un numéro semble incomplet. Vérifiez-le.'); }
-      must(await sb.rpc('set_pay_numbers', { p_assoc: S.ctx.assoc.id, p_holder: val(fd, 'holder'), p_wave: clean('wave'), p_orange: clean('orange'), p_free: clean('free') }));
+      const link = val(fd, 'wave_link').split(/[?#]/)[0];
+      if (link && !clean('wave')) fail('Ajoutez aussi le numéro Wave qui reçoit l’argent (il sert de preuve).');
+      if (link && !/^https:\/\/pay\.wave\.com\/m\/[A-Za-z0-9_-]{4,40}\/c\/[a-z]{2}\/?$/.test(link)) fail('Le lien Wave doit commencer par https://pay.wave.com/m/ (copiez-le depuis Wave : Envoi de lien).');
+      must(await sb.rpc('set_pay_numbers', { p_assoc: S.ctx.assoc.id, p_holder: val(fd, 'holder'), p_wave: clean('wave'), p_orange: clean('orange'), p_free: clean('free'), p_wave_link: link }));
       await refresh(); toast('Numéros enregistrés'); route();
     },
     async rejectclaim(fd, form) {
