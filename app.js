@@ -712,7 +712,11 @@
           <div class="row" style="margin-top:8px;flex-wrap:wrap"><button class="btn primary sm" data-act="claim-ok" data-id="${c.id}">Confirmer la réception</button><button class="btn ghost sm" data-act="claim-no" data-id="${c.id}">Refuser</button></div>
           <form class="stack" data-form="rejectclaim" data-id="${c.id}" id="rjc-${c.id}" hidden style="margin-top:8px" novalidate><div class="field"><label for="rjc-r-${c.id}">Motif du refus</label><input id="rjc-r-${c.id}" name="reason" placeholder="Ex. rien reçu sur Wave"></div><p class="err" hidden></p><button class="btn danger sm" type="submit">Refuser ce paiement</button></form></div></div>`; }).join('') || '<div class="empty">Aucun paiement à confirmer.</div>'}</div>`;
     } else if (f === 'late') {
-      list = `<div class="list">${late.map(m => { const d = dues(m); return `<div class="item"><div class="av">${esc(initials(m.full_name))}</div><div class="body"><a class="t" href="${B()}/m/${m.id}" style="display:block;text-decoration:none">${esc(m.full_name)}</a><div class="s wrap num">${d.late.map(pFR).join(', ')} · reste ${money(d.remaining)}</div><div class="row" style="margin-top:8px;flex-wrap:wrap">${canCollectFor(m) ? `<a class="btn primary sm" href="${B()}/encaisser?m=${m.id}">Encaisser</a>` : ''}<a class="btn wa sm" target="_blank" rel="noopener" href="${waTo(m.phone, relanceText(m, d))}">${I.wa} Relancer</a></div></div></div>`; }).join('') || '<div class="empty">Tout le monde est à jour.</div>'}</div>`;
+      const row = (m, ps) => { const d = dues(m); return `<div class="item"><div class="av">${esc(initials(m.full_name))}</div><div class="body"><a class="t" href="${B()}/m/${m.id}" style="display:block;text-decoration:none">${esc(m.full_name)}</a><div class="s wrap num">${ps(d).map(pFR).join(', ')} · reste ${money(d.remaining)}</div><div class="row" style="margin-top:8px;flex-wrap:wrap">${canCollectFor(m) ? `<a class="btn primary sm" href="${B()}/encaisser?m=${m.id}">Encaisser</a>` : ''}<a class="btn wa sm" target="_blank" rel="noopener" href="${waTo(m.phone, relanceText(m, d))}">${I.wa} Relancer</a></div></div></div>`; };
+      const unpaid = late.length ? [] : activeMembers().filter(m => dues(m).remaining > 0);
+      list = late.length ? `<div class="list">${late.map(m => row(m, d => d.late)).join('')}</div>`
+        : unpaid.length ? `<p class="note" style="margin:0">Personne n’est en retard. ${unpaid.length > 1 ? unpaid.length + ' membres n’ont' : '1 membre n’a'} pas encore payé :</p><div class="list">${unpaid.map(m => row(m, d => d.owed)).join('')}</div>`
+        : '<div class="list"><div class="empty">Tout le monde est à jour.</div></div>';
     } else {
       const recent = must(await sb.from('transactions').select('*').eq('association_id', a.id).eq('category', 'Cotisations').order('id', { ascending: false }).limit(40));
       const rset = await reversedSet(recent);
@@ -1598,7 +1602,7 @@ Abstention</textarea><p class="help">Entre 2 et 10 choix.</p></div>
       <section class="card stack" id="push-card"><h2>Rappels sur ce téléphone</h2><p class="muted" style="margin:0;font-size:13.5px">Recevez une notification 3 jours avant l’échéance de votre cotisation, le jour même, et en cas de retard.</p><div id="push-state" class="stack"><span class="muted">Vérification…</span></div></section>
       <section class="card stack"><h2>Langue</h2><div class="seg" role="group" aria-label="Langue">${LANGS.map(([k, l]) => `<button data-act="lang" data-lang="${k}" aria-pressed="${langNow() === k}">${l}</button>`).join('')}</div>
         <p class="help">Le pular est en essai : certains textes restent en français.</p></section>
-      <p class="muted" style="font-size:12.5px;text-align:center">VillageLink · version 1.24 · <a class="link" href="confidentialite.html">Confidentialité</a> · <a class="link" href="conditions.html">Conditions</a></p>`;
+      <p class="muted" style="font-size:12.5px;text-align:center">VillageLink · version 1.24.1 · <a class="link" href="confidentialite.html">Confidentialité</a> · <a class="link" href="conditions.html">Conditions</a></p>`;
   };
 
   /* Notifications sur le téléphone ----------------------------------- */
@@ -2209,6 +2213,8 @@ Abstention</textarea><p class="help">Entre 2 et 10 choix.</p></div>
   const setOnline = () => $('#offline').classList.toggle('hidden', navigator.onLine);
   window.addEventListener('online', setOnline); window.addEventListener('offline', setOnline); setOnline();
   document.addEventListener('change', e => { const el = e.target; if (el && el.dataset && el.dataset.nav === 'rapport' && /^\d{4}-\d{2}$/.test(el.value)) go(B() + '/rapport?m=' + el.value); });
+  const onScroll = () => document.body.classList.toggle('scrolled', window.scrollY > 8);
+  window.addEventListener('scroll', onScroll, { passive: true }); window.addEventListener('hashchange', () => setTimeout(onScroll, 50));
   window.addEventListener('hashchange', route);
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState !== 'visible' || !S.session) return;
