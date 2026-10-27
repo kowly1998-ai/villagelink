@@ -1,0 +1,14 @@
+[
+  {
+    "relation": [
+      "delegate_permission/common.handle_all_urls"
+    ],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "com.villagelinkafrica.app",
+      "sha256_cert_fingerprints": [
+        "31:89:7C:93:1F:D9:7F:5C:11:7C:B7:15:DD:AE:95:C9:21:32:B1:58:4C:D4:FC:7D:0B:74:3C:54:0B:E5:CB:22"
+      ]
+    }
+  }
+]
