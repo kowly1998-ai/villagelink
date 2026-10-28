@@ -715,7 +715,7 @@
     const paidCount = dueNow.filter(m => paidFor(m.id, cur) >= feeOf(m)).length;
     let list = '';
     if (f === 'claims') {
-      list = `<p class="note" style="margin:0"><b>Avant de confirmer</b>, ouvrez VOTRE application Wave, Orange Money ou Free Money et vérifiez que l’argent est bien arrivé. Ne vous fiez jamais à un SMS ni à une capture d’écran.</p>
+      list = `<p class="note" style="margin:0"><b>Avant de confirmer</b>, ouvrez VOTRE application Wave, Orange Money ou Free Money et vérifiez que l’argent est bien arrivé. Ne vous fiez jamais à un SMS ni à une capture d’écran. Wave permet d’annuler un envoi pendant une heure : pour un paiement Wave très récent, attendez une heure avant de confirmer.</p>
         <div class="list">${toConf.map(c => { const m = S.ctx.byId.get(c.member_id) || { full_name: '?' }; return `<div class="item" style="flex-wrap:wrap"><div class="av">${esc(initials(m.full_name))}</div><div class="body"><div class="t">${esc(m.full_name)}</div><div class="s wrap num"><b style="color:var(--ink)">${money(c.amount)}</b> par ${esc(c.method)} · ${esc(pFR(c.period))}<br>Envoyé au ${esc(c.sent_to)} · déclaré le ${dFR(localDay(c.created_at))} à ${hm(c.created_at)}${c.reference ? '<br>Réf. ' + esc(c.reference) : '<br>Sans référence'}</div>
           <div class="row" style="margin-top:8px;flex-wrap:wrap"><button class="btn primary sm" data-act="claim-ok" data-id="${c.id}">Confirmer la réception</button><button class="btn ghost sm" data-act="claim-no" data-id="${c.id}">Refuser</button></div>
           <form class="stack" data-form="rejectclaim" data-id="${c.id}" id="rjc-${c.id}" hidden style="margin-top:8px" novalidate><div class="field"><label for="rjc-r-${c.id}">Motif du refus</label><input id="rjc-r-${c.id}" name="reason" placeholder="Ex. rien reçu sur Wave"></div><p class="err" hidden></p><button class="btn danger sm" type="submit">Refuser ce paiement</button></form></div></div>`; }).join('') || '<div class="empty">Aucun paiement à confirmer.</div>'}</div>`;
@@ -858,7 +858,11 @@
       const meth = (document.querySelector('input[name=method]:checked') || {}).value || '';
       const k = (MM.find(([l]) => l === meth) || [])[1], num = k ? pn[k] : '';
       const expected = Math.max(fee - paidFor(me.id, ps.value), 0) || fee, items = [];
-      if (r.amount) { am.value = r.amount; items.push(r.amount === expected ? ['ok', 'Montant : ' + money(r.amount)] : ['warn', `Montant lu : ${money(r.amount)}. La cotisation de ${pFR(ps.value)} est de ${money(expected)}.`]); }
+      if (r.amount) {
+        am.value = r.amount;
+        if (r.sent && r.sent !== r.amount) items.push(['warn', `Vous avez envoyé ${money(r.sent)}, l’association a reçu ${money(r.amount)}${r.fee ? ` (frais ${money(r.fee)} déduits)` : ''}. C’est ${money(r.amount)} qui sera compté.`]);
+        items.push(r.amount === expected ? ['ok', 'Montant reçu : ' + money(r.amount)] : r.amount < expected ? ['warn', `Il manque ${money(expected - r.amount)} pour la cotisation de ${pFR(ps.value)} (${money(expected)}).${r.fee ? ' La prochaine fois, ajoutez les frais au montant envoyé.' : ''}`] : ['warn', `Montant reçu : ${money(r.amount)}, plus que la cotisation de ${pFR(ps.value)} (${money(expected)}).`]);
+      }
       else items.push(['warn', 'Montant non trouvé : saisissez-le à la main.']);
       if (r.reference) { $('#cl-r').value = r.reference; items.push(['ok', 'Référence : ' + r.reference]); }
       else items.push(['warn', 'Référence non trouvée : recopiez-la si vous la voyez.']);

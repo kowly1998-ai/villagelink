@@ -71,7 +71,11 @@
   function parse(text) {
     const t = String(text || '').replace(NBSP, ' ').replace(/[ \t]+/g, ' ');
     const reference = findRef(t);
-    return { amount: findAmount(t), reference, phones: findPhones(reference ? t.split(reference).join(' ') : t), method: findMethod(t), date: findDate(t), text: t };
+    const num = '(\\d{1,3}(?:[ .,]\\d{3})+|\\d{2,9})';
+    const sentM = t.match(new RegExp('(?:^|\\n)\\s*[-\u2212\u2013]\\s*' + num + '\\s*F', 'i')) || t.match(new RegExp('montant\\s+envoy[ée]\\s*:?\\s*' + num + '\\s*F', 'i'));
+    const feeM = t.match(new RegExp('frais\\s*:?\\s*' + num + '\\s*F', 'i'));
+    const sent = sentM ? toInt(sentM[1]) : null, fee = feeM ? toInt(feeM[1]) : null;
+    return { amount: findAmount(t), sent, fee, reference, phones: findPhones(reference ? t.split(reference).join(' ') : t), method: findMethod(t), date: findDate(t), text: t };
   }
 
   // Le numéro (ou le nom) de l'association apparaît-il sur le reçu ?
