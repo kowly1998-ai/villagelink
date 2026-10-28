@@ -442,3 +442,32 @@ details.more[open] summary::before{content:"− "}
 .kv.num dt{white-space:nowrap}.kv.num dd{white-space:normal;overflow-wrap:anywhere}
 
 .chk{font-size:13.5px;padding:8px 12px;border-radius:12px;line-height:1.4}.chk-ok{background:rgba(70,200,140,.14);color:#86E6B8}.chk-warn{background:rgba(244,194,91,.14);color:#F7CF7A}.chk-bad{background:rgba(255,120,100,.16);color:#FFA597}
+
+/* ---- 1.27 : accueil en colonnes + version ordinateur ---- */
+.home-grid,.home-l,.home-r,.home-l2,.home-light,.home-act{display:contents}
+.home-light>*{order:1}.home-l2>*{order:2}.home-act>*{order:3}
+.side-brand,.side-more{display:none}
+@media (min-width:1024px){
+  #app{max-width:none;margin:0;padding-left:248px}
+  .top{width:100%;max-width:1180px;margin:0 auto;padding:22px 32px 12px}
+  main{width:100%;max-width:1180px;margin:0 auto;padding:8px 32px 48px}
+  main>*:not(.home-grid){width:100%;max-width:780px}
+  .tabs{top:0;bottom:0;left:0;right:auto;width:248px;padding:0;display:block}
+  .tabs-in{display:flex;flex-direction:column;align-items:stretch;gap:4px;height:100%;max-width:none;width:100%;border-radius:0;border:0;border-right:1px solid var(--glass-line);padding:22px 14px;overflow-y:auto;box-shadow:none}
+  .side-brand{display:flex;align-items:center;gap:10px;color:#fff;text-decoration:none;font-size:17px;padding:4px 10px 18px}
+  .side-brand img{border-radius:10px}
+  .tab{flex-direction:row;justify-content:flex-start;gap:12px;padding:6px 8px;font-size:14.5px;border-radius:14px}
+  .tab .ic{padding:7px 9px;border-radius:12px}
+  .tab:hover{background:rgba(255,255,255,.06)}
+  .side-more{display:flex;flex-direction:column;gap:1px;margin-top:18px;padding-top:14px;border-top:1px solid var(--glass-line)}
+  .side-h{font-size:11.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);padding:0 10px 6px}
+  .side-more a{color:var(--on-nav);text-decoration:none;font-size:13.5px;padding:7px 10px;border-radius:10px}
+  .side-more a:hover{background:rgba(255,255,255,.06)}
+  .side-more a[aria-current="page"]{color:#F4C25B;background:rgba(244,194,91,.1)}
+  .home-grid{display:grid;grid-template-columns:minmax(0,1.05fr) minmax(0,1fr);gap:22px;align-items:start}
+  .home-l,.home-r,.home-l2,.home-act{display:flex;flex-direction:column;gap:14px}
+  .home-light{display:block}
+  .home-light .light{border-radius:28px}
+  .light .grab{display:none}
+  #toast{left:calc(50% + 124px)}
+}
