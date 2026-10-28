@@ -821,6 +821,11 @@
         <div class="big-amount"><label for="cl-a" class="muted" style="font-size:12.5px">Montant à envoyer (${esc(CUR_LABEL[S.ctx.assoc.currency] || 'FCFA')})</label><input id="cl-a" name="amount" type="number" inputmode="numeric" min="1" step="1"></div>
         <div class="field"><span style="font-size:13px;font-weight:500;color:var(--muted)" id="cl-m-l">Payer avec</span><div class="radios" role="radiogroup" aria-labelledby="cl-m-l">${avail.map(([l], k) => `<label><input type="radio" name="method" value="${esc(l)}" ${k === 0 ? 'checked' : ''}>${esc(l)}</label>`).join('')}</div></div>
         <section class="card stack" id="cl-dest"></section>
+        <section class="card stack" id="cl-proof"><span class="eyebrow">Après avoir payé : la preuve</span>
+          <p class="help" style="margin:0">Ajoutez la capture du reçu ou collez le SMS de confirmation : l’application remplit le montant et la référence, et vérifie que l’argent est parti au bon numéro.</p>
+          <div class="row" style="flex-wrap:wrap"><label class="btn ghost sm" for="cl-img" style="cursor:pointer">Capture du reçu</label><input id="cl-img" type="file" accept="image/*" hidden><button type="button" class="btn ghost sm" id="cl-sms-b">Coller le SMS</button></div>
+          <textarea id="cl-sms" rows="3" hidden placeholder="Collez ici le SMS ou le message de confirmation"></textarea>
+          <div id="cl-check" class="stack" aria-live="polite"></div></section>
         <div class="field"><label for="cl-r">Référence de la transaction (conseillé)</label><input id="cl-r" name="reference" maxlength="60" autocapitalize="characters" placeholder="Dans le SMS ou l’historique Wave"><p class="help">Elle prouve votre paiement si le trésorier ne le retrouve pas.</p></div>
         <p class="err" hidden></p><button class="btn primary block" type="submit" style="min-height:54px;font-size:15.5px">J’ai payé</button>
         <p class="help">Votre cotisation sera marquée payée dès que le trésorier aura vu l’argent arriver dans son application. VillageLink ne touche jamais à votre argent ni à votre code secret.</p></form>
@@ -844,6 +849,37 @@
     am.addEventListener('input', dest);
     document.querySelectorAll('input[name=method]').forEach(r => r.addEventListener('change', dest));
     fill();
+    // Lecture du reçu (capture ou SMS)
+    const chk = $('#cl-check'), img = $('#cl-img'), sms = $('#cl-sms');
+    const line = ([k, t]) => `<div class="chk chk-${k}">${k === 'ok' ? '✓' : k === 'warn' ? '!' : '✗'} ${esc(t)}</div>`;
+    const apply = r => {
+      if (!r.amount && !r.reference) { chk.innerHTML = line(['warn', 'Aucun montant ni référence trouvés. Essayez une capture plus nette, ou collez le SMS.']); return; }
+      if (r.method) { const rb = document.querySelector(`input[name=method][value="${r.method}"]`); if (rb && !rb.checked) rb.checked = true; }
+      const meth = (document.querySelector('input[name=method]:checked') || {}).value || '';
+      const k = (MM.find(([l]) => l === meth) || [])[1], num = k ? pn[k] : '';
+      const expected = Math.max(fee - paidFor(me.id, ps.value), 0) || fee, items = [];
+      if (r.amount) { am.value = r.amount; items.push(r.amount === expected ? ['ok', 'Montant : ' + money(r.amount)] : ['warn', `Montant lu : ${money(r.amount)}. La cotisation de ${pFR(ps.value)} est de ${money(expected)}.`]); }
+      else items.push(['warn', 'Montant non trouvé : saisissez-le à la main.']);
+      if (r.reference) { $('#cl-r').value = r.reference; items.push(['ok', 'Référence : ' + r.reference]); }
+      else items.push(['warn', 'Référence non trouvée : recopiez-la si vous la voyez.']);
+      const dm = VLReceipt.matchesDest(r, num, pn.holder);
+      items.push(dm ? ['ok', dm === 'number' ? `Envoyé au bon numéro (${num})` : `Envoyé à ${pn.holder}`] : ['bad', `Le numéro de l’association (${num}) n’apparaît pas sur le reçu. Vérifiez que l’argent est parti au bon destinataire.`]);
+      if (r.date) { const days = (Date.now() - Date.parse(r.date)) / 864e5; items.push(days > 31 ? ['bad', `Ce reçu date du ${dFR(r.date)} : il est peut-être ancien.`] : ['ok', 'Date : ' + dFR(r.date)]); }
+      chk.innerHTML = items.map(line).join('') + '<p class="help" style="margin:0">Vérifiez ces informations, puis touchez « J’ai payé ». Le trésorier confirmera après avoir vu l’argent dans son application.</p>';
+      dest();
+    };
+    $('#cl-sms-b').addEventListener('click', () => { sms.hidden = false; sms.focus(); });
+    let t = 0;
+    sms.addEventListener('input', () => { clearTimeout(t); t = setTimeout(() => { if (sms.value.trim().length > 15) apply(VLReceipt.parse(sms.value)); }, 300); });
+    img.addEventListener('change', async () => {
+      const f = img.files && img.files[0]; if (!f) return;
+      chk.innerHTML = '<p class="muted" style="margin:0">Lecture de la capture… La première fois, le lecteur se télécharge (quelques secondes).</p>';
+      try {
+        const text = await VLReceipt.ocr(f, p => { chk.innerHTML = `<p class="muted" style="margin:0">Lecture de la capture… ${p} %</p>`; });
+        apply(VLReceipt.parse(text));
+      } catch (e) { chk.innerHTML = line(['warn', (e && e.message ? e.message + ' ' : '') + 'Collez plutôt le SMS, ou recopiez la référence à la main.']); }
+      img.value = '';
+    });
   };
 
   /* Plusieurs devises ------------------------------------------------ */
@@ -1611,7 +1647,7 @@ Abstention</textarea><p class="help">Entre 2 et 10 choix.</p></div>
       <section class="card stack"><h2>Langue</h2><div class="seg" role="group" aria-label="Langue">${LANGS.map(([k, l]) => `<button data-act="lang" data-lang="${k}" aria-pressed="${langNow() === k}">${l}</button>`).join('')}</div>
         <p class="help">Le pular est en essai : certains textes restent en français.</p></section>
       ${delAcctBox()}
-      <p class="muted" style="font-size:12.5px;text-align:center">VillageLink · version 1.25 · <a class="link" href="confidentialite.html">Confidentialité</a> · <a class="link" href="conditions.html">Conditions</a></p>`;
+      <p class="muted" style="font-size:12.5px;text-align:center">VillageLink · version 1.26 · <a class="link" href="confidentialite.html">Confidentialité</a> · <a class="link" href="conditions.html">Conditions</a></p>`;
   };
 
   /* Notifications sur le téléphone ----------------------------------- */
