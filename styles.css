@@ -447,7 +447,7 @@ details.more[open] summary::before{content:"− "}
 .home-grid,.home-l,.home-r,.home-l2,.home-light,.home-act{display:contents}
 .home-light>*{order:1}.home-l2>*{order:2}.home-act>*{order:3}
 .side-brand,.side-more{display:none}
-@media (min-width:1024px){
+@media (min-width:900px){
   #app{max-width:none;margin:0;padding-left:248px}
   .top{width:100%;max-width:1180px;margin:0 auto;padding:22px 32px 12px}
   main{width:100%;max-width:1180px;margin:0 auto;padding:8px 32px 48px}
