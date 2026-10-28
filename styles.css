@@ -471,3 +471,13 @@ details.more[open] summary::before{content:"− "}
   .light .grab{display:none}
   #toast{left:calc(50% + 124px)}
 }
+
+/* 1.28 : abonnement */
+.sub-banner{gap:6px}.sub-banner span{font-size:13.5px;color:var(--muted)}.sub-banner .btn{align-self:flex-start}
+.sub-warn{border-color:rgba(244,194,91,.55)!important}.sub-bad{border-color:rgba(255,120,100,.6)!important;background:rgba(255,90,70,.1)!important}
+.plans{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px}
+.plan{position:relative;cursor:pointer}.plan input{position:absolute;opacity:0;pointer-events:none}
+.plan-in{display:flex;flex-direction:column;gap:4px;padding:14px 16px;border-radius:18px;background:rgba(255,255,255,.07);border:1.5px solid var(--glass-line);font-size:13.5px}
+.plan-in b{font-size:16px}.plan-in .pill{align-self:flex-start}
+.plan input:checked+.plan-in{border-color:#F4C25B;background:rgba(244,194,91,.1);box-shadow:0 0 0 3px rgba(244,194,91,.18)}
+.plan input:focus-visible+.plan-in{outline:2px solid #F4C25B;outline-offset:2px}
