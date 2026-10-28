@@ -1,11 +1,16 @@
-/* Pages légales VillageLink */
-:root{--bg:#F5F2FA;--surface:#fff;--ink:#1E1230;--muted:#6B5C80;--accent:#4A2380;--line:#E6DFF0}
-@media (prefers-color-scheme:dark){:root{--bg:#140C1F;--surface:#20152F;--ink:#F1EBF8;--muted:#B3A6C6;--accent:#C9A9F5;--line:#33264A}}
-*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.6 "Outfit",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
-main{max-width:720px;margin:0 auto;padding:28px 18px 60px}
-.brand{display:flex;align-items:center;gap:10px;text-decoration:none;color:var(--ink);font-weight:800;font-size:20px}
-.brand span{width:36px;height:36px;border-radius:11px;background:#4A2380;color:#fff;display:grid;place-items:center}
-h1{font-size:30px;line-height:1.15;margin:22px 0 4px}h2{font-size:19px;margin:28px 0 6px}
-p,li{color:var(--ink)}.muted{color:var(--muted);font-size:14px}a{color:var(--accent)}
-section{background:var(--surface);border:1px solid var(--line);border-radius:18px;padding:4px 18px 14px;margin-top:14px}
-ul{padding-left:20px}
+/* Pages légales VillageLink — Bleu nuit */
+:root{--bg:#08163A;--surface:rgba(255,255,255,.07);--ink:#EEF2FF;--muted:#A9B6DA;--accent:#F4C25B;--line:rgba(255,255,255,.14)}
+*{box-sizing:border-box}
+html{background:#08163A}
+body{margin:0;min-height:100vh;color:var(--ink);font:16px/1.65 "Poppins",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  background:radial-gradient(circle at 90% 0%,rgba(110,150,255,.35),transparent 45%),radial-gradient(circle at 0% 60%,rgba(80,120,230,.22),transparent 50%),linear-gradient(170deg,#08163A,#122961 60%,#1A3A7E);background-attachment:fixed}
+main{max-width:740px;margin:0 auto;padding:28px 18px 60px}
+.brand{display:flex;align-items:center;gap:10px;text-decoration:none;color:#fff;font-weight:700;font-size:19px}
+.brand img{width:38px;height:38px;border-radius:11px;box-shadow:0 6px 16px rgba(2,8,30,.4)}
+h1{font-size:30px;line-height:1.15;margin:24px 0 4px;letter-spacing:-.01em}
+h2{font-size:18px;margin:22px 0 6px;color:#fff}
+p,li{color:var(--ink)}.muted{color:var(--muted);font-size:14px}
+a{color:var(--accent)}
+section{background:var(--surface);border:1px solid var(--line);border-radius:20px;padding:4px 20px 16px;margin-top:14px;-webkit-backdrop-filter:blur(12px);backdrop-filter:blur(12px);box-shadow:inset 0 1px 0 rgba(255,255,255,.08)}
+ul,ol{padding-left:20px}
+b,strong{color:#fff}
