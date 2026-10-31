@@ -1,16 +1,15 @@
-/* Pages légales VillageLink — Bleu nuit */
-:root{--bg:#08163A;--surface:rgba(255,255,255,.07);--ink:#EEF2FF;--muted:#A9B6DA;--accent:#F4C25B;--line:rgba(255,255,255,.14)}
+/* Pages légales VillageLink — design v2 : fond clair, une seule couleur de marque */
+:root{--bg:#F5F6F8;--surface:#FFFFFF;--ink:#14161B;--muted:#5B6373;--accent:#1B3A8C;--line:#D9DDE5}
+@media (prefers-color-scheme:dark){:root{--bg:#0E1320;--surface:#161D2D;--ink:#F1F3F8;--muted:#A2ABC0;--accent:#8FA9F5;--line:#2B3550}}
 *{box-sizing:border-box}
-html{background:#08163A}
-body{margin:0;min-height:100vh;color:var(--ink);font:16px/1.65 "Poppins",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
-  background:radial-gradient(circle at 90% 0%,rgba(110,150,255,.35),transparent 45%),radial-gradient(circle at 0% 60%,rgba(80,120,230,.22),transparent 50%),linear-gradient(170deg,#08163A,#122961 60%,#1A3A7E);background-attachment:fixed}
-main{max-width:740px;margin:0 auto;padding:28px 18px 60px}
-.brand{display:flex;align-items:center;gap:10px;text-decoration:none;color:#fff;font-weight:700;font-size:19px}
-.brand img{width:38px;height:38px;border-radius:11px;box-shadow:0 6px 16px rgba(2,8,30,.4)}
-h1{font-size:30px;line-height:1.15;margin:24px 0 4px;letter-spacing:-.01em}
-h2{font-size:18px;margin:22px 0 6px;color:#fff}
+html{background:var(--bg)}
+body{margin:0;min-height:100vh;color:var(--ink);background:var(--bg);font:16px/1.65 "Inter",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+main{max-width:740px;margin:0 auto;padding:28px 16px 60px}
+.brand{display:flex;align-items:center;gap:12px;text-decoration:none;color:var(--ink);font-weight:700;font-size:19px}
+.brand img{width:40px;height:40px;border-radius:10px}
+h1{font-size:28px;line-height:1.2;margin:24px 0 4px}
+h2{font-size:18px;margin:22px 0 6px}
 p,li{color:var(--ink)}.muted{color:var(--muted);font-size:14px}
-a{color:var(--accent)}
-section{background:var(--surface);border:1px solid var(--line);border-radius:20px;padding:4px 20px 16px;margin-top:14px;-webkit-backdrop-filter:blur(12px);backdrop-filter:blur(12px);box-shadow:inset 0 1px 0 rgba(255,255,255,.08)}
+a{color:var(--accent);font-weight:600}
+section{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:4px 20px 16px;margin-top:16px}
 ul,ol{padding-left:20px}
-b,strong{color:#fff}

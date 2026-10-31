@@ -10,7 +10,7 @@ transparentes, projets, annonces, réunions et discussion.
   Claude écrit, vérifie et met en ligne le code.
 - Répondre en français simple, sans jargon. À la fin de chaque changement, dire précisément
   quoi tester sur le téléphone.
-- Version actuelle : **1.10** (connexion avec Google).
+- Version actuelle : **2.0** (nouvelle interface « design v2 »).
 
 ## Stack
 
@@ -19,7 +19,7 @@ transparentes, projets, annonces, réunions et discussion.
   RLS, stockage de fichiers.
 - `supabase-js` **2.45.4** chargé depuis jsDelivr (version figée).
 - Hébergement : **GitHub Pages** depuis la branche `main`. Un push sur `main` = mise en ligne.
-- Police Outfit (Google Fonts). Thème clair par défaut, sombre ou automatique au choix.
+- Police **Inter** (Google Fonts). Thème **clair par défaut**, sombre ou automatique au choix dans « Mon profil » (`data-theme` sur `<html>`, réglage `vl:theme`).
 
 ## Fichiers
 
@@ -28,7 +28,7 @@ transparentes, projets, annonces, réunions et discussion.
 | `index.html` | Coquille de la page, politique de sécurité (CSP), chargement des scripts avec `?v=N` |
 | `config.js` | URL et clé publique (anon) Supabase. Jamais la clé `service_role` |
 | `app.js` | Toute l'application (environ 1 200 lignes) |
-| `styles.css` | Styles, variables de thème |
+| `styles.css` | Styles du design v2 : jetons (`--color-primary`…), composants, version ordinateur. **Une seule couleur de marque (#1B3A8C), aucun dégradé, aucun flou.** Les anciens noms de variables (`--accent`, `--muted`…) restent comme alias |
 | `manifest.webmanifest`, `icon*` | Installation sur l'écran d'accueil |
 | `sw.js` | Service worker du mode hors ligne (réseau d'abord, copie de secours) |
 | `confidentialite.html`, `conditions.html`, `legal.css` | Politique de confidentialité et conditions d'utilisation (exigées par Google et le Play Store) |
@@ -48,7 +48,8 @@ Accueil sans association → Cadre d'une association → Écrans → Formulaires
   **Boutons d'action** : attribut `data-act="…"`.
 - **Contexte** : `loadCtx(id)` charge l'association, les membres, les paiements et les soldes
   dans `S.ctx`. Rechargé si les données ont plus de 15 secondes.
-- Barre du bas : Accueil, Membres, Cotisations, Projets, Plus.
+- **Navigation v2** : barre du bas à 5 onglets (Accueil, Membres, Cotisations, Caisse, Vie) ; sur ordinateur (≥ 900 px) barre latérale de 272 px avec sous-pages. Le modèle est `NAV` / `SUBS` dans `app.js` : une page se rattache à un onglet par sa clé. Caisse = Mouvements, Dépenses à valider, Projets, Solidarité, Transparence, Rapport, Journal. Vie = Annonces, Discussion, Réunions, Votes, Documents (écran `vie`). Le profil (`plus`) contient Paramètres, Abonnement, Mes associations, rappels, langue, apparence.
+- **Accueil selon le rôle** (`V.home`) : président / vice-président (caisse en grand, dépenses à valider, où va l'argent), trésorier ou trésorier de section (tâches, retardataires, raccourcis, bouton « Encaisser » fixe), autres membres (leur situation de cotisation d'abord).
 - Pas de temps réel Supabase.
 - **Service worker** `sw.js` : réseau d'abord pour tout ; sans connexion, renvoie la dernière copie. Données : seulement les lectures `/rest/v1/` (GET) et les fonctions de lecture `my_memberships`, `poll_results` ; jamais les écritures. Cache des données vidé à la déconnexion (`clearOfflineData`). Changer `SHELL`/`DATA` dans `sw.js` pour forcer un nouveau cache.
 
@@ -123,6 +124,12 @@ Rôles : `president`, `vice_president`, `secretaire`, `tresorier`, `projets`, `m
   MTN Mobile Money, Virement, Autre.
 - Cotisation mensuelle : `fee_amount`, `fee_due_day`, `dues_start`. Le calcul des retards est
   dans `dues()`.
+
+## Design v2 (2.0)
+
+- Source : canevas « VillageLink v2 — Design system et maquettes » et guide de développement (jetons, composants, règles de rédaction, checklist de recette).
+- Règles : fond clair, textes ≥ 16 px, cibles tactiles ≥ 48 px, statuts toujours avec un mot (et une icône), entrées en vert avec +, sorties en rouge avec −, animations ≤ 200 ms, pas de `backdrop-filter`.
+- Ne pas réintroduire de dégradé, de verre dépoli ni de couleur de marque supplémentaire.
 
 ## Feuille de route
 

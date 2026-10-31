@@ -3,7 +3,7 @@
    - Données Supabase en lecture (/rest/v1/) : réseau d'abord ; sans connexion, la dernière réponse
      enregistrée sur ce téléphone est renvoyée. Les écritures ne sont jamais mises en cache.
    - À la déconnexion, l'application vide le cache des données (message « vl-clear »). */
-const SHELL = 'vl-shell-v1';
+const SHELL = 'vl-shell-v2';
 const DATA = 'vl-data-v1';
 
 self.addEventListener('install', e => {

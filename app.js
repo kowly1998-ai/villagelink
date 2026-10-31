@@ -61,9 +61,16 @@
   const go = h => { if (location.hash === h) route(); else location.hash = h; };
   const store = { get(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }, set(k, v) { try { localStorage.setItem(k, v); } catch (e) { /* stockage indisponible */ } } };
 
-  /* Thème : bleu nuit pour tous (1.22) */
-  const applyTheme = () => { document.documentElement.setAttribute('data-theme', 'dark'); const meta = document.querySelector('meta[name=theme-color]'); if (meta) meta.setAttribute('content', '#08163A'); };
+  /* Thème : clair par défaut (fond lisible en plein soleil) ; sombre ou automatique au choix dans « Mon profil » */
+  const THEMES = [['clair', 'Clair'], ['sombre', 'Sombre'], ['auto', 'Automatique']];
+  const themeNow = () => { const t = store.get('vl:theme'); return THEMES.some(x => x[0] === t) ? t : 'clair'; };
+  const applyTheme = () => {
+    const t = themeNow(), dark = t === 'sombre' || (t === 'auto' && window.matchMedia && matchMedia('(prefers-color-scheme: dark)').matches);
+    document.documentElement.setAttribute('data-theme', dark ? 'dark' : 'light');
+    const meta = document.querySelector('meta[name=theme-color]'); if (meta) meta.setAttribute('content', dark ? '#0E1320' : '#1B3A8C');
+  };
   applyTheme();
+  if (window.matchMedia) { try { matchMedia('(prefers-color-scheme: dark)').addEventListener('change', applyTheme); } catch (e) { /* ancien navigateur */ } }
 
   function errMsg(e) {
     const m = (e && (e.message || e.error_description)) || String(e);
@@ -114,6 +121,8 @@
     out: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M15 4h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-3M10 17l5-5-5-5M15 12H4"/></svg>',
     chat: '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round"><path d="M4 5h16v11H9l-5 4z"/><path d="M8 9.5h8M8 12.5h5" stroke-linecap="round"/></svg>',
     mic: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>',
+    bank: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 21h18M6 18v-7M10 18v-7M14 18v-7M18 18v-7M12 3l8 5H4z"/></svg>',
+    user: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M4 21c.8-4 4-6 8-6s7.2 2 8 6"/></svg>',
     heart: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round"><path d="M12 20s-7.5-4.6-9-9.3C1.9 7.2 4.1 4 7.4 4c2 0 3.6 1.1 4.6 2.7C13 5.1 14.6 4 16.6 4c3.3 0 5.5 3.2 4.4 6.7C19.5 15.4 12 20 12 20z"/></svg>',
     wa: '<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2a10 10 0 0 0-8.6 15.1L2 22l5-1.3A10 10 0 1 0 12 2zm0 18.2a8.2 8.2 0 0 1-4.2-1.2l-.3-.2-3 .8.8-2.9-.2-.3A8.2 8.2 0 1 1 12 20.2zm4.5-6.1c-.2-.1-1.5-.7-1.7-.8s-.4-.1-.6.1-.6.8-.8 1-.3.2-.5.1a6.7 6.7 0 0 1-3.3-2.9c-.3-.4.2-.4.7-1.4.1-.2 0-.3 0-.4l-.8-1.8c-.2-.5-.4-.4-.6-.4h-.5a1 1 0 0 0-.7.3 3 3 0 0 0-.9 2.2 5.2 5.2 0 0 0 1.1 2.7 11.8 11.8 0 0 0 4.5 4c1.7.7 2.3.8 3.2.6a2.7 2.7 0 0 0 1.8-1.2 2.2 2.2 0 0 0 .2-1.2c-.1-.1-.3-.2-.5-.3z"/></svg>'
   };
@@ -393,8 +402,8 @@
       <div class="between"><div class="brand"><img class="logo brand-ic" src="icon.svg" alt="" width="44" height="44"><b>VillageLink</b></div><button class="btn ghost sm" data-act="signout">Déconnexion</button></div>
       ${list.some(a => a.pending) ? '<button class="btn ghost block" data-act="reload">Actualiser : ma demande a-t-elle été validée ?</button>' : ''}
       ${list.length ? `<section class="stack"><span class="eyebrow">Mes associations</span><div class="list">${list.map(a => a.pending
-        ? `<div class="item"><div class="logo" style="width:40px;height:40px;font-size:18px">${esc(initials(a.name).slice(0, 1))}</div><div class="body"><div class="t">${esc(a.name)}</div><div class="s wrap">Demande envoyée. Un membre du bureau doit la valider.</div></div><span class="pill p-late">En attente</span></div>`
-        : `<a class="item" href="#/a/${a.association_id}"><div class="logo" style="width:40px;height:40px;font-size:18px">${esc(initials(a.name).slice(0, 1))}</div><div class="body"><div class="t">${esc(a.name)}</div><div class="s">${esc([a.village, a.residence_city].filter(Boolean).join(' · '))}</div></div><span class="chev">${I.chev}</span></a>`).join('')}</div></section>` : '<p class="lead">Bienvenue. Rejoignez votre association avec le code donné par le bureau, ou créez-la si vous en êtes le président.</p>'}
+        ? `<div class="item"><div class="logo letter">${esc(initials(a.name).slice(0, 1))}</div><div class="body"><div class="t">${esc(a.name)}</div><div class="s wrap">Demande envoyée. Un membre du bureau doit la valider.</div></div><span class="pill p-late">En attente</span></div>`
+        : `<a class="item" href="#/a/${a.association_id}"><div class="logo letter">${esc(initials(a.name).slice(0, 1))}</div><div class="body"><div class="t">${esc(a.name)}</div><div class="s">${esc([a.village, a.residence_city].filter(Boolean).join(' · '))}</div></div><span class="chev">${I.chev}</span></a>`).join('')}</div></section>` : '<p class="lead">Bienvenue. Rejoignez votre association avec le code donné par le bureau, ou créez-la si vous en êtes le président.</p>'}
       <form class="card stack" data-form="join" novalidate><h2>Rejoindre une association</h2>
         <div class="field"><label for="jn-code">Code d’invitation</label><input id="jn-code" name="code" autocapitalize="characters" placeholder="Ex. 7K2P9QXA" required></div>
         <div class="field"><label for="jn-name">Votre nom complet</label><input id="jn-name" name="full_name" autocomplete="name" required></div>
@@ -420,9 +429,46 @@
   /* ------------------------------------------------------------------
      Cadre d'une association
   ------------------------------------------------------------------ */
-  const SIDE_MORE = [['discussion', 'Discussion'], ['finances', 'Finances'], ['transparence', 'Transparence'], ['collectes', 'Collectes de solidarité'], ['sections', 'Sections'], ['reunions', 'Réunions'], ['votes', 'Votes'], ['documents', 'Documents'], ['rapport', 'Rapport mensuel'], ['annonces', 'Annonces'], ['journal', 'Journal d’activité'], ['parametres', 'Association'], ['abonnement', 'Abonnement']];
-  const TABS = [['', 'Accueil', I.home], ['membres', 'Membres', I.users], ['cotisations', 'Cotisations', I.wallet], ['projets', 'Projets', I.drop], ['plus', 'Plus', I.more]];
-  const TAB_OF = { '': '', membres: 'membres', m: 'membres', cotisations: 'cotisations', encaisser: 'cotisations', payer: 'cotisations', projets: 'projets', p: 'projets', plus: 'plus' };
+  /* Navigation v2 : 5 onglets. Chaque onglet regroupe ses pages : barre de segments sur téléphone, sous-menu à gauche sur ordinateur. */
+  const LOGO = '<svg class="logo" viewBox="0 0 40 40" role="img" aria-label="VillageLink"><rect width="40" height="40" rx="10" fill="var(--color-primary)"/><path d="M11 21 20 13l9 8v8H11z" fill="none" stroke="var(--color-on-primary)" stroke-width="2.6" stroke-linejoin="round"/><circle cx="20" cy="22.5" r="2.6" fill="var(--color-on-primary)"/></svg>';
+  const NAV = [
+    { tab: '', label: 'Accueil', icon: I.home, keys: ['home'] },
+    { tab: 'membres', label: 'Membres', icon: I.users, keys: ['membres', 'm', 'sections'] },
+    { tab: 'cotisations', label: 'Cotisations', icon: I.wallet, keys: ['cotisations', 'encaisser', 'payer'] },
+    { tab: 'caisse', label: 'Caisse', icon: I.bank, keys: ['caisse', 'finances', 'operation', 'op', 'recu', 'depenses', 'depense', 'projets', 'p', 'collectes', 'collecte', 'transparence', 'rapport', 'journal'] },
+    { tab: 'vie', label: 'Vie', icon: I.heart, keys: ['vie', 'annonces', 'discussion', 'reunions', 'r', 'votes', 'vote', 'documents'] }
+  ];
+  const SUBS = group => {
+    const A = S.ctx.assoc, nPend = can('members') ? pendingMembers().length : 0, nClaims = claimsToConfirm().length;
+    if (group === 'membres') return [{ href: 'membres', label: 'Liste', keys: ['membres', 'm'], notF: 'pending', mobile: 1 }, { href: 'sections', label: 'Sections', keys: ['sections'], mobile: 1 }].concat(nPend ? [{ href: 'membres?f=pending', label: 'Demandes', keys: ['membres'], f: 'pending', n: nPend, mobile: 1 }] : []);
+    if (group === 'cotisations') return [{ href: 'cotisations', label: 'Ce mois', keys: ['cotisations', 'encaisser', 'payer'], notF: 'claims' }].concat(nClaims ? [{ href: 'cotisations?f=claims', label: 'Paiements à confirmer', keys: ['cotisations'], f: 'claims', n: nClaims }] : []);
+    if (group === 'caisse') return [{ href: 'finances', label: 'Mouvements', keys: ['caisse', 'finances', 'operation', 'op', 'recu'], mobile: 1 }].concat(A.expense_approval || S.ctx.expPending ? [{ href: 'depenses', label: 'Dépenses à valider', keys: ['depenses', 'depense'], n: S.ctx.expPending }] : [], [{ href: 'projets', label: 'Projets', keys: ['projets', 'p'], mobile: 1 }, { href: 'collectes', label: 'Solidarité', keys: ['collectes', 'collecte'], mobile: 1 }, { href: 'transparence', label: 'Transparence', keys: ['transparence'], mobile: 1 }, { href: 'rapport', label: 'Rapport mensuel', keys: ['rapport'] }, { href: 'journal', label: 'Journal d’activité', keys: ['journal'] }]);
+    if (group === 'vie') return [['annonces', 'Annonces'], ['discussion', 'Discussion'], ['reunions', 'Réunions', ['reunions', 'r']], ['votes', 'Votes', ['votes', 'vote']], ['documents', 'Documents']].map(([h, l, k]) => ({ href: h, label: l, keys: k || [h] }));
+    return [];
+  };
+  const subOn = (s, key, q) => s.keys.includes(key) && (s.f ? q.get('f') === s.f : !(s.notF && q.get('f') === s.notF));
+  const HUB_KEYS = ['membres', 'sections', 'caisse', 'finances', 'projets', 'collectes', 'transparence'];
+  const hubTop = (grp, key, sub, q) => {
+    if (!grp || !HUB_KEYS.includes(key) || sub[1]) return '';
+    const items = SUBS(grp.tab).filter(x => x.mobile);
+    return `<h1>${grp.label}</h1><nav class="hubnav" aria-label="${grp.label}">${items.map(x => `<a href="${B()}/${x.href}" ${subOn(x, key, q) ? 'aria-current="page"' : ''}>${x.label}${x.n ? `<span class="cnt">${x.n}</span>` : ''}</a>`).join('')}</nav>`;
+  };
+  // Barre d'action fixe au-dessus de la navigation (téléphone) : l'action principale du rôle
+  const ctaFor = (key, sub) => {
+    if (isRO() || sub[1] || !canCollectAny()) return '';
+    if (key === 'home') return `<a class="btn primary" href="${B()}/encaisser">${I.plus} Encaisser une cotisation</a>`;
+    if (key === 'cotisations') return `<a class="btn ghost" href="${B()}/cotisations?f=late">Relancer</a><a class="btn primary" href="${B()}/encaisser">${I.plus} Encaisser</a>`;
+    return '';
+  };
+  // Bouton principal en haut de page sur ordinateur
+  const topAction = () => {
+    if (isRO()) return '';
+    const me = S.ctx.me;
+    if (can('approve') && S.ctx.expPending) return `<a class="btn primary sm top-act" href="${B()}/depenses">Dépenses à valider (${S.ctx.expPending})</a>`;
+    if (canCollectAny()) return `<a class="btn primary sm top-act" href="${B()}/encaisser">Encaisser une cotisation</a>`;
+    if (me && hasFees() && feeOf(me) > 0 && mmAvail().length && dues(me).remaining > 0) return `<a class="btn primary sm top-act" href="${B()}/payer">Payer ma cotisation</a>`;
+    return '';
+  };
 
   async function renderAssoc(id, sub, q) {
     if (!S.ctx || S.ctx.assoc.id !== id) {
@@ -446,21 +492,26 @@
       return;
     }
     const a = S.ctx.assoc, base = '#/a/' + a.id;
-    const tab = TAB_OF[sub[0] || ''] ?? 'plus';
-    root.innerHTML = `<div id="app">
-      <header class="top"><a class="org" href="${base}"><div class="logo" aria-hidden="true">${esc(initials(a.name).slice(0, 1))}</div>
-        <div style="min-width:0"><b>${esc(a.name)}</b><small>${esc([a.village, a.region, a.origin_country].filter(Boolean).join(' · '))}</small></div></a>
-        <a class="iconbtn" href="${base}/discussion" aria-label="Discussion">${I.chat}${S.ctx.lastMsg > Number(store.get('vl:seen:' + a.id) || 0) ? '<span class="badge-dot">•</span>' : ''}</a>
-        <a class="iconbtn" href="${base}/notifications" aria-label="Notifications${S.ctx.notif ? ' : ' + S.ctx.notif + ' nouvelle' + (S.ctx.notif > 1 ? 's' : '') : ''}">${I.bell}${S.ctx.notif ? `<span class="badge-dot num">${S.ctx.notif > 9 ? '9+' : S.ctx.notif}</span>` : ''}</a></header>
-      <main id="view"><div class="loading">Chargement…</div></main>
-      <nav class="tabs" aria-label="Navigation principale"><div class="tabs-in"><a class="side-brand" href="#/bienvenue"><img src="icon.svg" alt="" width="34" height="34"><b>VillageLink</b></a>${TABS.map(([k, l, ic]) => `<a class="tab" href="${base}${k ? '/' + k : ''}" ${tab === k ? 'aria-current="page"' : ''}><span class="ic">${ic}</span>${l}</a>`).join('')}
-        <div class="side-more"><span class="side-h">Association</span>${SIDE_MORE.map(([k, l]) => `<a href="${base}/${k}" ${sub[0] === k ? 'aria-current="page"' : ''}>${l}</a>`).join('')}</div></div></nav></div>`;
     const key = sub[0] || 'home';
+    const grp = NAV.find(n => n.keys.includes(key)) || null;
+    const tab = grp ? grp.tab : '__';
+    const cta = ctaFor(key, sub);
+    const place = [a.village, a.region, a.origin_country].filter(Boolean).join(' · ');
+    const sideGrp = n => `<div class="side-grp">${SUBS(n.tab).map(x => `<a href="${base}/${x.href}" ${subOn(x, key, q) ? 'aria-current="page"' : ''}>${x.label}${x.n ? `<span class="pill p-late num">${x.n}</span>` : ''}</a>`).join('')}</div>`;
+    const more = [['parametres', 'Paramètres', I.gear]].concat(canManageSub() ? [['abonnement', 'Abonnement', I.wallet]] : []).concat([['plus', 'Mon profil', I.user]]);
+    root.innerHTML = `<div id="app"${cta ? ' class="has-cta"' : ''}>
+      <header class="top"><a class="org" href="${base}">${LOGO}<div style="min-width:0"><b>${esc(a.name)}</b><small>${esc(place)}</small></div></a><span class="spacer"></span>${topAction()}
+        <a class="iconbtn" href="${base}/notifications" aria-label="Notifications${S.ctx.notif ? ' : ' + S.ctx.notif + ' nouvelle' + (S.ctx.notif > 1 ? 's' : '') : ''}">${I.bell}${S.ctx.notif ? `<span class="badge-dot num">${S.ctx.notif > 9 ? '9+' : S.ctx.notif}</span>` : ''}</a>
+        <a class="iconbtn" href="${base}/plus" aria-label="Mon profil">${I.user}</a></header>
+      <main id="view"><div class="loading">Chargement…</div></main>
+      ${cta ? `<div class="cta-bar"><div class="in">${cta}</div></div>` : ''}
+      <nav class="tabs" aria-label="Navigation principale"><div class="tabs-in"><a class="side-brand" href="#/bienvenue">${LOGO}<span><b>${esc(a.name)}</b><small>${esc(place)}</small></span></a>${NAV.map(n => `<a class="tab" href="${base}${n.tab ? '/' + n.tab : ''}" ${tab === n.tab ? 'aria-current="page"' : ''}><span class="ic">${n.icon}</span>${n.label}</a>${tab === n.tab && n.tab ? sideGrp(n) : ''}`).join('')}
+        <div class="side-more">${more.map(([k, l, ic]) => `<a href="${base}/${k}" ${key === k || (k === 'plus' && ['plus', 'notifications'].includes(key)) ? 'aria-current="page"' : ''}>${ic}${l}</a>`).join('')}</div></div></nav></div>`;
     const view = Object.prototype.hasOwnProperty.call(V, key) ? V[key] : V.notfound;
     const html = await view(sub, q);
     const main = $('#view');
     if (!main) return;
-    main.innerHTML = (key === 'abonnement' ? '' : subBanner()) + html;
+    main.innerHTML = (key === 'abonnement' ? '' : subBanner()) + hubTop(grp, key, sub, q) + html;
     if (Object.prototype.hasOwnProperty.call(AFTER, key)) AFTER[key](sub, q);
     window.scrollTo(0, 0);
   }
@@ -471,22 +522,13 @@
     const end = [a.paid_until, a.trial_ends].filter(Boolean).sort().pop();
     if (st === 'readonly') return `<section class="card stack sub-banner sub-bad"><b>L’essai gratuit est terminé : l’association est en lecture seule.</b><span>Tout reste consultable (caisse, historique, membres), mais on ne peut plus rien enregistrer.${canManageSub() ? '' : ' Prévenez le président.'}</span>${go}</section>`;
     if (st === 'grace') return `<section class="card stack sub-banner sub-warn"><b>${a.paid_until ? 'L’abonnement' : 'L’essai gratuit'} s’est terminé le ${dFR(end)}.</b><span>Plus que ${Math.max(daysUntil(plusDays(end, 7)), 0)} jour(s) avant le passage en lecture seule.</span>${go}</section>`;
-    if (st === 'trial' && canManageSub() && a.trial_ends && daysUntil(a.trial_ends) <= 15) return `<section class="card stack sub-banner sub-warn"><b>Essai gratuit : plus que ${daysUntil(a.trial_ends)} jour(s).</b><span>Il se termine le ${dFR(a.trial_ends)}. Choisissez une formule pour continuer sans interruption.</span>${go}</section>`;
+    if (st === 'trial' && canManageSub() && a.trial_ends && daysUntil(a.trial_ends) <= 15) return `<section class="card stack sub-banner sub-info"><b>Essai gratuit : plus que ${daysUntil(a.trial_ends)} jour(s).</b><span>Il se termine le ${dFR(a.trial_ends)}. Choisissez une formule pour continuer sans interruption.</span>${go}</section>`;
     if (st === 'active' && canManageSub() && daysUntil(a.paid_until) <= 10) return `<section class="card stack sub-banner sub-warn"><b>L’abonnement se termine le ${dFR(a.paid_until)}.</b>${go}</section>`;
     return '';
   }
   const effect = t => (t.kind === 'in' ? 1 : -1) * Number(t.amount);
   const subHead = (t, back) => `<div class="subhead"><a class="iconbtn" href="${back || B()}" aria-label="Retour">${I.back}</a><h1>${t}</h1></div>`;
   const pct = (a, b) => (b > 0 ? Math.max(0, Math.min(100, Math.round(a / b * 100))) : 0);
-  // Courbe dorée du solde (6 derniers mois)
-  const spark = pts => {
-    const W = 300, H = 46, lo = Math.min(...pts), hi = Math.max(...pts), span = hi - lo || 1;
-    const xy = pts.map((v, k) => [Math.round(k * W / (pts.length - 1)), Math.round(H - 6 - (v - lo) / span * (H - 14))]);
-    let d = `M${xy[0][0]} ${xy[0][1]}`;
-    for (let k = 1; k < xy.length; k++) { const [x0, y0] = xy[k - 1], [x1, y1] = xy[k], c = (x1 - x0) / 2; d += ` C${x0 + c} ${y0} ${x1 - c} ${y1} ${x1} ${y1}`; }
-    const [lx, ly] = xy[xy.length - 1];
-    return `<svg class="spark" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-hidden="true"><defs><linearGradient id="spk" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#F4C25B" stop-opacity=".35"/><stop offset="1" stop-color="#F4C25B" stop-opacity="0"/></linearGradient></defs><path d="${d} V${H} H0Z" fill="url(#spk)"/><path d="${d}" fill="none" stroke="#F4C25B" stroke-width="2.4" stroke-linecap="round" vector-effect="non-scaling-stroke"/><circle cx="${lx - 2}" cy="${ly}" r="3.5" fill="#fff"/></svg>`;
-  };
   const txItem = (t, reversedIds) => {
     const reversed = reversedIds && reversedIds.has(t.id);
     const title = t.category === 'Cotisations' && t.member_id ? 'Cotisation · ' + memberName(t.member_id) : t.description;
@@ -526,11 +568,13 @@
   };
 
   V.home = async () => {
-    const a = S.ctx.assoc, fee = hasFees() ? 1 : 0, cur = curYM();
-    const openPolls = await sb.from('polls').select('*').eq('association_id', a.id).eq('status', 'Ouvert').order('created_at', { ascending: false }).limit(5).then(r => (r.error ? [] : r.data || []), () => []);
-    const myVotes = openPolls.length && S.ctx.me ? await sb.from('poll_votes').select('poll_id').eq('member_id', S.ctx.me.id).then(r => (r.error ? [] : r.data || []), () => []) : [];
+    const a = S.ctx.assoc, me = S.ctx.me, cur = curYM(), fee = hasFees() ? 1 : 0;
+    const pres = ['president', 'vice_president'].includes(me.role), trea = !pres && canCollectAny();
+    const noErr = r => (r.error ? [] : r.data || []);
+    const openPolls = await sb.from('polls').select('*').eq('association_id', a.id).eq('status', 'Ouvert').order('created_at', { ascending: false }).limit(5).then(noErr, () => []);
+    const myVotes = openPolls.length && S.ctx.me ? await sb.from('poll_votes').select('poll_id').eq('member_id', S.ctx.me.id).then(noErr, () => []) : [];
     const toVote = openPolls.filter(p => pollOpen(p) && !myVotes.some(v => v.poll_id === p.id));
-    const nextMeet = await sb.from('meetings').select('*').eq('association_id', a.id).eq('status', 'Prévue').gte('starts_at', new Date(Date.now() - 6 * 3600e3).toISOString()).order('starts_at', { ascending: true }).limit(1).then(r => (r.error ? [] : r.data || []), () => []);
+    const nextMeet = await sb.from('meetings').select('*').eq('association_id', a.id).eq('status', 'Prévue').gte('starts_at', new Date(Date.now() - 6 * 3600e3).toISOString()).order('starts_at', { ascending: true }).limit(1).then(noErr, () => []);
     const [lastOps, projects, logs] = await Promise.all([
       sb.from('transactions').select('*').eq('association_id', a.id).order('created_at', { ascending: false }).order('id', { ascending: false }).limit(5).then(must),
       sb.from('projects').select('*').eq('association_id', a.id).eq('status', 'En cours').order('created_at', { ascending: false }).limit(1).then(must),
@@ -538,16 +582,17 @@
     ]);
     const lastRev = await reversedSet(lastOps);
     const since = addMonth(curYM(), -5) + '-01';
-    const recentTx = await sb.from('transactions').select('kind,amount,occurred_on').eq('association_id', a.id).gte('occurred_on', since).then(r => (r.error ? [] : r.data || []), () => []);
-    const openCols = await sb.from('collections').select('*').eq('association_id', a.id).eq('status', 'Ouverte').order('created_at', { ascending: false }).limit(3).then(r => (r.error ? [] : r.data || []), () => []);
+    const recentTx = await sb.from('transactions').select('kind,amount,occurred_on').eq('association_id', a.id).gte('occurred_on', since).then(noErr, () => []);
+    const catTot = pres ? await sb.from('v_category_totals').select('*').eq('association_id', a.id).then(noErr, () => []) : [];
+    const openCols = await sb.from('collections').select('*').eq('association_id', a.id).eq('status', 'Ouverte').order('created_at', { ascending: false }).limit(3).then(noErr, () => []);
     const colTot = openCols.length ? await colTotals(openCols.map(c => c.id)) : new Map();
     let projCard = '';
     if (projects.length) {
       const p = projects[0];
       const t = must(await sb.from('v_project_totals').select('*').eq('project_id', p.id).maybeSingle()) || { collected: 0, spent: 0 };
       const c = Number(t.collected), pc = pct(c, p.goal);
-      projCard = `<a class="card stack" href="${B()}/p/${p.id}"><div class="between"><span class="eyebrow">Projet en cours</span><span class="pill p-ok">${esc(p.status)}</span></div><h2>${esc(p.name)}</h2>
-        <div class="between"><span class="pct num">${pc}${NB}%</span><span class="muted num" style="font-size:13px">objectif ${money(p.goal)}</span></div><div class="bar"><i style="width:${pc}%"></i></div>
+      projCard = `<a class="card stack" href="${B()}/p/${p.id}"><div class="between"><span class="eyebrow">Projet en cours</span><span class="pill p-blue">${esc(p.status)}</span></div><h2>${esc(p.name)}</h2>
+        <div class="between"><span class="pct num">${pc}${NB}%</span><span class="muted num" style="font-size:14px">objectif ${money(p.goal)}</span></div><div class="bar"><i style="width:${pc}%"></i></div>
         <div class="proj-num num"><div><small>Collecté</small><b>${moneyW(c)}</b></div><div><small>Dépensé</small><b>${moneyW(t.spent)}</b></div><div><small>Reste</small><b>${moneyW(Math.max(0, p.goal - c))}</b></div></div></a>`;
     } else if (can('projects')) {
       projCard = `<a class="card stack" href="${B()}/projets/nouveau"><span class="eyebrow">Projets</span><h2>Créer le premier projet du village</h2><span class="muted">Forage, école, mosquée… Chaque projet affiche sa barre de progression.</span></a>`;
@@ -556,49 +601,65 @@
     const dueNow = act.filter(m => dueIn(m, cur));
     const collected = dueNow.reduce((s, m) => s + Math.min(paidFor(m.id, cur), feeOf(m)), 0), expected = dueNow.reduce((s, m) => s + feeOf(m), 0);
     const paidCount = dueNow.filter(m => paidFor(m.id, cur) >= feeOf(m)).length;
-    const onApp = act.filter(m => m.user_id).length;
-    const bal = S.ctx.bal;
-    const solde = bal.in - bal.out;
-    const months = [0, 1, 2, 3, 4, 5].map(k => addMonth(cur, k - 5));
-    const net = months.map(mo => recentTx.filter(t => ym(t.occurred_on) === mo).reduce((x, t) => x + effect(t), 0));
-    const pts = months.map((_, k) => solde - net.slice(k + 1).reduce((x, y) => x + y, 0));
+    const bal = S.ctx.bal, solde = bal.in - bal.out, CURL = esc(CUR_LABEL[a.currency] || 'FCFA');
     const inMonth = recentTx.filter(t => t.kind === 'in' && ym(t.occurred_on) === cur).reduce((x, t) => x + Number(t.amount), 0);
+    const outMonth = recentTx.filter(t => t.kind === 'out' && ym(t.occurred_on) === cur).reduce((x, t) => x + Number(t.amount), 0);
     const late3 = lateMembers().sort((x, y) => dues(y).remaining - dues(x).remaining).slice(0, 3);
-    const qa = (href, label, icon, main) => `<a class="qa${main ? ' main' : ''}" href="${href}"><span class="q">${icon}</span>${label}</a>`;
-    return `<div class="home-grid"><div class="home-l">
-      <section class="card hero"><div class="between"><span class="eyebrow" style="text-transform:none;letter-spacing:.01em;font-size:12.5px">Solde de la caisse</span><svg width="30" height="22" viewBox="0 0 30 22" aria-hidden="true"><rect x="1" y="1" width="28" height="20" rx="5" fill="rgba(244,194,91,.25)" stroke="#F4C25B" stroke-width="1.4"/><path d="M1 8h9M1 14h9M20 8h9M20 14h9M10 1v20M20 1v20" stroke="#F4C25B" stroke-width="1.1"/></svg></div>
-        <div class="big num">${num(solde)} <span class="cur">${esc(CUR_LABEL[a.currency] || 'FCFA')}</span></div>
-        <div class="trend num"><span class="pill p-ok">+${num(inMonth)}</span><span>reçus ce mois-ci</span></div>
-        ${spark(pts)}
-        <div class="foot num"><span>${act.length} membre${act.length > 1 ? 's' : ''} · vérifiable par tous</span><a href="${B()}/transparence">Où va l’argent</a></div></section>
-      <nav class="quick" aria-label="Actions rapides">
-        ${canCollectAny() ? qa(B() + '/encaisser', 'Encaisser', I.plus, 1) : qa(B() + '/cotisations', 'Cotisations', I.wallet, 1)}
-        ${can('spend') ? qa(B() + '/operation?type=out', 'Dépense', '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 17 17 7M9 7h8v8"/></svg>') : qa(B() + '/finances', 'Finances', I.list)}
-        ${qa(B() + '/cotisations?f=late', 'Relancer', I.chat)}
-        ${qa(B() + '/rapport', 'Rapport', I.report)}
-      </nav>
-      ${payCard()}
-      ${openCols.map(c => colCard(c, colTot.get(c.id), true)).join('')}
-      ${toVote.length && S.ctx.me.user_id ? `<a class="card poll-next" href="${B()}/vote/${toVote[0].id}"><span class="ico">${I.vote}</span><span class="body"><span class="eyebrow">Vote en cours${toVote.length > 1 ? ' · ' + toVote.length + ' votes' : ''}</span><b>${esc(toVote[0].question)}</b><span class="muted">Donnez votre avis</span></span><span class="chev">${I.chev}</span></a>` : ''}
-      ${nextMeet.length ? `<a class="card meet-next" href="${B()}/r/${nextMeet[0].id}">${dateBox(nextMeet[0].starts_at)}<span class="body"><span class="eyebrow">Prochaine réunion</span><b>${esc(nextMeet[0].title)}</b><span class="muted">${esc(hm(nextMeet[0].starts_at))}${nextMeet[0].place ? ' · ' + esc(nextMeet[0].place) : ''}</span></span><span class="chev">${I.chev}</span></a>` : ''}
-<div class="home-l2">
-      <a class="card between" href="${B()}/membres"><span><span class="t" style="font-weight:700">${act.length} membre${act.length > 1 ? 's' : ''}</span><br><span class="muted" style="font-size:13px">${onApp} sur l’application</span></span><span class="chev">${I.chev}</span></a>
-      ${S.ctx.expPending && can('approve') ? `<a class="card stack" href="${B()}/depenses" style="border-color:var(--warn)"><span class="eyebrow">À approuver</span><h2>${S.ctx.expPending} dépense${S.ctx.expPending > 1 ? 's' : ''} en attente</h2><span class="muted">Le trésorier attend votre accord avant de sortir l’argent de la caisse.</span></a>` : ''}
-      ${pendingMembers().length && can('members') ? `<a class="card stack" href="${B()}/membres?f=pending" style="border-color:var(--warn)"><span class="eyebrow">À valider</span><h2>${pendingMembers().length} demande${pendingMembers().length > 1 ? 's' : ''} d’adhésion</h2><span class="muted">Vérifiez que ce sont bien des ressortissants du village avant de valider.</span></a>` : ''}
-      ${projCard}
-      ${act.length <= 1 && can('members') ? `<a class="card stack" href="${B()}/membres/import"><span class="eyebrow">Pour bien démarrer</span><h2>Ajoutez la liste des membres</h2><span class="muted">Collez-la depuis votre cahier, Excel ou WhatsApp, ou partagez le code d’invitation.</span></a>` : ''}
-      </div></div>
-      <div class="home-r"><div class="home-light">      <section class="light" aria-label="Cotisations et mouvements"><div class="grab" aria-hidden="true"></div>
-        ${fee ? `<div class="between"><h2>${esc(pFR(cur).replace(/^./, c => c.toUpperCase()))}</h2>${late ? `<a class="link" href="${B()}/cotisations" style="color:var(--warn)">${late} en retard</a>` : paidCount >= dueNow.length ? '<span class="pill p-ok">Tous à jour</span>' : `<span class="pill p-late num">${dueNow.length - paidCount} à payer</span>`}</div>
-        <div class="between num" style="font-size:12.5px;color:var(--muted)"><span><b style="color:var(--ink)">${num(collected)}</b> sur ${money(expected)}</span><span>${paidCount}/${dueNow.length} ont payé</span></div>
-        <div class="bar thin"><i style="width:${pct(collected, expected)}%"></i></div>
-        <div>${late3.map(m => { const d = dues(m); return `<div class="item"><div class="av">${esc(initials(m.full_name))}</div><div class="body"><a class="t" href="${B()}/m/${m.id}" style="display:block;text-decoration:none">${esc(m.full_name)}</a><div class="s wrap num" style="color:var(--warn)">${catOf(m) ? esc(catOf(m).name) + ' · ' : ''}${d.late.length} mois de retard · ${money(d.remaining)}</div></div><a class="btn relance" target="_blank" rel="noopener" href="${waTo(m.phone, relanceText(m, d))}">Relancer</a></div>`; }).join('')}</div>`
-          : (can('settings') ? `<a class="between" href="${B()}/parametres" style="text-decoration:none"><span><b>Cotisation</b><br><span class="muted" style="font-size:13px">Fixez le montant mensuel pour suivre qui est à jour.</span></span><span class="chev">${I.chev}</span></a>` : '')}
-        <div class="between" style="margin-top:4px"><h2>Derniers mouvements</h2><a class="link" href="${B()}/finances">Tout voir</a></div>
-        <div id="home-ops">${lastOps.map(t => txItem(t, lastRev)).join('') || '<div class="empty">Aucune opération pour le moment. Elles s’afficheront ici avec leur date et leur heure.</div>'}</div></section></div>
-      <div class="home-act"><div class="between"><h2>Activité récente</h2><a class="link" href="${B()}/journal">Tout voir</a></div>
-      <div class="list">${logs.map(logItem).join('') || '<div class="empty">Aucune activité pour le moment.</div>'}</div></div></div></div>`;
+    const first = String(me.full_name || '').split(/\s+/)[0];
+    const monthName = pFR(cur).replace(/^./, c => c.toUpperCase());
+
+    const greet = `<div class="greet"><h1>Bonjour ${esc(first)}</h1><p>${esc(ROLES[me.role])} · ${dFR(todayISO())}</p></div>`;
+    const todo = (href, ico, t, s, warn) => `<a class="todo${warn ? ' warn' : ''}" href="${href}"><span class="ico-tile">${ico}</span><span class="body" style="flex:1;min-width:0"><span class="tt" style="display:block">${t}</span><span class="ss" style="display:block">${s}</span></span><span class="chev">${I.chev}</span></a>`;
+    // Ma cotisation (chacun voit d'abord SA situation)
+    let status = '';
+    if (hasFees() && feeOf(me) > 0 && !exemptOf(me, cur)) {
+      const d = dues(me), due = d.remaining, pend = (S.ctx.claims || []).some(c => c.member_id === me.id), canPay = mmAvail().length && !isRO();
+      if (due > 0 || pend) {
+        status = `<section class="card status-card${d.isLate ? ' late' : ''}"><div class="between"><span class="eyebrow">Ma cotisation · ${esc(monthName)}</span>${pend && !due ? '<span class="pill p-late">En attente de confirmation</span>' : d.isLate ? '<span class="pill p-late">En retard</span>' : '<span class="pill p-blue">À payer</span>'}</div>
+          ${pend && !due ? '<div class="big" style="font-size:26px">Paiement déclaré</div><span class="muted">Le trésorier va le confirmer.</span>'
+            : `<div><div class="muted" style="font-size:15px">Vous devez</div><div class="big num">${num(due)}<small>${CURL}</small></div><div class="muted" style="font-size:15px;margin-top:4px">${d.isLate ? d.late.length + ' mois en retard' : 'à payer avant le ' + dFR(cur + '-' + pad(a.fee_due_day))}</div></div>`}
+          ${canPay ? `<a class="btn primary block" href="${B()}/payer">${I.wallet} ${pend && !due ? 'Voir mon paiement' : 'Payer ma cotisation'}</a>` : (due > 0 ? '<span class="help">Remettez votre cotisation au trésorier.</span>' : '')}</section>`;
+      } else if (!pres && !trea) {
+        status = `<section class="card status-card ok"><div class="between"><span class="eyebrow">Ma cotisation · ${esc(monthName)}</span><span class="pill p-ok">À jour</span></div><div class="big" style="font-size:28px">Vous êtes à jour</div><span class="muted">Merci ! Votre cotisation est payée.</span></section>`;
+      }
+    }
+    const nClaims = isRO() ? 0 : claimsToConfirm().length;
+    const todos = [
+      nClaims ? todo(`${B()}/cotisations?f=claims`, I.clock, `${nClaims} paiement${nClaims > 1 ? 's' : ''} à confirmer`, 'Vérifiez dans votre Wave ou Orange Money.', true) : '',
+      S.ctx.expPending && can('approve') ? todo(`${B()}/depenses`, I.out, `${S.ctx.expPending} dépense${S.ctx.expPending > 1 ? 's' : ''} à valider`, 'Le trésorier attend votre accord avant de sortir l’argent.', true) : '',
+      pendingMembers().length && can('members') ? todo(`${B()}/membres?f=pending`, I.users, `${pendingMembers().length} demande${pendingMembers().length > 1 ? 's' : ''} d’adhésion`, 'Vérifiez que ce sont bien des ressortissants du village.', true) : '',
+      fee && late && (pres || trea) ? todo(`${B()}/cotisations?f=late`, I.users, `${late} membre${late > 1 ? 's n’ont' : ' n’a'} pas payé`, `Cotisation de ${esc(pFR(cur))}`, false) : '',
+      act.length <= 1 && can('members') ? todo(`${B()}/membres/import`, I.list, 'Ajoutez la liste des membres', 'Collez-la depuis votre cahier, Excel ou WhatsApp.', false) : ''
+    ].join('');
+    const monthCard = fee && (pres || trea) && dueNow.length ? `<section class="card stack"><div class="between"><span class="eyebrow">${esc(monthName)}</span><b class="num">${paidCount} sur ${dueNow.length} ont payé</b></div><div class="bar"><i style="width:${pct(collected, expected)}%"></i></div><span class="muted num" style="font-size:14px">${money(collected)} sur ${money(expected)} collectés</span></section>` : '';
+    const presCash = `<section class="card hero"><span class="eyebrow">Dans la caisse</span><div class="big num">${num(solde)} <span class="cur">${CURL}</span></div>
+      <div class="boxes num"><div><small>Entrées ce mois</small><b>+ ${money(inMonth)}</b></div><div><small>Sorties ce mois</small><b>− ${money(outMonth)}</b></div></div>
+      <div class="foot"><span>${act.length} membre${act.length > 1 ? 's' : ''} · vérifiable par tous</span><a href="${B()}/transparence">Où va l’argent</a></div></section>`;
+    const cash = `<section class="card stack"><span class="eyebrow">Dans la caisse de l’association</span><div class="status-card"><div class="big num">${num(solde)}<small>${CURL}</small></div></div><a class="link" href="${B()}/transparence">Voir où va l’argent ${I.chev}</a></section>`;
+    const outs = catTot.filter(c => c.kind === 'out' && Number(c.total) > 0).sort((x, y) => y.total - x.total).slice(0, 4), maxOut = outs[0] ? Number(outs[0].total) : 0;
+    const where = outs.length ? `<section class="card stack"><div class="between"><h2>Où va l’argent</h2><a class="link" href="${B()}/transparence">Détail</a></div><div class="cat-list">${outs.map(c => `<div><div class="l"><span>${esc(c.category)}</span><b class="num">${money(c.total)}</b></div><div class="bar"><i style="width:${pct(c.total, maxOut)}%"></i></div></div>`).join('')}</div></section>` : '';
+    const outIco = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 17 17 7M9 7h8v8"/></svg>';
+    const shortcuts = `<nav class="shortcuts" aria-label="Raccourcis"><a class="shortcut" href="${B()}/cotisations?f=late">${I.chat}Relancer</a>${can('spend') ? `<a class="shortcut" href="${B()}/operation?type=out">${outIco}Dépense</a>` : `<a class="shortcut" href="${B()}/finances">${I.list}Mouvements</a>`}<a class="shortcut" href="${B()}/rapport">${I.report}Rapport</a></nav>`;
+    const lateCard = fee && late3.length && (pres || trea) ? `<section class="card stack"><div class="between"><h2>Qui n’a pas payé</h2><a class="link" href="${B()}/cotisations?f=late">Tout voir</a></div><div class="list flat">${late3.map(m => { const d = dues(m); return `<div class="item"><div class="av">${esc(initials(m.full_name))}</div><div class="body"><a class="t" href="${B()}/m/${m.id}" style="display:block;text-decoration:none">${esc(m.full_name)}</a><div class="s wrap num">${catOf(m) ? esc(catOf(m).name) + ' · ' : ''}${d.late.length} mois de retard · ${money(d.remaining)}</div></div><a class="btn relance" target="_blank" rel="noopener" href="${waTo(m.phone, relanceText(m, d))}">Relancer</a></div>`; }).join('')}</div></section>` : '';
+    const opsCard = `<section class="card stack"><div class="between"><h2>Derniers mouvements</h2><a class="link" href="${B()}/finances">Tout voir</a></div><div class="list flat" id="home-ops">${lastOps.map(t => txItem(t, lastRev)).join('') || '<div class="empty">Aucune opération pour le moment. Elles s’afficheront ici avec leur date et leur heure.</div>'}</div></section>`;
+    const actCard = `<section class="card stack"><div class="between"><h2>Activité récente</h2><a class="link" href="${B()}/journal">Tout voir</a></div><div class="list flat">${logs.map(logItem).join('') || '<div class="empty">Aucune activité pour le moment.</div>'}</div></section>`;
+    const pollCard = toVote.length && S.ctx.me.user_id ? `<a class="card poll-next" href="${B()}/vote/${toVote[0].id}"><span class="ico">${I.vote}</span><span class="body"><span class="eyebrow">Vote en cours${toVote.length > 1 ? ' · ' + toVote.length + ' votes' : ''}</span><b>${esc(toVote[0].question)}</b><span class="muted">Donnez votre avis</span></span><span class="chev">${I.chev}</span></a>` : '';
+    const meetCard = nextMeet.length ? `<a class="card meet-next" href="${B()}/r/${nextMeet[0].id}">${dateBox(nextMeet[0].starts_at)}<span class="body"><span class="eyebrow">Prochaine réunion</span><b>${esc(nextMeet[0].title)}</b><span class="muted">${esc(hm(nextMeet[0].starts_at))}${nextMeet[0].place ? ' · ' + esc(nextMeet[0].place) : ''}</span></span><span class="chev">${I.chev}</span></a>` : '';
+    const colCards = openCols.map(c => colCard(c, colTot.get(c.id), true)).join('');
+    let L, R;
+    if (pres) { L = [greet, presCash, status, todos, where, monthCard]; R = [projCard, pollCard, meetCard, colCards, opsCard, actCard]; }
+    else if (trea) { L = [greet, status, todos, monthCard, shortcuts, pollCard, meetCard, colCards]; R = [cash, lateCard, opsCard, projCard, actCard]; }
+    else { L = [greet, status, todos, cash, pollCard, meetCard, colCards, projCard]; R = [opsCard, actCard]; }
+    return `<div class="home-grid"><div class="home-l">${L.join('')}</div><div class="home-r">${R.join('')}</div></div>`;
   };
+
+  // Vie de l'association : le point d'entrée des annonces, de la discussion, des réunions, des votes et des documents
+  V.vie = async () => {
+    const unseen = S.ctx.lastMsg > Number(store.get('vl:seen:' + S.ctx.assoc.id) || 0);
+    const rows = [['annonces', 'Annonces', 'Nouvelles du village', I.mega, ''], ['discussion', 'Discussion', 'Messages, idées et réclamations des membres', I.chat.replace('width="24" height="24" ', ''), unseen ? '<span class="pill p-blue">Nouveau</span>' : ''], ['reunions', 'Réunions', 'Convocations, présence et comptes rendus', I.cal, ''], ['votes', 'Votes', 'Décisions et sondages de l’association', I.vote, ''], ['documents', 'Documents', 'Statuts, règlement, procès-verbaux', I.doc, '']];
+    return `<h1>Vie de l’association</h1><div class="stack">${rows.map(([k, t, sx, ic, bd]) => `<a class="todo" href="${B()}/${k}"><span class="ico-tile">${ic}</span><span class="body" style="flex:1;min-width:0"><span class="tt" style="display:block">${t}</span><span class="ss" style="display:block">${sx}</span></span>${bd}<span class="chev">${I.chev}</span></a>`).join('')}</div>`;
+  };
+  V.caisse = (sub, q) => V.finances(sub, q);
 
   /* Membres ---------------------------------------------------------- */
   V.membres = async (sub, q) => {
@@ -611,7 +672,7 @@
     (S.ctx.sections || []).forEach(x => chips.push(['s:' + x.id, x.name + ' (' + activeMembers().filter(m => m.section_id === x.id).length + ')']));
     if (inactive) chips.push(['inactive', 'Retirés (' + inactive + ')']);
     if (pendingMembers().length) chips.unshift(['pending', 'Demandes (' + pendingMembers().length + ')']);
-    return `<div class="between"><h1>Membres</h1>${can('members') ? `<a class="btn primary sm" href="${B()}/membres/nouveau">+ Ajouter</a>` : ''}</div>
+    return `<div class="between"><h2>Liste des membres</h2>${can('members') ? `<a class="btn primary sm" href="${B()}/membres/nouveau">+ Ajouter</a>` : ''}</div>
       <input class="search" id="msearch" type="search" placeholder="Rechercher un nom, une ville ou un numéro" aria-label="Rechercher un membre">
       <div class="chips" role="group" aria-label="Filtrer">${chips.map(([k, l]) => `<a class="chip" href="${B()}/membres?f=${k}" aria-pressed="${f === k}" style="text-decoration:none">${l}</a>`).join('')}</div>
       <div class="list" id="mlist"></div>
@@ -776,16 +837,16 @@
     const secRows = secs.map(x => { const ms = dueNow.filter(m => m.section_id === x.id); return { x, n: ms.length, paid: ms.filter(m => paidFor(m.id, cur) >= feeOf(m)).length, got: ms.reduce((t, m) => t + Math.min(paidFor(m.id, cur), feeOf(m)), 0), late: ms.filter(m => dues(m).isLate).length }; });
     const noSec = dueNow.filter(m => !m.section_id);
     const secCard = secs.length ? `<section class="card stack"><div class="between"><h2>Par section</h2><a class="link" href="${B()}/sections">Gérer</a></div>${secRows.map(r => `<a class="between num" href="${B()}/membres?f=s:${r.x.id}" style="text-decoration:none;color:inherit;gap:10px"><span style="min-width:0"><b>${esc(r.x.name)}</b><br><span class="muted" style="font-size:13px">${r.paid}/${r.n} à jour${r.late ? ' · ' + r.late + ' en retard' : ''}</span></span><b>${money(r.got)}</b></a>`).join('')}${noSec.length ? `<span class="muted" style="font-size:13px">${noSec.length} membre${noSec.length > 1 ? 's' : ''} sans section</span>` : ''}</section>` : '';
-    return `<div class="between"><h1>Cotisations</h1>${canCollectAny() ? `<a class="btn primary sm" href="${B()}/encaisser">+ Paiement</a>` : ''}</div>
+    return `<div class="between"><h1>Cotisations</h1></div>
       ${payCard()}
-      <section class="card stack"><span class="eyebrow">Règle en vigueur</span><dl class="kv num" style="margin:0">${cats.length ? cats.map(c => `<dt>${esc(c.name)}</dt><dd>${Number(c.fee_amount) ? money(c.fee_amount) : 'Dispensé'}</dd>`).join('') + (activeMembers().some(m => !m.category_id) ? `<dt>Sans catégorie</dt><dd>${fee ? money(fee) : 'Dispensé'}</dd>` : '') : `<dt>Montant</dt><dd>${money(fee)}</dd>`}<dt>Fréquence</dt><dd>Mensuelle</dd><dt>Échéance</dt><dd>Le ${a.fee_due_day} de chaque mois</dd><dt>Suivi depuis</dt><dd>${pFR(ym(a.dues_start))}</dd></dl></section>
       <section class="card stack"><div class="between"><span class="eyebrow">${pFR(cur)}</span><span class="pill p-blue num">${paidCount}/${dueNow.length} membres</span></div>
         <div class="num" style="font-family:var(--f-display);font-size:24px;font-weight:700">${money(collected)} <span class="muted" style="font-size:14px;font-family:var(--f-body);font-weight:500">sur ${money(expected)}</span></div>
         <div class="bar"><i style="width:${pct(collected, expected)}%"></i></div>
         <span class="muted num" style="font-size:13px">Reste à encaisser, arriérés compris : ${money(activeMembers().reduce((s, m) => s + dues(m).remaining, 0))}</span></section>
-      ${secCard}
       <div class="chips" role="group" aria-label="Filtrer">${toConf.length ? `<a class="chip" style="text-decoration:none" href="${B()}/cotisations?f=claims" aria-pressed="${f === 'claims'}">À confirmer (${toConf.length})</a>` : ''}<a class="chip" style="text-decoration:none" href="${B()}/cotisations?f=late" aria-pressed="${f === 'late'}">En retard (${late.length})</a><a class="chip" style="text-decoration:none" href="${B()}/cotisations?f=recent" aria-pressed="${f === 'recent'}">Derniers paiements</a></div>
-      ${list}`;
+      ${list}
+      ${secCard}
+      <section class="card stack"><span class="eyebrow">Règle en vigueur</span><dl class="kv num" style="margin:0">${cats.length ? cats.map(c => `<dt>${esc(c.name)}</dt><dd>${Number(c.fee_amount) ? money(c.fee_amount) : 'Dispensé'}</dd>`).join('') + (activeMembers().some(m => !m.category_id) ? `<dt>Sans catégorie</dt><dd>${fee ? money(fee) : 'Dispensé'}</dd>` : '') : `<dt>Montant</dt><dd>${money(fee)}</dd>`}<dt>Fréquence</dt><dd>Mensuelle</dd><dt>Échéance</dt><dd>Le ${a.fee_due_day} de chaque mois</dd><dt>Suivi depuis</dt><dd>${pFR(ym(a.dues_start))}</dd></dl></section>`;
   };
 
   V.encaisser = async (sub, q) => {
@@ -1017,7 +1078,7 @@
     const more = rows.length > PAGE; if (more) rows.pop();
     const rset = await reversedSet(rows);
     const link = (np) => `${B()}/finances?f=${f}&p=${np}`;
-    return `${subHead('Finances', B() + '/plus')}
+    return `
       <div class="row" style="flex-wrap:wrap">${can('collect') ? `<a class="btn primary sm" href="${B()}/operation?type=in">+ Recette</a>` : ''}${can('spend') ? `<a class="btn ghost sm" href="${B()}/operation?type=out">${S.ctx.assoc.expense_approval ? '+ Proposer une dépense' : '+ Dépense'}</a>` : ''}</div>
       ${S.ctx.assoc.expense_approval || S.ctx.expPending ? `<a class="card between" href="${B()}/depenses"><span><b>Dépenses à valider</b><br><span class="muted" style="font-size:13px">${S.ctx.expPending ? S.ctx.expPending + ' en attente d’approbation' : 'Aucune en attente · voir l’historique'}</span></span>${S.ctx.expPending ? `<span class="pill p-late num">${S.ctx.expPending}</span>` : `<span class="chev">${I.chev}</span>`}</a>` : ''}
       <div class="chips" role="group" aria-label="Filtrer">${[['all', 'Tout'], ['hors', 'Hors cotisations'], ['in', 'Recettes'], ['out', 'Dépenses']].map(([k, l]) => `<a class="chip" style="text-decoration:none" href="${B()}/finances?f=${k}" aria-pressed="${f === k}">${l}</a>`).join('')}</div>
@@ -1226,7 +1287,7 @@
           ${x ? `<button class="btn danger block" type="button" data-act="delsection" data-id="${x.id}">Supprimer la section</button><p class="help">Les membres restent dans l’association, sans section.</p>` : ''}</form>`;
     }
     const act = activeMembers(), fee = hasFees() ? 1 : 0, cur = curYM();
-    return `${subHead('Sections', B() + '/plus')}
+    return `
       ${mg ? (fullPlan() ? `<a class="btn primary block" href="${B()}/sections/nouvelle">${I.plus} Nouvelle section</a>` : upsell('Les sections : Dakar, Conakry, France… chacune avec son trésorier')) : ''}
       <p class="note">Une section regroupe les membres d’une même ville ou d’un même pays. Son trésorier encaisse les cotisations de sa section ; le bureau central voit toutes les sections.</p>
       ${secs.map(x => { const ms = act.filter(m => m.section_id === x.id), tr = x.treasurer_member_id ? S.ctx.byId.get(x.treasurer_member_id) : null, paid = fee ? ms.filter(m => feeOf(m) > 0 && paidFor(m.id, cur) >= feeOf(m)).length : 0;
@@ -1255,7 +1316,7 @@
     const rows = must(await sb.from('collections').select('*').eq('association_id', S.ctx.assoc.id).order('created_at', { ascending: false }).limit(60));
     const tot = await colTotals(rows.map(c => c.id));
     const open = rows.filter(c => c.status === 'Ouverte'), closed = rows.filter(c => c.status !== 'Ouverte');
-    return `${subHead('Collectes de solidarité', B() + '/plus')}
+    return `
       ${can('collections') ? `<a class="btn primary block" href="${B()}/collectes/nouvelle">${I.plus} Lancer une collecte</a>` : ''}
       <p class="note">Un décès, une maladie, un mariage : l’association se mobilise. Chaque contribution est enregistrée par le trésorier et visible par tous, jusqu’à la remise à la famille.</p>
       ${open.map(c => colCard(c, tot.get(c.id))).join('')}
@@ -1347,14 +1408,16 @@
     const rset = await reversedSet(recent);
     const bal = S.ctx.bal;
     const bars = (kind, total) => cats.filter(c => c.kind === kind && Number(c.total) > 0).sort((x, y) => y.total - x.total).map(c => `<div class="catbar ${kind}"><span>${esc(c.category)}</span><div class="bar"><i style="width:${Math.max(2, pct(c.total, total))}%"></i></div><span class="num" style="font-weight:600">${num(c.total)}</span></div>`).join('') || '<span class="muted">Rien pour le moment.</span>';
-    return `${subHead('Transparence', B() + '/plus')}
+    return `
       <section class="card hero"><div class="eyebrow">Solde disponible</div><div class="big num">${money(bal.in - bal.out)}</div><div class="split num"><span>Recettes <b>${money(bal.in)}</b></span><span>Dépenses <b>${money(bal.out)}</b></span></div></section>
       <section class="card stack"><div class="between"><h2>Recettes</h2><span class="muted num">${money(bal.in)}</span></div>${bars('in', bal.in)}</section>
       <section class="card stack"><div class="between"><h2>Dépenses</h2><span class="muted num">${money(bal.out)}</span></div>${bars('out', bal.out)}</section>
       ${projects.length ? `<section class="card stack"><h2>Projets</h2>${projects.map(p => { const t = tot.get(p.id) || { collected: 0, spent: 0 }; return `<a class="item" href="${B()}/p/${p.id}" style="padding:8px 0"><div class="body"><div class="t">${esc(p.name)}</div><div class="s wrap num">Collecté ${money(t.collected)} · dépensé ${money(t.spent)}</div></div><span class="pill ${p.status === 'Terminé' ? 'p-blue' : 'p-ok'}">${esc(p.status)}</span></a>`; }).join('')}</section>` : ''}
       <p class="note">Chaque opération est datée et signée par la personne qui l’a saisie. Aucune opération ne peut être modifiée ni supprimée : une erreur se corrige par une contre-écriture, visible ici par tous les membres.</p>
       <div class="between"><h2>Dernières opérations</h2><a class="link" href="${B()}/finances?f=hors">Tout voir</a></div>
-      <div class="list">${recent.map(t => txItem(t, rset)).join('') || '<div class="empty">Aucune opération hors cotisations.</div>'}</div>`;
+      <div class="list">${recent.map(t => txItem(t, rset)).join('') || '<div class="empty">Aucune opération hors cotisations.</div>'}</div>
+      <a class="todo" href="${B()}/rapport"><span class="ico-tile">${I.report}</span><span class="body" style="flex:1"><span class="tt" style="display:block">Rapport mensuel</span><span class="ss" style="display:block">Le bilan du mois, en PDF ou sur WhatsApp</span></span><span class="chev">${I.chev}</span></a>
+      <a class="todo" href="${B()}/journal"><span class="ico-tile">${I.clock}</span><span class="body" style="flex:1"><span class="tt" style="display:block">Journal d’activité</span><span class="ss" style="display:block">Qui a fait quoi, et quand. Non modifiable.</span></span><span class="chev">${I.chev}</span></a>`;
   };
 
   /* Projets ---------------------------------------------------------- */
@@ -1366,7 +1429,7 @@
       sb.from('v_project_totals').select('*').then(must)
     ]);
     const tot = new Map(totals.map(x => [x.project_id, x]));
-    return `<div class="between"><h1>Projets</h1>${can('projects') ? `<a class="btn primary sm" href="${B()}/projets/nouveau">+ Projet</a>` : ''}</div>
+    return `<div class="between"><h2>Projets du village</h2>${can('projects') ? `<a class="btn primary sm" href="${B()}/projets/nouveau">+ Projet</a>` : ''}</div>
       ${projects.map(p => { const t = tot.get(p.id) || { collected: 0 }; const pc = pct(t.collected, p.goal); return `<a class="card stack" href="${B()}/p/${p.id}"><div class="between"><span class="eyebrow">${esc(p.type)}</span><span class="pill ${p.status === 'Terminé' ? 'p-blue' : p.status === 'Suspendu' ? 'p-late' : 'p-ok'}">${esc(p.status)}</span></div><h2>${esc(p.name)}</h2>
         <div class="between"><span class="pct num">${pc}${NB}%</span><span class="muted num" style="font-size:13px">${money(t.collected)} / ${money(p.goal)}</span></div><div class="bar"><i style="width:${pc}%"></i></div>
         <span class="muted" style="font-size:13px">${p.lead_member_id ? 'Responsable : ' + esc(memberName(p.lead_member_id)) + ' · ' : ''}${p.end_on ? 'fin prévue ' + dFR(p.end_on) : 'début ' + dFR(p.start_on)}</span></a>`; }).join('') || `<div class="empty">Aucun projet pour le moment.${can('projects') ? '' : ' Le président ou le responsable des projets peut en créer un.'}</div>`}`;
@@ -1437,7 +1500,7 @@
     const rows = must(await sb.from('announcements').select('*').eq('association_id', a.id).order('created_at', { ascending: false }).limit(50));
     const col = { Urgence: 'p-red', Convocation: 'p-late', 'Nouvelles du village': 'p-ok', Information: 'p-blue', Annonce: 'p-blue' };
     const by = uid => { const m = S.ctx.members.find(x => x.user_id && x.user_id === uid); return m ? m.full_name : '—'; };
-    return `${subHead('Annonces', B() + '/plus')}
+    return `${subHead('Annonces', B() + '/vie')}
       ${can('announce') ? `<form class="card stack" data-form="announce" novalidate><h2>Publier une annonce</h2>
         <div class="field"><label for="an-k">Type</label><select id="an-k" name="kind">${ANN_KINDS.map(k => opt(k, k)).join('')}</select></div>
         <div class="field"><label for="an-t">Titre</label><input id="an-t" name="title" maxlength="160"></div>
@@ -1458,11 +1521,11 @@
     if (sub[1] === 'nouvelle') return meetingForm(null);
     const a = S.ctx.assoc;
     const res = await sb.from('meetings').select('*').eq('association_id', a.id).order('starts_at', { ascending: false }).limit(100);
-    if (res.error) return `${subHead('Réunions', B() + '/plus')}<p class="note">Les réunions ne sont pas encore installées sur la base.</p>`;
+    if (res.error) return `${subHead('Réunions', B() + '/vie')}<p class="note">Les réunions ne sont pas encore installées sur la base.</p>`;
     const limit = Date.now() - 6 * 3600e3;
     const next = res.data.filter(m => m.status === 'Prévue' && new Date(m.starts_at).getTime() >= limit).reverse();
     const past = res.data.filter(m => !next.includes(m));
-    return `<div class="subhead between" style="margin-left:-8px"><span class="row" style="gap:6px"><a class="iconbtn" href="${B()}/plus" aria-label="Retour">${I.back}</a><h1>Réunions</h1></span>${can('meetings') ? `<a class="btn primary sm" href="${B()}/reunions/nouvelle">+ Convoquer</a>` : ''}</div>
+    return `<div class="subhead between" style="margin-left:-8px"><span class="row" style="gap:6px"><a class="iconbtn" href="${B()}/vie" aria-label="Retour">${I.back}</a><h1>Réunions</h1></span>${can('meetings') ? `<a class="btn primary sm" href="${B()}/reunions/nouvelle">+ Convoquer</a>` : ''}</div>
       <section class="stack"><h2>À venir</h2>${next.map(meetItem).join('') || `<div class="empty">Aucune réunion prévue.${can('meetings') ? ' Convoquez la prochaine avec le bouton « + Convoquer ».' : ''}</div>`}</section>
       ${past.length ? `<section class="stack"><h2>Passées</h2>${past.map(meetItem).join('')}</section>` : ''}`;
   };
@@ -1539,9 +1602,9 @@
   V.votes = async (sub) => {
     if (sub[1] === 'nouveau') return pollForm();
     const res = await sb.from('polls').select('*').eq('association_id', S.ctx.assoc.id).order('created_at', { ascending: false }).limit(100);
-    if (res.error) return `${subHead('Votes', B() + '/plus')}<p class="note">Les votes ne sont pas encore installés sur la base.</p>`;
+    if (res.error) return `${subHead('Votes', B() + '/vie')}<p class="note">Les votes ne sont pas encore installés sur la base.</p>`;
     const open = res.data.filter(pollOpen), closed = res.data.filter(p => !pollOpen(p));
-    return `<div class="subhead between" style="margin-left:-8px"><span class="row" style="gap:6px"><a class="iconbtn" href="${B()}/plus" aria-label="Retour">${I.back}</a><h1>Votes</h1></span>${can('polls') ? `<a class="btn primary sm" href="${B()}/votes/nouveau">+ Nouveau vote</a>` : ''}</div>
+    return `<div class="subhead between" style="margin-left:-8px"><span class="row" style="gap:6px"><a class="iconbtn" href="${B()}/vie" aria-label="Retour">${I.back}</a><h1>Votes</h1></span>${can('polls') ? `<a class="btn primary sm" href="${B()}/votes/nouveau">+ Nouveau vote</a>` : ''}</div>
       <section class="stack"><h2>En cours</h2>${open.map(pollItem).join('') || `<div class="empty">Aucun vote en cours.${can('polls') ? ' Lancez-en un avec « + Nouveau vote ».' : ''}</div>`}</section>
       ${closed.length ? `<section class="stack"><h2>Terminés</h2>${closed.map(pollItem).join('')}</section>` : ''}`;
   };
@@ -1604,9 +1667,9 @@ Abstention</textarea><p class="help">Entre 2 et 10 choix.</p></div>
     let qy = sb.from('documents').select('*').eq('association_id', a.id);
     if (f) qy = qy.eq('category', f);
     const res = await qy.order('created_at', { ascending: false }).limit(200);
-    if (res.error) return `${subHead('Documents', B() + '/plus')}<p class="note">Les documents ne sont pas encore installés sur la base.</p>`;
+    if (res.error) return `${subHead('Documents', B() + '/vie')}<p class="note">Les documents ne sont pas encore installés sur la base.</p>`;
     const mg = can('docs');
-    return `${subHead('Documents', B() + '/plus')}
+    return `${subHead('Documents', B() + '/vie')}
       <div class="chips" role="group" aria-label="Filtrer">${[['', 'Tous'], ...DOC_CATS.map(c => [c, c])].map(([k, l]) => `<a class="chip" style="text-decoration:none" href="${B()}/documents${k ? '?f=' + encodeURIComponent(k) : ''}" aria-pressed="${f === k}">${esc(l)}</a>`).join('')}</div>
       <div class="list">${res.data.map(d => `<div class="item"><span class="doc-ico" aria-hidden="true">${esc(docKind(d.mime, d.file_name))}</span><div class="body"><button class="t link-plain" data-act="opendoc" data-path="${esc(d.file_path)}">${esc(d.title)}</button><div class="s">${esc(d.category)} · ${dFR(d.created_at)} · ${fileSize(d.size)}</div></div>${mg ? `<button class="iconbtn sm-del" data-act="deldoc" data-id="${d.id}" data-path="${esc(d.file_path)}" aria-label="Retirer le document ${esc(d.title)}">✕</button>` : ''}</div>`).join('') || `<div class="empty">Aucun document${f ? ' dans cette catégorie' : ''}.${mg ? ' Ajoutez les statuts de l’association avec le formulaire ci-dessous.' : ''}</div>`}</div>
       <div id="doc-open"></div>
@@ -1649,7 +1712,7 @@ Abstention</textarea><p class="help">Entre 2 et 10 choix.</p></div>
     const title = `Rapport ${deM(M)}`;
     const wa = `${title.toUpperCase()} · ${a.name}\n\nSolde au début du mois : ${money(open)}\nEntrées : +${money(inM)}\nSorties : −${money(outM)}\nSolde à la fin du mois : ${money(close)}${fee ? `\n\nCotisations : ${paidN} membre${paidN > 1 ? 's' : ''} sur ${dueNow.length} à jour (${money(collected)} sur ${money(expected)})` : ''}${meets.length ? `\nRéunions : ${meets.length}` : ''}${polls.length ? `\nVotes clos : ${polls.length}` : ''}\n\nDétails dans l’application :\n${appLink('/a/' + a.id + '/rapport?m=' + M)}`;
     const catList = rows => rows.length ? `<dl class="kv num" style="margin:0">${rows.map(([c, v]) => `<dt>${esc(c)}</dt><dd>${money(v)}</dd>`).join('')}</dl>` : '<span class="muted">Aucune.</span>';
-    return `<div class="no-print">${subHead('Rapport mensuel', B() + '/plus')}</div>
+    return `<div class="no-print">${subHead('Rapport mensuel', B() + '/transparence')}</div>
       <div class="field no-print"><label for="rp-m">Mois</label><select id="rp-m" data-nav="rapport">${months.map(x => opt(x, pFR(x).replace(/^./, c => c.toUpperCase()), M)).join('')}</select></div>
       <div class="row no-print" style="flex-wrap:wrap"><button class="btn primary sm" data-act="print">Télécharger en PDF</button><a class="btn wa sm" target="_blank" rel="noopener" href="${waShare(wa)}">${I.wa} Partager le résumé</a></div>
       <article class="report stack">
@@ -1690,12 +1753,12 @@ Abstention</textarea><p class="help">Entre 2 et 10 choix.</p></div>
     let qy = sb.from('messages').select('*').eq('association_id', a.id);
     if (f) qy = qy.eq('kind', f);
     const res = await qy.order('id', { ascending: false }).limit(100);
-    if (res.error) return `${subHead('Discussion', B() + '/plus')}<p class="note">La discussion n’est pas encore installée sur la base. Le président doit coller le script « migration 1.2 » dans Supabase.</p>`;
+    if (res.error) return `${subHead('Discussion', B() + '/vie')}<p class="note">La discussion n’est pas encore installée sur la base. Le président doit coller le script « migration 1.2 » dans Supabase.</p>`;
     const rows = res.data.slice().reverse();
     if (rows.length) store.set('vl:seen:' + a.id, String(Math.max(...rows.map(m => m.id), S.ctx.lastMsg || 0)));
     const canHideAll = ['president', 'vice_president', 'secretaire'].includes(S.ctx.me.role);
     const pill = { Idée: 'p-ok', Réclamation: 'p-late', Message: '' };
-    return `${subHead('Discussion', B() + '/plus')}
+    return `${subHead('Discussion', B() + '/vie')}
       <div class="chips" role="group" aria-label="Filtrer">${[['', 'Tout'], ['Idée', 'Idées'], ['Réclamation', 'Réclamations']].map(([k, l]) => `<a class="chip" style="text-decoration:none" href="${B()}/discussion${k ? '?f=' + encodeURIComponent(k) : ''}" aria-pressed="${f === k}">${l}</a>`).join('')}</div>
       <div class="chat" id="chat">${rows.map(m => { const mine = m.author_id === S.user.id; return `<div class="msg ${mine ? 'mine' : ''} ${m.hidden ? 'hidden-msg' : ''}">
         <div class="msg-head"><b>${esc(mine ? 'Vous' : m.author_label)}</b>${m.kind !== 'Message' ? ` <span class="pill ${pill[m.kind]}">${esc(m.kind)}</span>` : ''}</div>
@@ -1714,24 +1777,27 @@ Abstention</textarea><p class="help">Entre 2 et 10 choix.</p></div>
     const p = Math.max(0, Math.floor(Number(q.get('p'))) || 0), size = 50;
     const rows = must(await sb.from('activity_log').select('*').eq('association_id', S.ctx.assoc.id).order('id', { ascending: false }).range(p * size, p * size + size));
     const more = rows.length > size; if (more) rows.pop();
-    return `${subHead('Journal d’activité', B() + '/plus')}<p class="note">Le journal est en lecture seule. Personne, pas même le président, ne peut effacer une ligne.</p>
+    return `${subHead('Journal d’activité', B() + '/transparence')}<p class="note">Le journal est en lecture seule. Personne, pas même le président, ne peut effacer une ligne.</p>
       <div class="list">${rows.map(logItem).join('') || '<div class="empty">Aucune activité.</div>'}</div>
       ${p || more ? `<div class="pager">${p ? `<a class="btn ghost sm" href="${B()}/journal?p=${p - 1}">← Plus récent</a>` : '<span></span>'}${more ? `<a class="btn ghost sm" href="${B()}/journal?p=${p + 1}">Plus ancien →</a>` : ''}</div>` : ''}`;
   };
 
   V.plus = async () => {
-    const items = [['discussion', 'Discussion', 'Messages, idées et réclamations des membres', I.chat.replace('width="24" height="24" ', '')], ['sections', 'Sections', 'Dakar, Conakry, France… et leurs trésoriers', I.users], ['collectes', 'Collectes de solidarité', 'Décès, maladie, mariage : s’entraider', I.heart], ['transparence', 'Transparence', 'Où va l’argent, en clair', I.eye], ['finances', 'Finances', 'Recettes, dépenses et justificatifs', I.list], ['reunions', 'Réunions', 'Convocations, présence et comptes rendus', I.cal], ['votes', 'Votes', 'Décisions et sondages de l’association', I.vote], ['documents', 'Documents', 'Statuts, règlement, procès-verbaux', I.doc], ['rapport', 'Rapport mensuel', 'Le bilan du mois, en PDF ou sur WhatsApp', I.report], ['annonces', 'Annonces', 'Nouvelles du village', I.mega], ['journal', 'Journal d’activité', 'Qui a fait quoi, et quand', I.clock], ['parametres', 'Association', 'Fiche, cotisation, code d’invitation', I.gear]];
-    if (canManageSub()) { const a = S.ctx.assoc, st = subStatus(a); items.push(['abonnement', 'Abonnement', st === 'active' ? `Formule ${(PLANS[a.plan] || {}).label || ''} jusqu’au ${dFR(a.paid_until)}` : st === 'trial' ? (a.trial_ends ? `Essai gratuit jusqu’au ${dFR(a.trial_ends)}` : 'Essai gratuit') : 'Essai terminé : activer l’abonnement', I.wallet]); }
-    return `<h1>Plus</h1>
-      <div class="rolebar"><span>Connecté en tant que <b>${esc(S.ctx.me.full_name)}</b>, ${esc(ROLES[S.ctx.me.role].toLowerCase())}</span></div>
-      <div class="list menu">${items.map(([k, t, s, ic]) => `<a class="item" href="${B()}/${k}"><span class="ico">${ic}</span><div class="body"><div class="t">${t}</div><div class="s">${s}</div></div><span class="chev">${I.chev}</span></a>`).join('')}</div>
-      <div class="list menu"><a class="item" href="#/bienvenue"><span class="ico">${I.swap}</span><div class="body"><div class="t">Mes associations</div><div class="s">Changer, rejoindre ou créer une association</div></div><span class="chev">${I.chev}</span></a>
-      <button class="item" data-act="signout"><span class="ico">${I.out}</span><div class="body"><div class="t">Se déconnecter</div><div class="s">${esc(S.user.email || '')}</div></div></button></div>
-      <section class="card stack" id="push-card"><h2>Rappels sur ce téléphone</h2><p class="muted" style="margin:0;font-size:13.5px">Recevez une notification 3 jours avant l’échéance de votre cotisation, le jour même, et en cas de retard.</p><div id="push-state" class="stack"><span class="muted">Vérification…</span></div></section>
+    const a = S.ctx.assoc, me = S.ctx.me, st = subStatus(a);
+    const items = [['parametres', 'Paramètres de l’association', 'Fiche, cotisation, numéros de paiement, code d’invitation', I.gear]];
+    if (canManageSub()) items.push(['abonnement', 'Abonnement', st === 'active' ? `Formule ${(PLANS[a.plan] || {}).label || ''} jusqu’au ${dFR(a.paid_until)}` : st === 'trial' ? (a.trial_ends ? `Essai gratuit jusqu’au ${dFR(a.trial_ends)}` : 'Essai gratuit') : 'Essai terminé : activer l’abonnement', I.wallet]);
+    items.push(['__assoc', 'Mes associations', 'Changer, rejoindre ou créer une association', I.swap]);
+    return `<h1>Mon profil</h1>
+      <div class="row"><span class="av lg" aria-hidden="true">${esc(initials(me.full_name))}</span><div style="min-width:0"><h2>${esc(me.full_name)}</h2><div class="muted" style="font-size:15px">${esc(ROLES[me.role])} · ${esc(S.user.email || '')}</div></div></div>
+      <div class="list menu">${items.map(([k, t, sx, ic]) => `<a class="item" href="${k === '__assoc' ? '#/bienvenue' : B() + '/' + k}"><span class="ico">${ic}</span><div class="body"><div class="t">${t}</div><div class="s">${sx}</div></div><span class="chev">${I.chev}</span></a>`).join('')}</div>
+      <section class="card stack" id="push-card"><h2>Rappels sur ce téléphone</h2><p class="muted" style="margin:0;font-size:15px">Recevez une notification 3 jours avant l’échéance de votre cotisation, le jour même, et en cas de retard.</p><div id="push-state" class="stack"><span class="muted">Vérification…</span></div></section>
       <section class="card stack"><h2>Langue</h2><div class="seg" role="group" aria-label="Langue">${LANGS.map(([k, l]) => `<button data-act="lang" data-lang="${k}" aria-pressed="${langNow() === k}">${l}</button>`).join('')}</div>
         <p class="help">Le pular est en essai : certains textes restent en français.</p></section>
+      <section class="card stack"><h2>Apparence</h2><div class="seg seg3" role="group" aria-label="Apparence">${THEMES.map(([k, l]) => `<button data-act="theme" data-theme="${k}" aria-pressed="${themeNow() === k}">${l}</button>`).join('')}</div>
+        <p class="help">Le mode clair se lit mieux en plein soleil.</p></section>
+      <button class="btn danger block" data-act="signout">${I.out} Se déconnecter</button>
       ${delAcctBox()}
-      <p class="muted" style="font-size:12.5px;text-align:center">VillageLink · version 1.28 · <a class="link" href="confidentialite.html">Confidentialité</a> · <a class="link" href="conditions.html">Conditions</a></p>`;
+      <p class="muted" style="font-size:13px;text-align:center">VillageLink · version 2.0 · <a class="link" href="confidentialite.html">Confidentialité</a> · <a class="link" href="conditions.html">Conditions</a></p>`;
   };
 
   /* Notifications sur le téléphone ----------------------------------- */
@@ -2224,6 +2290,7 @@ Abstention</textarea><p class="help">Entre 2 et 10 choix.</p></div>
       else if (act === 'own-act') { must(await sb.rpc('owner_activate', { p_request: Number(b.dataset.id), p_until: b.dataset.until })); toast('Abonnement activé jusqu’au ' + dFR(b.dataset.until)); renderAdmin(); }
       else if (act === 'own-rej') { const f = document.getElementById('orj-' + b.dataset.id); if (f) f.hidden = false; }
       else if (act === 'own-trial') { must(await sb.rpc('owner_set_dates', { p_assoc: b.dataset.id, p_trial_ends: plusDays([b.dataset.te, todayISO()].sort().pop(), 30), p_paid_until: b.dataset.pu || null })); toast('Essai prolongé de 30 jours'); renderAdmin(); }
+      else if (act === 'theme') { store.set('vl:theme', b.dataset.theme); applyTheme(); route(); }
       else if (act === 'lang') { store.set('vl:lang', b.dataset.lang); if (b.dataset.lang === 'fr' && langNow() === 'fr') { location.reload(); return; } applyLang(); route(); }
       else if (act === 'hidemsg') {
         if (b.dataset.confirm !== '1') { b.dataset.confirm = '1'; b.textContent = 'Confirmer le masquage'; return; }

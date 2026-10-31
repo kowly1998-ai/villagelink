@@ -1,48 +1,38 @@
-/* Page publique d'un projet VillageLink */
-:root{--bg:#F5F2FA;--surface:#fff;--ink:#1E1230;--muted:#6B5C80;--accent:#4A2380;--gold:#E0A21F;--line:#E6DFF0;--ok:#1f8a4c;--out:#b3261e}
-@media (prefers-color-scheme:dark){:root{--bg:#140C1F;--surface:#20152F;--ink:#F1EBF8;--muted:#B3A6C6;--line:#33264A;--ok:#6fd39a;--out:#ff8a80}}
+/* Page publique d'un projet VillageLink — design v2 : fond clair, une seule couleur de marque */
+:root{--bg:#F5F6F8;--surface:#fff;--ink:#14161B;--muted:#5B6373;--accent:#1B3A8C;--line:#D9DDE5;--ok:#14663A;--out:#B3261E}
+@media (prefers-color-scheme:dark){:root{--bg:#0E1320;--surface:#161D2D;--ink:#F1F3F8;--muted:#A2ABC0;--accent:#8FA9F5;--line:#2B3550;--ok:#74D69F;--out:#FF9088}}
 *{box-sizing:border-box}
-body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.55 "Outfit",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
-main{max-width:640px;margin:0 auto;padding:18px 16px 56px;display:flex;flex-direction:column;gap:14px}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.55 "Inter",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;font-variant-numeric:tabular-nums}
+main{max-width:640px;margin:0 auto;padding:18px 16px 56px;display:flex;flex-direction:column;gap:16px}
 .loading,.empty{color:var(--muted);text-align:center;padding:40px 0}
-.top{display:flex;align-items:center;gap:10px}
-.logo{width:40px;height:40px;border-radius:12px;background:var(--accent);color:#fff;display:grid;place-items:center;font-weight:800;font-size:19px;flex:none}
+.top{display:flex;align-items:center;gap:12px}
+.logo{width:40px;height:40px;border-radius:10px;background:var(--accent);color:var(--bg);display:grid;place-items:center;font-weight:700;font-size:19px;flex:none}
 .top b{display:block;font-size:16px;line-height:1.2}.top small{color:var(--muted);font-size:13px}
-.hero{background:var(--accent);color:#fff;border-radius:22px;padding:20px 18px;display:flex;flex-direction:column;gap:10px;position:relative;overflow:hidden}
-.hero .eyebrow{text-transform:uppercase;letter-spacing:.08em;font-size:12px;font-weight:700;color:#F5D58A}
-.hero h1{margin:0;font-size:27px;line-height:1.15}
-.big{font-size:34px;font-weight:800;line-height:1.1;font-variant-numeric:tabular-nums}
-.big small{font-size:15px;font-weight:500;opacity:.85}
-.bar{height:12px;border-radius:99px;background:rgba(255,255,255,.22);overflow:hidden}
-.bar i{display:block;height:100%;background:var(--gold);border-radius:99px}
+.hero{background:var(--accent);color:#fff;border-radius:16px;padding:20px;display:flex;flex-direction:column;gap:10px}
+@media (prefers-color-scheme:dark){.hero{color:#0B1226}}
+.hero .eyebrow{font-size:14px;font-weight:600;opacity:.92}
+.hero h1{margin:0;font-size:26px;line-height:1.2}
+.big{font-size:34px;font-weight:700;line-height:1.1}
+.big small{font-size:16px;font-weight:600;opacity:.9}
+.bar{height:12px;border-radius:6px;background:rgba(255,255,255,.3);overflow:hidden}
+.bar i{display:block;height:100%;background:#fff;border-radius:6px}
+@media (prefers-color-scheme:dark){.bar{background:rgba(11,18,38,.3)}.bar i{background:#0B1226}}
 .boxes{display:grid;grid-template-columns:1fr 1fr;gap:8px}
-.goal{opacity:.9;font-size:14.5px;margin-top:-4px}.goal b{white-space:nowrap}
-.boxes div{background:rgba(255,255,255,.12);border-radius:14px;padding:8px 10px;min-width:0}
-.boxes small{display:block;font-size:12px;opacity:.85}.boxes b{display:block;font-size:clamp(13px,3.8vw,16px);white-space:nowrap;font-variant-numeric:tabular-nums}
-.card{background:var(--surface);border:1px solid var(--line);border-radius:18px;padding:16px;display:flex;flex-direction:column;gap:8px}
+.goal{opacity:.95;font-size:15px;margin-top:-4px}.goal b{white-space:nowrap}
+.boxes div{background:rgba(255,255,255,.16);border-radius:12px;padding:8px 12px;min-width:0}
+.boxes small{display:block;font-size:13px;opacity:.9}.boxes b{display:block;font-size:clamp(14px,3.8vw,16px);white-space:nowrap}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:16px;display:flex;flex-direction:column;gap:8px}
 .card h2{margin:0;font-size:18px}
 .desc{white-space:pre-line;margin:0}
-.give{border:2px solid var(--gold)}
+.give{border:2px solid var(--accent)}
 .give .contact{font-size:17px;font-weight:700;word-break:break-word}
 .row{display:flex;justify-content:space-between;gap:12px;align-items:baseline;border-top:1px solid var(--line);padding-top:8px}
 .row:first-of-type{border-top:0;padding-top:0}
-.row span{min-width:0}.row b{white-space:nowrap;font-variant-numeric:tabular-nums;color:var(--out)}
-.muted{color:var(--muted);font-size:13.5px}
-.upd{border-left:3px solid var(--gold);padding-left:10px}
+.row span{min-width:0}.row b{white-space:nowrap;color:var(--out)}
+.muted{color:var(--muted);font-size:14px}
+.upd{border-left:3px solid var(--accent);padding-left:12px}
 .upd p{margin:0;white-space:pre-line}
-.btn{display:block;text-align:center;text-decoration:none;font-weight:700;border-radius:14px;padding:13px 16px;background:#25D366;color:#063;border:0;font:inherit;font-weight:700;cursor:pointer}
-.foot{text-align:center;color:var(--muted);font-size:13px}
+.btn{display:block;text-align:center;text-decoration:none;font-weight:600;border-radius:10px;padding:0 16px;min-height:52px;line-height:52px;background:#1B7F3F;color:#fff;border:0;font-size:17px;cursor:pointer}
+.foot{text-align:center;color:var(--muted);font-size:14px}
 .foot a{color:inherit}
-.pill{display:inline-block;background:rgba(255,255,255,.16);border-radius:99px;padding:2px 10px;font-size:12.5px;font-weight:600;width:max-content}
-/* Bleu nuit, effet verre (1.22) */
-:root{--bg:#08163A;--surface:rgba(255,255,255,.08);--ink:#fff;--muted:#B8C7EE;--accent:#F4C25B;--gold:#F4C25B;--line:rgba(255,255,255,.16);--ok:#86EBBB;--out:#FFA899;color-scheme:dark}
-body{font-family:"Poppins",system-ui,sans-serif;background:#08163A}
-body::before{content:"";position:fixed;inset:0;z-index:-1;background:radial-gradient(circle at 92% 2%,rgba(110,150,255,.42),transparent 38%),radial-gradient(circle at -8% 46%,rgba(80,120,230,.3),transparent 42%),linear-gradient(170deg,#08163A 0%,#122961 55%,#1E4088 100%)}
-.logo{background:#17336F;border:2px solid #F4C25B;font-weight:700}
-.hero{background:linear-gradient(135deg,rgba(255,255,255,.22),rgba(255,255,255,.05));border:1px solid rgba(255,255,255,.24);-webkit-backdrop-filter:blur(24px);backdrop-filter:blur(24px);box-shadow:0 24px 50px rgba(2,8,30,.45),inset 0 1px 0 rgba(255,255,255,.3)}
-.hero .eyebrow{color:#F4C25B}
-.big{font-weight:700}
-.bar i{background:linear-gradient(135deg,#FFD98A,#F4C25B,#E9A93A)}
-.boxes div{background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.1)}
-.card{-webkit-backdrop-filter:blur(18px);backdrop-filter:blur(18px);box-shadow:0 14px 34px rgba(2,8,30,.32)}
-.give{border:1.5px solid rgba(244,194,91,.7)}
+.pill{display:inline-block;background:rgba(255,255,255,.2);border-radius:99px;padding:2px 10px;font-size:13px;font-weight:600;width:max-content}
