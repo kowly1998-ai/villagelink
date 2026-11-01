@@ -103,6 +103,7 @@ async function browser() {
   try {
     const pages = [
       ['index.html', '/', p => p.evaluate(() => !!window.supabase), 'la bibliothèque Supabase est chargée'],
+      ['lien court', '/#/r/eb67bb47', async p => !!(await p.$('form[data-form=auth]')) && (await p.evaluate(() => location.hash)) === '#/r/eb67bb47', 'sans connexion, l’écran de connexion s’affiche et le lien est gardé'],
       ['projet.html', '/projet.html?p=page-de-test-inexistante', null, ''],
       ['confidentialite.html', '/confidentialite.html', null, ''],
       ['conditions.html', '/conditions.html', null, ''],

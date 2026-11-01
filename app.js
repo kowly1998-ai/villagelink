@@ -296,6 +296,7 @@
       if (parts[0] === 'bienvenue') return await renderWelcome();
       if (parts[0] === 'admin') return await renderAdmin();
       if (parts[0] === 'a' && parts[1]) return await renderAssoc(parts[1], parts.slice(2), q);
+      if (SHORT[parts[0]] && /^[0-9a-f]{8}$/i.test(parts[1] || '')) return await openShort(parts[0], parts[1].toLowerCase(), q);
       return await goHome();
     } catch (e) {
       console.error(e);
@@ -312,6 +313,24 @@
     if (list.length === 1) return go('#/a/' + list[0].id);
     if (last && list.some(a => a.id === last)) return go('#/a/' + last);
     return go('#/bienvenue');
+  }
+
+  // Liens courts partagés sur WhatsApp : #/r/<8 premiers caractères de l'id>. La base ne renvoie
+  // que ce que la personne a le droit de voir ; on retrouve la page complète puis on l'ouvre.
+  const SHORT = {
+    r: { table: 'meetings', cols: 'id,association_id', path: x => `/a/${x.association_id}/r/${x.id}` },
+    v: { table: 'polls', cols: 'id,association_id', path: x => `/a/${x.association_id}/vote/${x.id}` },
+    rapport: { table: 'associations', cols: 'id', path: (x, q) => `/a/${x.id}/rapport${String(q) ? '?' + q : ''}` }
+  };
+  async function openShort(kind, p, q) {
+    const t = SHORT[kind];
+    const rows = must(await sb.from(t.table).select(t.cols).gte('id', p + '-0000-0000-0000-000000000000').lte('id', p + '-ffff-ffff-ffff-ffffffffffff').limit(2));
+    if (rows.length !== 1) {
+      root.innerHTML = `<div class="auth"><section class="card stack"><h2>Lien introuvable</h2><p class="muted" style="margin:0">Cette page n’existe plus, ou elle appartient à une association dont vous n’êtes pas membre.</p><a class="btn primary" href="#/">Mes associations</a></section></div>`;
+      return;
+    }
+    history.replaceState(null, '', '#' + t.path(rows[0], q));
+    return route();
   }
 
   /* ------------------------------------------------------------------
@@ -1515,7 +1534,8 @@
   const MEET_PILL = { Prévue: 'p-blue', Tenue: 'p-ok', Annulée: 'p-red' };
   const dateBox = ts => { const x = new Date(ts); return `<span class="datebox" aria-hidden="true"><small>${MOIS[x.getMonth()].replace('.', '')}</small><b>${x.getDate()}</b></span>`; };
   const appLink = path => location.origin + location.pathname + '#' + path;
-  const convText = m => `CONVOCATION · ${S.ctx.assoc.name}\n\n${m.title}\nDate : ${dLong(m.starts_at)}${m.place ? '\nLieu : ' + m.place : ''}${m.agenda ? '\n\nOrdre du jour :\n' + m.agenda : ''}\n\nVotre présence est importante.\n${appLink('/a/' + S.ctx.assoc.id + '/r/' + m.id)}`;
+  const shortLink = (kind, id, qs) => appLink('/' + kind + '/' + String(id).slice(0, 8) + (qs ? '?' + qs : ''));
+  const convText = m => `CONVOCATION · ${S.ctx.assoc.name}\n\n${m.title}\nDate : ${dLong(m.starts_at)}${m.place ? '\nLieu : ' + m.place : ''}${m.agenda ? '\n\nOrdre du jour :\n' + m.agenda : ''}\n\nVotre présence est importante.\n${shortLink('r', m.id)}`;
   const meetItem = m => `<a class="card meet-row" href="${B()}/r/${m.id}">${dateBox(m.starts_at)}<span class="body"><b>${esc(m.title)}</b><span class="muted">${esc(hm(m.starts_at))}${m.place ? ' · ' + esc(m.place) : ''}</span></span><span class="pill ${MEET_PILL[m.status]}">${esc(m.status)}</span></a>`;
 
   V.reunions = async (sub) => {
@@ -1639,7 +1659,7 @@ Abstention</textarea><p class="help">Entre 2 et 10 choix.</p></div>
     const showRes = !!mine || !open || can('polls');
     const best = Math.max(0, ...res.map(r => Number(r.votes)));
     const canVote = open && S.ctx.me.user_id && S.ctx.me.active && !S.ctx.me.pending;
-    const link = appLink('/a/' + a.id + '/vote/' + p.id);
+    const link = shortLink('v', p.id);
     const share = open ? `VOTE · ${a.name}\n\n${p.question}\nChoix : ${opts.map(o => o.label).join(' / ')}${p.closes_at ? '\nJusqu’au ' + dLong(p.closes_at) : ''}\n\nVotez dans l’application :\n${link}`
       : `RÉSULTAT DU VOTE · ${a.name}\n\n${p.question}\n${opts.map(o => `${o.label} : ${count.get(o.id) || 0}`).join('\n')}\n\n${total} votant${total > 1 ? 's' : ''}`;
     return `${subHead('Vote', B() + '/votes')}
@@ -1711,7 +1731,7 @@ Abstention</textarea><p class="help">Entre 2 et 10 choix.</p></div>
     const tot = new Map(ptot.map(x => [x.project_id, x]));
     const months = []; for (let k = 0; k < 12; k++) months.push(addMonthYM(cur, -k));
     const title = `Rapport ${deM(M)}`;
-    const wa = `${title.toUpperCase()} · ${a.name}\n\nSolde au début du mois : ${money(open)}\nEntrées : +${money(inM)}\nSorties : −${money(outM)}\nSolde à la fin du mois : ${money(close)}${fee ? `\n\nCotisations : ${paidN} membre${paidN > 1 ? 's' : ''} sur ${dueNow.length} à jour (${money(collected)} sur ${money(expected)})` : ''}${meets.length ? `\nRéunions : ${meets.length}` : ''}${polls.length ? `\nVotes clos : ${polls.length}` : ''}\n\nDétails dans l’application :\n${appLink('/a/' + a.id + '/rapport?m=' + M)}`;
+    const wa = `${title.toUpperCase()} · ${a.name}\n\nSolde au début du mois : ${money(open)}\nEntrées : +${money(inM)}\nSorties : −${money(outM)}\nSolde à la fin du mois : ${money(close)}${fee ? `\n\nCotisations : ${paidN} membre${paidN > 1 ? 's' : ''} sur ${dueNow.length} à jour (${money(collected)} sur ${money(expected)})` : ''}${meets.length ? `\nRéunions : ${meets.length}` : ''}${polls.length ? `\nVotes clos : ${polls.length}` : ''}\n\nDétails dans l’application :\n${shortLink('rapport', a.id, 'm=' + M)}`;
     const catList = rows => rows.length ? `<dl class="kv num" style="margin:0">${rows.map(([c, v]) => `<dt>${esc(c)}</dt><dd>${money(v)}</dd>`).join('')}</dl>` : '<span class="muted">Aucune.</span>';
     return `<div class="no-print">${subHead('Rapport mensuel', B() + '/transparence')}</div>
       <div class="field no-print"><label for="rp-m">Mois</label><select id="rp-m" data-nav="rapport">${months.map(x => opt(x, pFR(x).replace(/^./, c => c.toUpperCase()), M)).join('')}</select></div>
@@ -2283,6 +2303,7 @@ Abstention</textarea><p class="help">Entre 2 et 10 choix.</p></div>
       if (act === 'auth-mode') { S.authMode = b.dataset.mode; S.authMsg = ''; renderAuth(); }
       else if (act === 'google') {
         b.disabled = true;
+        try { if (/^#\/(r|v|rapport|a)\//.test(location.hash)) sessionStorage.setItem('vl:next', location.hash); } catch (e) { /* stockage indisponible */ }
         const r = await sb.auth.signInWithOAuth({ provider: 'google', options: { redirectTo: location.origin + location.pathname } });
         if (r.error) { b.disabled = false; throw r.error; }
       }
@@ -2465,6 +2486,9 @@ Abstention</textarea><p class="help">Entre 2 et 10 choix.</p></div>
       S.session = data.session; S.user = data.session ? data.session.user : null;
     } catch (e) { console.error(e); }
     if (/^#access_token=/.test(location.hash)) history.replaceState(null, '', location.pathname + (S.session ? '#/' : ''));
+    // Retour de Google : rouvrir le lien partagé (réunion, vote…) qui avait mené à la connexion.
+    let next = ''; try { next = sessionStorage.getItem('vl:next') || ''; sessionStorage.removeItem('vl:next'); } catch (e) { /* stockage indisponible */ }
+    if (S.session && /^#?\/?$/.test(location.hash) && /^#\/(r|v|rapport|a)\/[\w\-\/?=&]+$/.test(next)) history.replaceState(null, '', location.pathname + next);
     started = true;
     route();
   })();

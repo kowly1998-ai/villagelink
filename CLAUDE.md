@@ -41,6 +41,7 @@ Démarrage → Outils → Rôles et droits → Contexte d'une association → Ro
 Accueil sans association → Cadre d'une association → Écrans → Formulaires → Événements → Session.
 
 - **Routage par hash** : `#/`, `#/bienvenue`, `#/mot-de-passe`, `#/a/<id>/<écran>`.
+- **Liens courts** (partage WhatsApp, `shortLink`) : `#/r/<8 car.>` réunion, `#/v/<8 car.>` vote, `#/rapport/<8 car. de l'asso>?m=AAAA-MM`. `openShort` retrouve la ligne (la RLS filtre) puis ouvre l'adresse complète. Lien gardé pendant la connexion Google (`sessionStorage vl:next`).
 - **Écrans** : objet `V` (`home`, `membres`/`m`, `cotisations`, `encaisser`, `finances`,
   `operation`/`op`, `transparence`, `projets`/`p`, `annonces`, `reunions`/`r`, `discussion`,
   `journal`, `plus`, `parametres`). Code à lancer après l'affichage : `AFTER[écran]`.
@@ -107,7 +108,7 @@ Rôles : `president`, `vice_president`, `secretaire`, `tresorier`, `projets`, `m
    `apply_migration` (même nom, même contenu, ex. `v1_5_...`). La base d'abord, le code ensuite.
    Ajouter aussi le même SQL à la fin de `supabase/schema.sql`, qui doit rester la photo complète de la base.
 2. **Cache** : augmenter le numéro `?v=` dans `index.html` pour chaque fichier modifié
-   (aujourd'hui `styles.css?v=36`, `config.js?v=2`, `i18n-ff.js?v=1`, `receipt.js?v=3`, `app.js?v=45`). Sinon les téléphones gardent
+   (aujourd'hui `styles.css?v=36`, `config.js?v=2`, `i18n-ff.js?v=1`, `receipt.js?v=3`, `app.js?v=46`). Sinon les téléphones gardent
    l'ancienne version.
 3. **Vérification** : `node tests/verification.cjs` (avec Playwright) contrôle l'écriture du code, les fichiers appelés et leur `?v=`, les empreintes SRI, le lecteur de reçus et l'ouverture des pages à 360 px. GitHub Actions (`.github/workflows/verification.yml`) la lance sur chaque demande de fusion et chaque envoi vers `main` : ne pas fusionner si elle est rouge. Ajouter un contrôle quand une nouvelle fonction le mérite.
 4. **Commit** sur `main`, en français : `Version X.Y : <ce qui change>`.
