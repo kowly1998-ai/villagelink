@@ -801,6 +801,7 @@
   }
   function afterImport() {
     const ta = $('#im-text'), prev = $('#im-preview'), file = $('#im-file');
+    if (!ta || !prev || !file) return;   // formulaire absent (accès réservé au bureau)
     const upd = () => { const n = parseImport(ta.value).length; prev.textContent = n ? `${n} membre${n > 1 ? 's' : ''} prêt${n > 1 ? 's' : ''} à importer.` : ''; };
     ta.addEventListener('input', upd);
     file.addEventListener('change', () => { const f = file.files[0]; if (!f) return; const r = new FileReader(); r.onload = () => { ta.value = r.result; upd(); }; r.readAsText(f); });

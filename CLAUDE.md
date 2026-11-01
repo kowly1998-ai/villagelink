@@ -27,7 +27,7 @@ transparentes, projets, annonces, réunions et discussion.
 |---|---|
 | `index.html` | Coquille de la page, politique de sécurité (CSP), chargement des scripts avec `?v=N` |
 | `config.js` | URL et clé publique (anon) Supabase. Jamais la clé `service_role` |
-| `app.js` | Toute l'application (environ 1 200 lignes) |
+| `app.js` | Toute l'application (environ 2 400 lignes) |
 | `styles.css` | Styles du design v2 : jetons (`--color-primary`…), composants, version ordinateur. **Une seule couleur de marque (#1B3A8C), aucun dégradé, aucun flou.** Les anciens noms de variables (`--accent`, `--muted`…) restent comme alias |
 | `manifest.webmanifest`, `icon*` | Installation sur l'écran d'accueil |
 | `sw.js` | Service worker du mode hors ligne (réseau d'abord, copie de secours) |
