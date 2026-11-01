@@ -32,7 +32,7 @@ transparentes, projets, annonces, réunions et discussion.
 | `manifest.webmanifest`, `icon*` | Installation sur l'écran d'accueil |
 | `sw.js` | Service worker du mode hors ligne (réseau d'abord, copie de secours) |
 | `confidentialite.html`, `conditions.html`, `legal.css` | Politique de confidentialité et conditions d'utilisation (exigées par Google et le Play Store) |
-| `supabase/schema.sql` | Structure complète de la base à la v1.4 : référence et secours |
+| `supabase/schema.sql` | Structure complète de la base, à jour (vérifiée à la 2.0.2) : référence et secours |
 
 ## Organisation de `app.js`
 
@@ -105,7 +105,7 @@ Rôles : `president`, `vice_president`, `secretaire`, `tresorier`, `projets`, `m
 1. **Base de données** : écrire la migration dans
    `supabase/migrations/<AAAAMMJJHHMMSS>_vX_Y_description.sql`, puis l'appliquer avec
    `apply_migration` (même nom, même contenu, ex. `v1_5_...`). La base d'abord, le code ensuite.
-   `supabase/schema.sql` reste la photo de départ (v1.4) ; les migrations s'ajoutent après.
+   Ajouter aussi le même SQL à la fin de `supabase/schema.sql`, qui doit rester la photo complète de la base.
 2. **Cache** : augmenter le numéro `?v=` dans `index.html` pour chaque fichier modifié
    (aujourd'hui `styles.css?v=35`, `config.js?v=2`, `i18n-ff.js?v=1`, `receipt.js?v=3`, `app.js?v=45`). Sinon les téléphones gardent
    l'ancienne version.

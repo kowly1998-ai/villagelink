@@ -1,5 +1,8 @@
 -- =====================================================================
 -- VillageLink — schéma de base de données (Supabase / PostgreSQL 15+)
+-- Photo complète de la base en ligne, vérifiée le 01/11/2026 (version 2.0.2) :
+--  tables, colonnes, règles d'accès et code des 83 fonctions identiques à la base.
+--  À compléter à chaque nouvelle migration.
 -- À coller une seule fois dans Supabase > SQL Editor > New query > Run.
 --
 -- Principes :
@@ -2744,3 +2747,19 @@ revoke insert, update, delete, truncate, references, trigger
 -- 3. Chemin de recherche figé pour les deux fonctions de garde.
 alter function public.forbid_change() set search_path = public;
 alter function public.associations_guard() set search_path = public;
+
+-- ---------------------------------------------------------------------
+-- Tâche planifiée des rappels (version 1.13b)
+-- Chaque jour à 9 h UTC (9 h à Dakar), pg_cron appelle la fonction « send-reminders ».
+-- Le secret partagé est lu dans le coffre (Vault, nom « vl_cron_secret ») : jamais dans le code.
+-- Sur une base neuve : créer d'abord ce secret dans Vault, puis lancer ce bloc.
+-- ---------------------------------------------------------------------
+create extension if not exists pg_net;
+create extension if not exists pg_cron;
+select cron.schedule('villagelink-rappels', '0 9 * * *', $c$
+  select net.http_post(
+    url := 'https://ncghmfwfnzgdddnqgnnl.supabase.co/functions/v1/send-reminders',
+    headers := jsonb_build_object('Content-Type', 'application/json',
+      'x-cron-secret', (select decrypted_secret from vault.decrypted_secrets where name = 'vl_cron_secret')),
+    body := '{}'::jsonb, timeout_milliseconds := 60000);
+$c$);
