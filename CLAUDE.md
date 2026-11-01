@@ -107,7 +107,7 @@ Rôles : `president`, `vice_president`, `secretaire`, `tresorier`, `projets`, `m
    `apply_migration` (même nom, même contenu, ex. `v1_5_...`). La base d'abord, le code ensuite.
    `supabase/schema.sql` reste la photo de départ (v1.4) ; les migrations s'ajoutent après.
 2. **Cache** : augmenter le numéro `?v=` dans `index.html` pour chaque fichier modifié
-   (aujourd'hui `styles.css?v=17`, `config.js?v=2`, `app.js?v=18`). Sinon les téléphones gardent
+   (aujourd'hui `styles.css?v=35`, `config.js?v=2`, `i18n-ff.js?v=1`, `receipt.js?v=3`, `app.js?v=45`). Sinon les téléphones gardent
    l'ancienne version.
 3. **Commit** sur `main`, en français : `Version X.Y : <ce qui change>`.
 4. **Push** : GitHub Pages met en ligne en quelques minutes.
@@ -149,5 +149,5 @@ Rôles : `president`, `vice_president`, `secretaire`, `tresorier`, `projets`, `m
 - **Espaces parasites dans la base** : le code des fonctions stocké dans Supabase commence par des
   centaines d'espaces sur chaque ligne. Sans effet sur le fonctionnement, mais illisible : lire
   plutôt `supabase/schema.sql`, où il est ré-aligné.
-- **Pas de hash d'intégrité (SRI)** sur le script `supabase-js` chargé depuis jsDelivr. À ajouter.
+- **Empreintes d'intégrité (SRI)** sur `supabase-js` (`index.html`) et `tesseract.js` (`TESS_SRI` dans `receipt.js`). Si une version change, recalculer : `curl -sL <url> | openssl dgst -sha384 -binary | openssl base64 -A`, et changer `SHELL` dans `sw.js`. Le moteur interne de Tesseract (worker, wasm, langue) reste chargé sans empreinte.
 - `app.js` est long : faire des modifications ciblées, ne jamais le réécrire en entier.
