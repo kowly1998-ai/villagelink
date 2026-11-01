@@ -90,12 +90,14 @@
   }
 
   // OCR sur le téléphone, avec Tesseract chargé depuis jsDelivr à la première utilisation.
+  // Empreinte du fichier (SRI) : à recalculer si la version change.
   const TESS = 'https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js';
+  const TESS_SRI = 'sha384-GJqSu7vueQ9qN0E9yLPb3Wtpd7OrgK8KmYzC8T1IysG1bcvxvIO4qtYR/D3A991F';
   let loading = null;
   function loadTesseract() {
     if (root.Tesseract) return Promise.resolve(root.Tesseract);
     if (!loading) loading = new Promise((res, rej) => {
-      const s = document.createElement('script'); s.src = TESS; s.async = true;
+      const s = document.createElement('script'); s.src = TESS; s.integrity = TESS_SRI; s.crossOrigin = 'anonymous'; s.async = true;
       s.onload = () => root.Tesseract ? res(root.Tesseract) : rej(new Error('Lecteur indisponible'));
       s.onerror = () => { loading = null; rej(new Error('Impossible de charger le lecteur de reçus. Vérifiez la connexion internet.')); };
       document.head.appendChild(s);
