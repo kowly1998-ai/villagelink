@@ -109,9 +109,10 @@ Rôles : `president`, `vice_president`, `secretaire`, `tresorier`, `projets`, `m
 2. **Cache** : augmenter le numéro `?v=` dans `index.html` pour chaque fichier modifié
    (aujourd'hui `styles.css?v=35`, `config.js?v=2`, `i18n-ff.js?v=1`, `receipt.js?v=3`, `app.js?v=45`). Sinon les téléphones gardent
    l'ancienne version.
-3. **Commit** sur `main`, en français : `Version X.Y : <ce qui change>`.
-4. **Push** : GitHub Pages met en ligne en quelques minutes.
-5. Dire à Alpha quoi tester sur son téléphone.
+3. **Vérification** : `node tests/verification.cjs` (avec Playwright) contrôle l'écriture du code, les fichiers appelés et leur `?v=`, les empreintes SRI, le lecteur de reçus et l'ouverture des pages à 360 px. GitHub Actions (`.github/workflows/verification.yml`) la lance sur chaque demande de fusion et chaque envoi vers `main` : ne pas fusionner si elle est rouge. Ajouter un contrôle quand une nouvelle fonction le mérite.
+4. **Commit** sur `main`, en français : `Version X.Y : <ce qui change>`.
+5. **Push** : GitHub Pages met en ligne en quelques minutes.
+6. Dire à Alpha quoi tester sur son téléphone.
 
 ## Conventions produit
 
