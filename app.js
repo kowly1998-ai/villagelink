@@ -155,6 +155,7 @@
   const plusDays = (iso, n) => { const d = new Date(iso + 'T12:00:00Z'); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };
   const daysUntil = iso => Math.round((Date.parse(iso + 'T12:00:00Z') - Date.parse(todayISO() + 'T12:00:00Z')) / 864e5);
   const subStatus = a => {
+    if (a && a.blocked_at) return 'blocked';
     if (!a || !a.trial_ends) return 'trial';
     const t = todayISO();
     if (a.paid_until && a.paid_until >= t) return 'active';
@@ -165,7 +166,7 @@
   // Formule Village : sans sections, catégories ni plusieurs monnaies, 50 membres au plus. Essai et Diaspora : tout.
   const fullPlan = () => !S.ctx || S.ctx.assoc.plan !== 'association';
   const upsell = what => canManageSub() && !IS_TWA ? `<a class="card stack upsell" href="${B()}/abonnement" style="text-decoration:none"><span class="eyebrow">Formule Diaspora</span><b>${what}</b><span class="muted" style="font-size:13.5px">Disponible avec la formule Diaspora : toutes les fonctionnalités, jusqu’à 200 membres.</span></a>` : `<p class="note">${what} : disponible avec la formule Diaspora. Parlez-en au président.</p>`;
-  const isRO = () => !!(S.ctx && subStatus(S.ctx.assoc) === 'readonly');
+  const isRO = () => !!(S.ctx && ['readonly', 'blocked'].includes(subStatus(S.ctx.assoc)));
   const canManageSub = () => !!(S.ctx && S.ctx.me && ['president', 'vice_president', 'tresorier'].includes(S.ctx.me.role));
   const can = a => !!(S.ctx && S.ctx.me && CAN[a].includes(S.ctx.me.role)) && !isRO();
   // Trésorier de section : encaisse les cotisations des membres de sa section seulement.
@@ -355,13 +356,13 @@
     if (r.error) { root.innerHTML = `<div class="auth"><section class="card stack"><h2>Accès réservé</h2><p class="muted" style="margin:0">Ce tableau de bord est réservé au propriétaire de VillageLink.</p><a class="btn primary" href="#/bienvenue">Mes associations</a></section></div>`; return; }
     const d = r.data, N = n => num(n), pc = (a, b) => (b ? Math.round(a / b * 100) : 0);
     const subs = await sb.rpc('owner_subscriptions').then(x => x.error ? null : x.data, () => null);
-    const SUBST = { trial: ['p-blue', 'Essai'], active: ['p-ok', 'Abonnée'], grace: ['p-late', 'Grâce'], readonly: ['p-red', 'Lecture seule'] };
+    const SUBST = { trial: ['p-blue', 'Essai'], active: ['p-ok', 'Abonnée'], grace: ['p-late', 'Grâce'], readonly: ['p-red', 'Lecture seule'], blocked: ['p-red', 'Bloquée'] };
     const untilFor = q => { const base = [(subs.assocs.find(x => x.id === q.association_id) || {}).paid_until, todayISO()].filter(Boolean).sort().pop(); const dd = new Date(base + 'T12:00:00Z'); dd.setUTCMonth(dd.getUTCMonth() + q.months); return dd.toISOString().slice(0, 10); };
     const subsHtml = sd => `<section class="card stack"><h2>Abonnements</h2>
         ${sd.requests.length ? sd.requests.map(q => `<div class="stack" style="gap:8px;border-bottom:1px solid var(--line);padding-bottom:12px"><b>${esc(q.assoc_name)}</b><span class="num">${money(q.amount, 'XOF')} · formule ${esc((PLANS[q.plan] || {}).label || q.plan)} · ${q.months === 12 ? '1 an' : '1 mois'}</span><span class="muted" style="font-size:13px">Déclaré le ${dFR(localDay(q.created_at))} par ${esc(q.created_label)}${q.reference ? ' · réf. ' + esc(q.reference) : ''}</span><span class="help" style="margin:0">Vérifiez dans votre application Wave que ce paiement est bien arrivé avant d’activer.</span>
           <div class="row" style="flex-wrap:wrap"><button class="btn primary sm" data-act="own-act" data-id="${q.id}" data-until="${untilFor(q)}">Activer jusqu’au ${dFR(untilFor(q))}</button><button class="btn ghost sm" data-act="own-rej" data-id="${q.id}">Refuser</button></div>
           <form class="stack" data-form="ownreject" data-id="${q.id}" id="orj-${q.id}" hidden novalidate><input name="note" placeholder="Motif (ex. rien reçu sur Wave)"><p class="err" hidden></p><button class="btn danger sm" type="submit">Refuser ce paiement</button></form></div>`).join('') : '<span class="muted">Aucun paiement à valider.</span>'}
-        <div class="list">${sd.assocs.map(x => { const [c, l] = SUBST[x.status] || ['p-blue', x.status]; return `<div class="item"><div class="body"><div class="t">${esc(x.name)}</div><div class="s wrap num">${N(x.members)} membres · ${x.paid_until ? 'payé jusqu’au ' + dFR(x.paid_until) : 'essai jusqu’au ' + dFR(x.trial_ends)}</div><button class="btn ghost sm" style="margin-top:6px" data-act="own-trial" data-id="${x.id}" data-te="${x.trial_ends}" data-pu="${x.paid_until || ''}">+30 jours d’essai</button></div><span class="pill ${c}">${l}</span></div>`; }).join('')}</div></section>`;
+        <div class="list">${sd.assocs.map(x => { const [c, l] = SUBST[x.status] || ['p-blue', x.status]; return `<div class="item"><div class="body"><div class="t">${esc(x.name)}</div><div class="s wrap num">${N(x.members)} membres · ${x.paid_until ? 'payé jusqu’au ' + dFR(x.paid_until) : 'essai jusqu’au ' + dFR(x.trial_ends)}</div><button class="btn ghost sm" style="margin-top:6px" data-act="own-trial" data-id="${x.id}" data-te="${x.trial_ends}" data-pu="${x.paid_until || ''}">+30 jours d’essai</button> ${x.status === 'blocked' ? `<button class="btn primary sm" style="margin-top:6px" data-act="own-unblock" data-id="${x.id}">Débloquer</button><div class="s wrap">Motif : ${esc(x.blocked_reason || '')}</div>` : `<button class="btn ghost sm" style="margin-top:6px" data-act="own-block" data-id="${x.id}">Bloquer</button><form class="stack" data-form="ownblock" data-id="${x.id}" id="obk-${x.id}" hidden novalidate><input name="note" placeholder="Motif (ex. abonnement non payé)"><p class="err" hidden></p><button class="btn danger sm" type="submit">Bloquer cette association</button></form>`}</div><span class="pill ${c}">${l}</span></div>`; }).join('')}</div></section>`;
     const wk = d.weekly || [], maxA = Math.max(1, ...wk.map(w => w.users));
     const ago = ts => { if (!ts) return 'jamais'; const h = (Date.now() - new Date(ts)) / 3600e3; return h < 1 ? 'il y a moins d’1 h' : h < 24 ? `il y a ${Math.round(h)} h` : `il y a ${Math.round(h / 24)} j`; };
     const health = a => { const h = a.last_activity ? (Date.now() - new Date(a.last_activity)) / 864e5 : 999; return h <= 7 ? ['p-ok', 'Active'] : h <= 30 ? ['p-late', 'Ralentit'] : ['p-red', 'Endormie']; };
@@ -520,6 +521,7 @@
   function subBanner() {
     const a = S.ctx.assoc, st = subStatus(a), go = canManageSub() && !IS_TWA ? `<a class="btn primary sm" href="${B()}/abonnement">${st === 'active' ? 'Renouveler' : 'Activer l’abonnement'}</a>` : '';
     const end = [a.paid_until, a.trial_ends].filter(Boolean).sort().pop();
+    if (st === 'blocked') return `<section class="card stack sub-banner sub-bad"><b>Association suspendue par VillageLink.</b><span>Motif : ${esc(a.blocked_reason || 'non précisé')}. Tout reste consultable, mais on ne peut plus rien enregistrer. Écrivez à contact@villagelinkafrica.com.</span></section>`;
     if (st === 'readonly') return `<section class="card stack sub-banner sub-bad"><b>L’essai gratuit est terminé : l’association est en lecture seule.</b><span>Tout reste consultable (caisse, historique, membres), mais on ne peut plus rien enregistrer.${canManageSub() ? '' : ' Prévenez le président.'}</span>${go}</section>`;
     if (st === 'grace') return `<section class="card stack sub-banner sub-warn"><b>${a.paid_until ? 'L’abonnement' : 'L’essai gratuit'} s’est terminé le ${dFR(end)}.</b><span>Plus que ${Math.max(daysUntil(plusDays(end, 7)), 0)} jour(s) avant le passage en lecture seule.</span>${go}</section>`;
     if (st === 'trial' && canManageSub() && a.trial_ends && daysUntil(a.trial_ends) <= 15) return `<section class="card stack sub-banner sub-info"><b>Essai gratuit : plus que ${daysUntil(a.trial_ends)} jour(s).</b><span>Il se termine le ${dFR(a.trial_ends)}. Choisissez une formule pour continuer sans interruption.</span>${go}</section>`;
@@ -2226,6 +2228,11 @@ Abstention</textarea><p class="help">Entre 2 et 10 choix.</p></div>
       must(await sb.rpc('owner_reject', { p_request: Number(form.dataset.id), p_note: note }));
       toast('Demande refusée'); renderAdmin();
     },
+    async ownblock(fd, form) {
+      const note = val(fd, 'note'); if (note.length < 3) fail('Indiquez le motif.');
+      must(await sb.rpc('owner_block', { p_assoc: form.dataset.id, p_reason: note }));
+      toast('Association bloquée'); renderAdmin();
+    },
     async claim(fd) {
       const me = S.ctx.me, period = val(fd, 'period'), amount = Math.round(Number(val(fd, 'amount')));
       if (!/^\d{4}-\d{2}$/.test(period)) fail('Choisissez le mois à payer.');
@@ -2290,6 +2297,8 @@ Abstention</textarea><p class="help">Entre 2 et 10 choix.</p></div>
       else if (act === 'reload') location.reload();
       else if (act === 'own-act') { must(await sb.rpc('owner_activate', { p_request: Number(b.dataset.id), p_until: b.dataset.until })); toast('Abonnement activé jusqu’au ' + dFR(b.dataset.until)); renderAdmin(); }
       else if (act === 'own-rej') { const f = document.getElementById('orj-' + b.dataset.id); if (f) f.hidden = false; }
+      else if (act === 'own-block') { const f = document.getElementById('obk-' + b.dataset.id); if (f) f.hidden = false; }
+      else if (act === 'own-unblock') { must(await sb.rpc('owner_unblock', { p_assoc: b.dataset.id })); toast('Association débloquée'); renderAdmin(); }
       else if (act === 'own-trial') { must(await sb.rpc('owner_set_dates', { p_assoc: b.dataset.id, p_trial_ends: plusDays([b.dataset.te, todayISO()].sort().pop(), 30), p_paid_until: b.dataset.pu || null })); toast('Essai prolongé de 30 jours'); renderAdmin(); }
       else if (act === 'theme') { store.set('vl:theme', b.dataset.theme); applyTheme(); route(); }
       else if (act === 'lang') { store.set('vl:lang', b.dataset.lang); if (b.dataset.lang === 'fr' && langNow() === 'fr') { location.reload(); return; } applyLang(); route(); }
