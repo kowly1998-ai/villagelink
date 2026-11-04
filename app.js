@@ -914,12 +914,14 @@
     const n = activeMembers().length, rec = n > PLANS.association.max ? 'federation' : 'association';
     const state = st === 'active' ? `<span class="pill p-ok">Abonnement actif</span><h2>Formule ${esc((PLANS[a.plan] || {}).label || '')}</h2><span class="muted">Jusqu’au ${dFR(a.paid_until)}</span>`
       : st === 'trial' ? `<span class="pill p-blue">Essai gratuit</span><h2>${a.trial_ends ? 'Jusqu’au ' + dFR(a.trial_ends) : 'En cours'}</h2>${a.trial_ends ? `<span class="muted">Plus que ${daysUntil(a.trial_ends)} jour(s). Toutes les fonctions sont incluses.</span>` : ''}`
+      : st === 'blocked' ? `<span class="pill p-red">Suspendue</span><h2>Association suspendue par VillageLink</h2><span class="muted">Motif : ${esc(a.blocked_reason || 'non précisé')}. Tout reste consultable. Écrivez à contact@villagelinkafrica.com pour la rouvrir.</span>`
       : st === 'grace' ? '<span class="pill p-late">Essai terminé</span><h2>Quelques jours de grâce</h2><span class="muted">Activez l’abonnement pour éviter la lecture seule.</span>'
       : '<span class="pill p-red">Lecture seule</span><h2>L’essai est terminé</h2><span class="muted">Tout reste consultable. L’abonnement rouvre l’enregistrement des paiements, membres, réunions…</span>';
     const ST = { pending: ['p-late', 'En attente de VillageLink'], activated: ['p-ok', 'Activé'], rejected: ['p-red', 'Refusé'] };
     const hist = reqs.length ? `<section class="stack"><h2>Paiements d’abonnement</h2><div class="list">${reqs.map(r => `<div class="item" style="align-items:flex-start"><div class="body"><div class="t num" style="white-space:normal">${money(r.amount, 'XOF')} · formule ${esc(PLANS[r.plan].label)} · ${r.months === 12 ? '1 an' : '1 mois'}</div><div class="s wrap">${dFR(localDay(r.created_at))} · ${esc(r.created_label)}${r.reference ? ' · réf. ' + esc(r.reference) : ''}${r.note ? '<br>Motif : ' + esc(r.note) : ''}</div></div><span class="pill ${ST[r.status][0]}">${ST[r.status][1]}</span></div>`).join('')}</div></section>` : '';
     const plans = Object.entries(PLANS).map(([k, p]) => `<label class="plan${k === rec ? ' rec' : ''}"><input type="radio" name="plan" value="${k}" ${k === rec ? 'checked' : ''}><span class="plan-in"><b>${p.label}</b>${k === rec ? '<span class="pill p-ok">Conseillée</span>' : ''}<span class="muted">Jusqu’à ${p.max} membres${k === 'federation' ? ' · toutes les fonctionnalités' : ' · sans sections, catégories ni plusieurs monnaies'}</span><span class="num"><b>${money(p.month, 'XOF')}</b> / mois</span><span class="num muted">ou ${money(p.year, 'XOF')} / an (2 mois offerts)</span></span></label>`).join('');
-    const pay = IS_TWA ? '<p class="note" style="margin:0">L’abonnement se gère depuis le site de VillageLink. Contactez-nous : contact@villagelinkafrica.com</p>'
+    const pay = st === 'blocked' ? '<p class="note" style="margin:0">L’abonnement ne peut pas être payé tant que l’association est suspendue. Contactez VillageLink : contact@villagelinkafrica.com</p>'
+      : IS_TWA ? '<p class="note" style="margin:0">L’abonnement se gère depuis le site de VillageLink. Contactez-nous : contact@villagelinkafrica.com</p>'
       : pend ? `<p class="note" style="margin:0">Votre paiement de ${money(pend.amount, 'XOF')} est en attente : VillageLink l’active dès qu’il l’a reçu, en général dans la journée.</p>`
       : `<form class="stack" data-form="subreq" novalidate>
         <div class="plans">${plans}</div>
@@ -1788,7 +1790,7 @@ Abstention</textarea><p class="help">Entre 2 et 10 choix.</p></div>
   V.plus = async () => {
     const a = S.ctx.assoc, me = S.ctx.me, st = subStatus(a);
     const items = [['parametres', 'Paramètres de l’association', 'Fiche, cotisation, numéros de paiement, code d’invitation', I.gear]];
-    if (canManageSub()) items.push(['abonnement', 'Abonnement', st === 'active' ? `Formule ${(PLANS[a.plan] || {}).label || ''} jusqu’au ${dFR(a.paid_until)}` : st === 'trial' ? (a.trial_ends ? `Essai gratuit jusqu’au ${dFR(a.trial_ends)}` : 'Essai gratuit') : 'Essai terminé : activer l’abonnement', I.wallet]);
+    if (canManageSub()) items.push(['abonnement', 'Abonnement', st === 'blocked' ? 'Association suspendue par VillageLink' : st === 'active' ? `Formule ${(PLANS[a.plan] || {}).label || ''} jusqu’au ${dFR(a.paid_until)}` : st === 'trial' ? (a.trial_ends ? `Essai gratuit jusqu’au ${dFR(a.trial_ends)}` : 'Essai gratuit') : 'Essai terminé : activer l’abonnement', I.wallet]);
     items.push(['__assoc', 'Mes associations', 'Changer, rejoindre ou créer une association', I.swap]);
     return `<h1>Mon profil</h1>
       <div class="row"><span class="av lg" aria-hidden="true">${esc(initials(me.full_name))}</span><div style="min-width:0"><h2>${esc(me.full_name)}</h2><div class="muted" style="font-size:15px">${esc(ROLES[me.role])} · ${esc(S.user.email || '')}</div></div></div>
