@@ -146,7 +146,8 @@
     collections: ['president', 'vice_president', 'secretaire', 'tresorier'],
     sections: ['president', 'vice_president', 'secretaire'],
     categories: ['president', 'vice_president'],
-    settings: ['president']
+    settings: ['president'],
+    cover: ['president', 'vice_president', 'secretaire']
   };
   /* Essai gratuit et abonnement --------------------------------------- */
   const PLANS = { association: { label: 'Village', max: 50, month: 5000, year: 50000 }, federation: { label: 'Diaspora', max: 200, month: 10000, year: 100000 } };
@@ -233,6 +234,23 @@
     return S.ctx;
   }
   const refresh = () => loadCtx(S.ctx.assoc.id);
+  /* Photo de couverture : réduite sur le téléphone avant l'envoi (environ 150 Ko) */
+  async function shrinkImage(file) {
+    const url = URL.createObjectURL(file);
+    try {
+      const img = await new Promise((ok, ko) => { const i = new Image(); i.onload = () => ok(i); i.onerror = () => ko(new Error('Photo illisible. Essayez une autre photo (JPG ou PNG).')); i.src = url; });
+      const w = Math.min(1280, img.naturalWidth), h = Math.round(img.naturalHeight * w / img.naturalWidth);
+      const c = document.createElement('canvas'); c.width = w; c.height = h;
+      c.getContext('2d').drawImage(img, 0, 0, w, h);
+      let blob = await new Promise(ok => c.toBlob(ok, 'image/jpeg', 0.78));
+      if (blob && blob.size > 350000) blob = await new Promise(ok => c.toBlob(ok, 'image/jpeg', 0.6));
+      return blob;
+    } finally { URL.revokeObjectURL(url); }
+  }
+  async function coverUrl(a) {
+    if (!a || !a.cover_path) return '';
+    try { const r = await sb.storage.from('covers').createSignedUrl(a.cover_path, 3600); return (r.data && r.data.signedUrl) || ''; } catch (e) { return ''; }
+  }
   const paidFor = (mid, p) => S.ctx.paidMap.get(mid + '|' + p) || 0;
   // Cotisation mensuelle d'un membre : celle de sa catégorie, sinon la cotisation générale.
   const catOf = m => (m && m.category_id ? (S.ctx.cats || []).find(c => c.id === m.category_id) : null) || null;
@@ -362,7 +380,7 @@
         ${sd.requests.length ? sd.requests.map(q => `<div class="stack" style="gap:8px;border-bottom:1px solid var(--line);padding-bottom:12px"><b>${esc(q.assoc_name)}</b><span class="num">${money(q.amount, 'XOF')} · formule ${esc((PLANS[q.plan] || {}).label || q.plan)} · ${q.months === 12 ? '1 an' : '1 mois'}</span><span class="muted" style="font-size:13px">Déclaré le ${dFR(localDay(q.created_at))} par ${esc(q.created_label)}${q.reference ? ' · réf. ' + esc(q.reference) : ''}</span><span class="help" style="margin:0">Vérifiez dans votre application Wave que ce paiement est bien arrivé avant d’activer.</span>
           <div class="row" style="flex-wrap:wrap"><button class="btn primary sm" data-act="own-act" data-id="${q.id}" data-until="${untilFor(q)}">Activer jusqu’au ${dFR(untilFor(q))}</button><button class="btn ghost sm" data-act="own-rej" data-id="${q.id}">Refuser</button></div>
           <form class="stack" data-form="ownreject" data-id="${q.id}" id="orj-${q.id}" hidden novalidate><input name="note" placeholder="Motif (ex. rien reçu sur Wave)"><p class="err" hidden></p><button class="btn danger sm" type="submit">Refuser ce paiement</button></form></div>`).join('') : '<span class="muted">Aucun paiement à valider.</span>'}
-        <div class="list">${sd.assocs.map(x => { const [c, l] = SUBST[x.status] || ['p-blue', x.status]; return `<div class="item"><div class="body"><div class="t">${esc(x.name)}</div><div class="s wrap num">${N(x.members)} membres · ${x.paid_until ? 'payé jusqu’au ' + dFR(x.paid_until) : 'essai jusqu’au ' + dFR(x.trial_ends)}</div><button class="btn ghost sm" style="margin-top:6px" data-act="own-trial" data-id="${x.id}" data-te="${x.trial_ends}" data-pu="${x.paid_until || ''}">+30 jours d’essai</button> ${x.status === 'blocked' ? `<button class="btn primary sm" style="margin-top:6px" data-act="own-unblock" data-id="${x.id}">Débloquer</button><div class="s wrap">Motif : ${esc(x.blocked_reason || '')}</div>` : `<button class="btn ghost sm" style="margin-top:6px" data-act="own-block" data-id="${x.id}">Bloquer</button><form class="stack" data-form="ownblock" data-id="${x.id}" id="obk-${x.id}" hidden novalidate><input name="note" placeholder="Motif (ex. abonnement non payé)"><p class="err" hidden></p><button class="btn danger sm" type="submit">Bloquer cette association</button></form>`}</div><span class="pill ${c}">${l}</span></div>`; }).join('')}</div></section>`;
+        <div class="list">${sd.assocs.map(x => { const [c, l] = SUBST[x.status] || ['p-blue', x.status]; return `<div class="item"><div class="body"><div class="t">${esc(x.name)}</div><div class="s wrap num">${N(x.members)} membre${x.members > 1 ? 's' : ''} · ${x.paid_until ? 'payé jusqu’au ' + dFR(x.paid_until) : 'essai jusqu’au ' + dFR(x.trial_ends)}</div><button class="btn ghost sm" style="margin-top:6px" data-act="own-trial" data-id="${x.id}" data-te="${x.trial_ends}" data-pu="${x.paid_until || ''}">+30 jours d’essai</button> ${x.status === 'blocked' ? `<button class="btn primary sm" style="margin-top:6px" data-act="own-unblock" data-id="${x.id}">Débloquer</button><div class="s wrap">Motif : ${esc(x.blocked_reason || '')}</div>` : `<button class="btn ghost sm" style="margin-top:6px" data-act="own-block" data-id="${x.id}">Bloquer</button><form class="stack" data-form="ownblock" data-id="${x.id}" id="obk-${x.id}" hidden novalidate><input name="note" placeholder="Motif (ex. abonnement non payé)"><p class="err" hidden></p><button class="btn danger sm" type="submit">Bloquer cette association</button></form>`}</div><span class="pill ${c}">${l}</span></div>`; }).join('')}</div></section>`;
     const wk = d.weekly || [], maxA = Math.max(1, ...wk.map(w => w.users));
     const ago = ts => { if (!ts) return 'jamais'; const h = (Date.now() - new Date(ts)) / 3600e3; return h < 1 ? 'il y a moins d’1 h' : h < 24 ? `il y a ${Math.round(h)} h` : `il y a ${Math.round(h / 24)} j`; };
     const health = a => { const h = a.last_activity ? (Date.now() - new Date(a.last_activity)) / 864e5 : 999; return h <= 7 ? ['p-ok', 'Active'] : h <= 30 ? ['p-late', 'Ralentit'] : ['p-red', 'Endormie']; };
@@ -384,7 +402,7 @@
         <p class="help">Une personne est active quand elle fait une action (paiement, message, vote…) dans la semaine.</p></section>
       ${subs ? subsHtml(subs) : ''}
       <h2>Associations</h2>
-      <div class="list">${(d.list || []).map(a => { const [cl, lb] = health(a); return `<div class="item"><div class="body"><div class="t">${esc(a.name)}</div><div class="s wrap num">${N(a.members)} membres · ${N(a.on_app)} sur l’app${a.pending ? ' · ' + N(a.pending) + ' en attente' : ''} · ${N(a.actions_30d)} actions en 30 j · dernière ${ago(a.last_activity)}</div><div class="s wrap num">${esc([a.village, a.residence_city].filter(Boolean).join(' · '))} · créée le ${dFR(a.created_at)} · solde ${money(a.balance, a.currency)}</div></div><span class="pill ${cl}">${lb}</span></div>`; }).join('') || '<div class="empty">Aucune association.</div>'}</div>
+      <div class="list">${(d.list || []).map(a => { const [cl, lb] = health(a); return `<div class="item"><div class="body"><div class="t">${esc(a.name)}</div><div class="s wrap num">${N(a.members)} membre${a.members > 1 ? 's' : ''} · ${N(a.on_app)} sur l’app${a.pending ? ' · ' + N(a.pending) + ' en attente' : ''} · ${N(a.actions_30d)} actions en 30 j · dernière ${ago(a.last_activity)}</div><div class="s wrap num">${esc([a.village, a.residence_city].filter(Boolean).join(' · '))} · créée le ${dFR(a.created_at)} · solde ${money(a.balance, a.currency)}</div></div><span class="pill ${cl}">${lb}</span></div>`; }).join('') || '<div class="empty">Aucune association.</div>'}</div>
       <a class="link" href="#/bienvenue">Revenir à mes associations</a></div>`;
   }
 
@@ -610,6 +628,8 @@
     const first = String(me.full_name || '').split(/\s+/)[0];
     const monthName = pFR(cur).replace(/^./, c => c.toUpperCase());
 
+    const cvUrl = await coverUrl(a);
+    const coverBanner = cvUrl ? `<div class="cover"><img src="${esc(cvUrl)}" alt="" loading="lazy"><div class="cover-t">${esc(a.name)}</div></div>` : '';
     const greet = `<div class="greet"><h1>Bonjour ${esc(first)}</h1><p>${esc(ROLES[me.role])} · ${dFR(todayISO())}</p></div>`;
     const todo = (href, ico, t, s, warn) => `<a class="todo${warn ? ' warn' : ''}" href="${href}"><span class="ico-tile">${ico}</span><span class="body" style="flex:1;min-width:0"><span class="tt" style="display:block">${t}</span><span class="ss" style="display:block">${s}</span></span><span class="chev">${I.chev}</span></a>`;
     // Ma cotisation (chacun voit d'abord SA situation)
@@ -652,7 +672,7 @@
     if (pres) { L = [greet, presCash, status, todos, where, monthCard]; R = [projCard, pollCard, meetCard, colCards, opsCard, actCard]; }
     else if (trea) { L = [greet, status, todos, monthCard, shortcuts, pollCard, meetCard, colCards]; R = [cash, lateCard, opsCard, projCard, actCard]; }
     else { L = [greet, status, todos, cash, pollCard, meetCard, colCards, projCard]; R = [opsCard, actCard]; }
-    return `<div class="home-grid"><div class="home-l">${L.join('')}</div><div class="home-r">${R.join('')}</div></div>`;
+    return `${coverBanner}<div class="home-grid"><div class="home-l">${L.join('')}</div><div class="home-r">${R.join('')}</div></div>`;
   };
 
   // Vie de l'association : le point d'entrée des annonces, de la discussion, des réunions, des votes et des documents
@@ -914,12 +934,14 @@
     const n = activeMembers().length, rec = n > PLANS.association.max ? 'federation' : 'association';
     const state = st === 'active' ? `<span class="pill p-ok">Abonnement actif</span><h2>Formule ${esc((PLANS[a.plan] || {}).label || '')}</h2><span class="muted">Jusqu’au ${dFR(a.paid_until)}</span>`
       : st === 'trial' ? `<span class="pill p-blue">Essai gratuit</span><h2>${a.trial_ends ? 'Jusqu’au ' + dFR(a.trial_ends) : 'En cours'}</h2>${a.trial_ends ? `<span class="muted">Plus que ${daysUntil(a.trial_ends)} jour(s). Toutes les fonctions sont incluses.</span>` : ''}`
+      : st === 'blocked' ? `<span class="pill p-red">Suspendue</span><h2>Association suspendue par VillageLink</h2><span class="muted">Motif : ${esc(a.blocked_reason || 'non précisé')}. Tout reste consultable. Écrivez à contact@villagelinkafrica.com pour la rouvrir.</span>`
       : st === 'grace' ? '<span class="pill p-late">Essai terminé</span><h2>Quelques jours de grâce</h2><span class="muted">Activez l’abonnement pour éviter la lecture seule.</span>'
       : '<span class="pill p-red">Lecture seule</span><h2>L’essai est terminé</h2><span class="muted">Tout reste consultable. L’abonnement rouvre l’enregistrement des paiements, membres, réunions…</span>';
     const ST = { pending: ['p-late', 'En attente de VillageLink'], activated: ['p-ok', 'Activé'], rejected: ['p-red', 'Refusé'] };
     const hist = reqs.length ? `<section class="stack"><h2>Paiements d’abonnement</h2><div class="list">${reqs.map(r => `<div class="item" style="align-items:flex-start"><div class="body"><div class="t num" style="white-space:normal">${money(r.amount, 'XOF')} · formule ${esc(PLANS[r.plan].label)} · ${r.months === 12 ? '1 an' : '1 mois'}</div><div class="s wrap">${dFR(localDay(r.created_at))} · ${esc(r.created_label)}${r.reference ? ' · réf. ' + esc(r.reference) : ''}${r.note ? '<br>Motif : ' + esc(r.note) : ''}</div></div><span class="pill ${ST[r.status][0]}">${ST[r.status][1]}</span></div>`).join('')}</div></section>` : '';
     const plans = Object.entries(PLANS).map(([k, p]) => `<label class="plan${k === rec ? ' rec' : ''}"><input type="radio" name="plan" value="${k}" ${k === rec ? 'checked' : ''}><span class="plan-in"><b>${p.label}</b>${k === rec ? '<span class="pill p-ok">Conseillée</span>' : ''}<span class="muted">Jusqu’à ${p.max} membres${k === 'federation' ? ' · toutes les fonctionnalités' : ' · sans sections, catégories ni plusieurs monnaies'}</span><span class="num"><b>${money(p.month, 'XOF')}</b> / mois</span><span class="num muted">ou ${money(p.year, 'XOF')} / an (2 mois offerts)</span></span></label>`).join('');
-    const pay = IS_TWA ? '<p class="note" style="margin:0">L’abonnement se gère depuis le site de VillageLink. Contactez-nous : contact@villagelinkafrica.com</p>'
+    const pay = st === 'blocked' ? '<p class="note" style="margin:0">L’abonnement ne peut pas être payé tant que l’association est suspendue. Contactez VillageLink : contact@villagelinkafrica.com</p>'
+      : IS_TWA ? '<p class="note" style="margin:0">L’abonnement se gère depuis le site de VillageLink. Contactez-nous : contact@villagelinkafrica.com</p>'
       : pend ? `<p class="note" style="margin:0">Votre paiement de ${money(pend.amount, 'XOF')} est en attente : VillageLink l’active dès qu’il l’a reçu, en général dans la journée.</p>`
       : `<form class="stack" data-form="subreq" novalidate>
         <div class="plans">${plans}</div>
@@ -1788,7 +1810,7 @@ Abstention</textarea><p class="help">Entre 2 et 10 choix.</p></div>
   V.plus = async () => {
     const a = S.ctx.assoc, me = S.ctx.me, st = subStatus(a);
     const items = [['parametres', 'Paramètres de l’association', 'Fiche, cotisation, numéros de paiement, code d’invitation', I.gear]];
-    if (canManageSub()) items.push(['abonnement', 'Abonnement', st === 'active' ? `Formule ${(PLANS[a.plan] || {}).label || ''} jusqu’au ${dFR(a.paid_until)}` : st === 'trial' ? (a.trial_ends ? `Essai gratuit jusqu’au ${dFR(a.trial_ends)}` : 'Essai gratuit') : 'Essai terminé : activer l’abonnement', I.wallet]);
+    if (canManageSub()) items.push(['abonnement', 'Abonnement', st === 'blocked' ? 'Association suspendue par VillageLink' : st === 'active' ? `Formule ${(PLANS[a.plan] || {}).label || ''} jusqu’au ${dFR(a.paid_until)}` : st === 'trial' ? (a.trial_ends ? `Essai gratuit jusqu’au ${dFR(a.trial_ends)}` : 'Essai gratuit') : 'Essai terminé : activer l’abonnement', I.wallet]);
     items.push(['__assoc', 'Mes associations', 'Changer, rejoindre ou créer une association', I.swap]);
     return `<h1>Mon profil</h1>
       <div class="row"><span class="av lg" aria-hidden="true">${esc(initials(me.full_name))}</span><div style="min-width:0"><h2>${esc(me.full_name)}</h2><div class="muted" style="font-size:15px">${esc(ROLES[me.role])} · ${esc(S.user.email || '')}</div></div></div>
@@ -1894,11 +1916,17 @@ Abstention</textarea><p class="help">Entre 2 et 10 choix.</p></div>
     const a = S.ctx.assoc, pres = can('settings');
     const invite = `Rejoignez « ${a.name} » sur VillageLink pour suivre les cotisations et les projets du village.\n\n1. Ouvrez ${location.origin + location.pathname}\n2. Créez votre compte\n3. Entrez le code : ${a.invite_code}`;
     const ro = pres ? '' : 'disabled';
+    const cvPrev = can('cover') ? await coverUrl(a) : '';
     return `${subHead('Association', B() + '/plus')}
       <section class="card stack"><h2>Code d’invitation</h2><p class="muted" style="margin:0;font-size:13.5px">Les membres créent leur compte puis entrent ce code. Ceux que le trésorier a déjà inscrits retrouvent leur historique grâce à leur numéro de téléphone.</p>
         <div class="code">${esc(a.invite_code)}</div>
         <a class="btn wa block" target="_blank" rel="noopener" href="${waShare(invite)}">${I.wa} Envoyer l’invitation sur WhatsApp</a>
         ${pres ? '<button class="btn ghost sm" data-act="newcode">Changer le code</button>' : ''}</section>
+      ${can('cover') ? `<form class="card stack" data-form="cover" novalidate><h2>Photo de couverture</h2><p class="muted" style="margin:0;font-size:13.5px">Elle s’affiche en haut de l’accueil pour tous les membres. Choisissez une belle photo du village.</p>
+        ${cvPrev ? `<div class="cover cover-sm"><img src="${esc(cvPrev)}" alt=""></div>` : ''}
+        <div class="field"><label for="cv-f">${cvPrev ? 'Changer la photo' : 'Choisir une photo'}</label><input id="cv-f" name="file" type="file" accept="image/*"></div>
+        <button class="btn primary block" type="submit">Enregistrer la photo</button>
+        ${cvPrev ? '<button class="btn ghost sm" type="button" data-act="coverdel">Retirer la photo</button>' : ''}</form>` : ''}
       ${catsCard()}
       ${mmCard()}
       <form class="stack" data-form="assoc" novalidate>
@@ -1971,6 +1999,7 @@ Abstention</textarea><p class="help">Entre 2 et 10 choix.</p></div>
       if (code.length < 4) fail('Saisissez le code d’invitation.');
       if (name.length < 2) fail('Saisissez votre nom complet.');
       const id = must(await sb.rpc('join_association', { p_code: code, p_full_name: name, p_phone: val(fd, 'phone') }));
+      if (!id) fail('Code d’invitation inconnu. Vérifiez-le auprès du bureau.');
       S.ctx = null;
       const mine = must(await sb.rpc('my_memberships')).find(a => a.association_id === id);
       if (mine && mine.pending) { toast('Demande envoyée au bureau'); return renderWelcome(); }
@@ -2172,6 +2201,20 @@ Abstention</textarea><p class="help">Entre 2 et 10 choix.</p></div>
       if (cd) { const [y, mo, d] = cd.split('-').map(Number), [h, mi] = (val(fd, 'close_time') || '20:00').split(':').map(Number); closes = new Date(y, mo - 1, d, h, mi); if (closes <= new Date()) fail('La fin du vote doit être dans le futur.'); closes = closes.toISOString(); }
       const id = must(await sb.rpc('create_poll', { p_assoc: S.ctx.assoc.id, p_question: question, p_description: val(fd, 'description'), p_options: options, p_closes_at: closes, p_anonymous: !!fd.get('anonymous') }));
       toast('Vote lancé'); go(B() + '/vote/' + id);
+    },
+    async cover(fd) {
+      if (!can('cover')) fail('Réservé au président, au vice-président et au secrétaire.');
+      const file = fd.get('file');
+      if (!file || !file.size) fail('Choisissez une photo.');
+      const blob = await shrinkImage(file);
+      if (!blob || blob.size > 2097152) fail('Photo trop lourde. Essayez-en une autre.');
+      const a = S.ctx.assoc, old = a.cover_path;
+      const rnd = (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : Date.now() + '-' + Math.random().toString(36).slice(2);
+      const path = `${a.id}/cover-${rnd}.jpg`;
+      must(await sb.storage.from('covers').upload(path, blob, { contentType: 'image/jpeg', upsert: false }));
+      must(await sb.rpc('set_cover', { p_assoc: a.id, p_path: path }));
+      if (old) { try { await sb.storage.from('covers').remove([old]); } catch (e) { /* ancienne photo : sans importance */ } }
+      await refresh(); toast('Photo enregistrée'); route();
     },
     async doc(fd) {
       const title = val(fd, 'title'), category = val(fd, 'category'), file = fd.get('file');
@@ -2426,6 +2469,12 @@ Abstention</textarea><p class="help">Entre 2 et 10 choix.</p></div>
         const box = $('#proof-box'); box.innerHTML = '<span class="muted">Chargement…</span>';
         const r = must(await sb.storage.from('proofs').createSignedUrl(b.dataset.path, 3600));
         box.innerHTML = /\.pdf$/i.test(b.dataset.path) ? `<a class="btn ghost sm" target="_blank" rel="noopener" href="${esc(r.signedUrl)}">Ouvrir le PDF</a>` : `<a href="${esc(r.signedUrl)}" target="_blank" rel="noopener"><img class="proof-img" src="${esc(r.signedUrl)}" alt="Justificatif"></a>`;
+      } else if (act === 'coverdel') {
+        if (b.dataset.confirm !== '1') { b.dataset.confirm = '1'; b.textContent = 'Confirmer : retirer la photo'; b.classList.add('danger'); return; }
+        const old = S.ctx.assoc.cover_path;
+        must(await sb.rpc('set_cover', { p_assoc: S.ctx.assoc.id, p_path: null }));
+        if (old) { try { await sb.storage.from('covers').remove([old]); } catch (e) { /* sans importance */ } }
+        await refresh(); toast('Photo retirée'); route();
       } else if (act === 'newcode') {
         if (b.dataset.confirm !== '1') { b.dataset.confirm = '1'; b.textContent = 'Confirmer : l’ancien code ne marchera plus'; b.classList.add('danger'); return; }
         must(await sb.rpc('regenerate_invite_code', { p_assoc: S.ctx.assoc.id }));
