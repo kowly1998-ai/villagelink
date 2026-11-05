@@ -22,8 +22,14 @@ const UID = '11111111-1111-4111-8111-111111111111', AID = '22222222-2222-4222-82
 const future = new Date(Date.now() + 86400e3 * 40).toISOString().slice(0, 10);
 const ASSOC = { id: AID, name: 'Jeunesse de Test', origin_country: 'Guinée', region: 'Labé', prefecture: 'Labé', village: 'Test', residence_country: 'Sénégal', residence_city: 'Dakar', description: '', founded_on: null, currency: 'XOF', fee_amount: 5000, fee_due_day: 5, dues_start: '2026-01-01', invite_code: 'ABCD1234', plan: 'association', trial_ends: future, paid_until: null, blocked_at: null, blocked_reason: null, expense_approval: false, cover_path: AID + '/cover-test.jpg', created_at: '2026-01-01T00:00:00Z' };
 const ME = { id: MID, association_id: AID, user_id: UID, full_name: 'Alpha Test', phone: '', role: 'president', active: true, pending: false, section_id: null, category_id: null, created_at: '2026-01-01T00:00:00Z' };
-// Image 4×3 orange (PNG minuscule) servie à la place de la vraie photo.
-const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAQAAAADCAIAAAA7ljmRAAAAF0lEQVR4nGP8z8Dwn4EIwESMolGFpCoEAMnNAhJGTrQwAAAAAElFTkSuQmCC', 'base64');
+// Image 4×3 orange (PNG minuscule fabriqué ici) servie à la place de la vraie photo.
+const PNG = (() => {
+  const zlib = require('zlib'), crc = b => { let c, t = [], r = ~0; for (let n = 0; n < 256; n++) { c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1; t[n] = c >>> 0; } for (const x of b) r = t[(r ^ x) & 255] ^ (r >>> 8); return (~r) >>> 0; };
+  const chunk = (type, data) => { const l = Buffer.alloc(4); l.writeUInt32BE(data.length); const td = Buffer.concat([Buffer.from(type), data]); const c = Buffer.alloc(4); c.writeUInt32BE(crc(td)); return Buffer.concat([l, td, c]); };
+  const ihdr = Buffer.alloc(13); ihdr.writeUInt32BE(4, 0); ihdr.writeUInt32BE(3, 4); ihdr[8] = 8; ihdr[9] = 2;
+  const raw = Buffer.concat([0, 1, 2].map(() => Buffer.concat([Buffer.from([0]), Buffer.from([232, 111, 59, 232, 111, 59, 232, 111, 59, 232, 111, 59])])));
+  return Buffer.concat([Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), chunk('IHDR', ihdr), chunk('IDAT', zlib.deflateSync(raw)), chunk('IEND', Buffer.alloc(0))]);
+})();
 
 function mock(route) {
   const req = route.request(), u = new URL(req.url()), p = u.pathname, accept = req.headers()['accept'] || '';
@@ -34,7 +40,7 @@ function mock(route) {
   };
   if (p.startsWith('/auth/v1/user')) return json({ id: UID, aud: 'authenticated', role: 'authenticated', email: 'test@exemple.fr', app_metadata: {}, user_metadata: {}, created_at: '2026-01-01T00:00:00Z' });
   if (p.startsWith('/auth/v1/')) return json({});
-  if (p.startsWith('/storage/v1/object/sign/')) return json({ signedURL: p.replace('/storage/v1', '') + '?token=test' });
+  if (p.startsWith('/storage/v1/object/sign/') && req.method() === 'POST') return json({ signedURL: p.replace('/storage/v1', '') + '?token=test' });
   if (p.startsWith('/storage/v1/object/')) return route.fulfill({ status: 200, contentType: 'image/png', body: PNG });
   if (p.startsWith('/rest/v1/rpc/my_memberships')) return json([{ association_id: AID, name: ASSOC.name, village: ASSOC.village, residence_city: ASSOC.residence_city, pending: false, active: true }]);
   if (p.startsWith('/rest/v1/rpc/')) return json([]);
