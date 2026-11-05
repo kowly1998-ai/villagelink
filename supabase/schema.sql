@@ -2858,3 +2858,119 @@ revoke execute on function public.owner_block(uuid, text) from public, anon;
 revoke execute on function public.owner_unblock(uuid) from public, anon;
 grant execute on function public.owner_block(uuid, text) to authenticated;
 grant execute on function public.owner_unblock(uuid) to authenticated;
+
+-- VillageLink 2.2 — Photo de couverture de l'association
+-- Qui peut la changer : président, vice-président, secrétaire. Tout membre la voit.
+
+alter table public.associations add column if not exists cover_path text;
+
+create or replace function public.set_cover(p_assoc uuid, p_path text) returns void
+language plpgsql security definer set search_path = public as $$
+begin
+  if not has_role(p_assoc, array['president','vice_president','secretaire']) then
+    raise exception 'Réservé au président, au vice-président et au secrétaire.';
+  end if;
+  if assoc_status(p_assoc) in ('blocked','readonly') then
+    raise exception 'L''association est en lecture seule.';
+  end if;
+  if p_path is not null and left(p_path, length(p_assoc::text) + 1) <> p_assoc::text || '/' then
+    raise exception 'Chemin de photo invalide.';
+  end if;
+  update associations set cover_path = p_path where id = p_assoc;
+end $$;
+revoke execute on function public.set_cover(uuid, text) from public, anon;
+grant execute on function public.set_cover(uuid, text) to authenticated;
+
+-- Bucket privé « covers » (2 Mo maximum, images seulement)
+do $$
+begin
+  if exists (select 1 from pg_namespace where nspname = 'storage') then
+    insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+    values ('covers', 'covers', false, 2097152, array['image/jpeg','image/png','image/webp'])
+    on conflict (id) do nothing;
+    execute 'drop policy if exists covers_read on storage.objects';
+    execute $p$create policy covers_read on storage.objects for select to authenticated
+      using (bucket_id = 'covers' and public.is_member(((storage.foldername(name))[1])::uuid))$p$;
+    execute 'drop policy if exists covers_write on storage.objects';
+    execute $p$create policy covers_write on storage.objects for insert to authenticated
+      with check (bucket_id = 'covers'
+        and public.has_role(((storage.foldername(name))[1])::uuid, array['president','vice_president','secretaire']))$p$;
+    execute 'drop policy if exists covers_delete on storage.objects';
+    execute $p$create policy covers_delete on storage.objects for delete to authenticated
+      using (bucket_id = 'covers'
+        and public.has_role(((storage.foldername(name))[1])::uuid, array['president','vice_president','secretaire']))$p$;
+  end if;
+end $$;
+
+-- VillageLink 2.2 — Renforcements de sécurité
+-- 1. Limite d'essais du code d'invitation (8 essais ratés par 15 minutes et par compte).
+-- 2. assoc_status et is_exempt ne répondent qu'aux membres de l'association (ou au propriétaire,
+--    ou aux tâches du système : alertes automatiques, déclencheurs).
+
+create table if not exists public.join_attempts (
+  id      bigint generated always as identity primary key,
+  user_id uuid not null,
+  at      timestamptz not null default now()
+);
+alter table public.join_attempts enable row level security;
+revoke all on public.join_attempts from anon, authenticated;
+create index if not exists join_attempts_user_idx on public.join_attempts (user_id, at);
+
+create or replace function public.join_association(p_code text, p_full_name text, p_phone text)
+returns uuid
+language plpgsql security definer set search_path = public as $$
+declare a uuid; m uuid; digits text := regexp_replace(coalesce(p_phone,''), '\D', '', 'g');
+begin
+  if auth.uid() is null then raise exception 'Connexion requise.'; end if;
+  if length(trim(coalesce(p_full_name,''))) < 2 then raise exception 'Saisissez votre nom complet.'; end if;
+  delete from join_attempts where at < now() - interval '1 day';
+  if (select count(*) from join_attempts where user_id = auth.uid() and at > now() - interval '15 minutes') >= 8 then
+    raise exception 'Trop d’essais. Réessayez dans 15 minutes.';
+  end if;
+  select id into a from associations where invite_code = upper(trim(p_code));
+  if a is null then
+    insert into join_attempts(user_id) values (auth.uid());
+    return null;   -- code inconnu : l'essai est gardé, l'application affiche le message
+  end if;
+  if exists (select 1 from members where association_id = a and user_id = auth.uid()) then
+    return a;
+  end if;
+  perform set_config('vl.system', 'on', true);
+  if length(digits) >= 8 then
+    select id into m from members
+     where association_id = a and user_id is null and role = 'membre' and active
+       and right(regexp_replace(phone, '\D', '', 'g'), 9) = right(digits, 9)
+     limit 1;
+  end if;
+  if m is not null then
+    update members set user_id = auth.uid(), pending = true where id = m;
+  else
+    insert into members(association_id, user_id, full_name, phone, role, pending, created_by_join)
+    values (a, auth.uid(), left(trim(p_full_name), 120), left(trim(p_phone), 40), 'membre', true, true);
+  end if;
+  perform set_config('vl.system', 'off', true);
+  perform write_log(a, format('a demandé à rejoindre l''association (%s).', left(trim(p_full_name), 120)));
+  return a;
+end $$;
+
+create or replace function public.assoc_status(p_assoc uuid) returns text
+language sql stable security definer set search_path = public as $$
+  select case
+    when a.blocked_at is not null then 'blocked'
+    when a.paid_until is not null and a.paid_until >= current_date then 'active'
+    when a.paid_until is null and a.trial_ends >= current_date then 'trial'
+    when greatest(coalesce(a.paid_until, a.trial_ends), a.trial_ends) + 7 >= current_date then 'grace'
+    else 'readonly' end
+  from associations a
+  where a.id = p_assoc
+    and (auth.uid() is null or is_member(p_assoc) or am_owner()
+         or coalesce(current_setting('vl.system', true), '') = 'on');
+$$;
+
+create or replace function public.is_exempt(p_member uuid, p_period text) returns boolean
+language sql stable security definer set search_path = public as $$
+  select exists (select 1 from member_exemptions e where e.member_id = p_member
+                   and e.from_period <= p_period and (e.to_period is null or e.to_period >= p_period)
+                   and (auth.uid() is null or is_member(e.association_id) or am_owner()
+                        or coalesce(current_setting('vl.system', true), '') = 'on'));
+$$;
