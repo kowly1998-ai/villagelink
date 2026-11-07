@@ -454,7 +454,7 @@
     { tab: '', label: 'Accueil', icon: I.home, keys: ['home'] },
     { tab: 'membres', label: 'Membres', icon: I.users, keys: ['membres', 'm', 'sections'] },
     { tab: 'cotisations', label: 'Cotisations', icon: I.wallet, keys: ['cotisations', 'encaisser', 'payer'] },
-    { tab: 'caisse', label: 'Caisse', icon: I.bank, keys: ['caisse', 'finances', 'operation', 'op', 'recu', 'depenses', 'depense', 'projets', 'p', 'collectes', 'collecte', 'transparence', 'rapport', 'journal'] },
+    { tab: 'caisse', label: 'Caisse', icon: I.bank, keys: ['caisse', 'finances', 'operation', 'op', 'recu', 'depenses', 'depense', 'projets', 'p', 'collectes', 'collecte', 'transparence', 'rapport', 'rapportannuel', 'journal'] },
     { tab: 'vie', label: 'Vie', icon: I.heart, keys: ['vie', 'annonces', 'discussion', 'reunions', 'r', 'votes', 'vote', 'documents'] }
   ];
   const SUBS = group => {
@@ -1576,6 +1576,7 @@
     if (sub[2] === 'modifier') return meetingForm(m);
     const att = must(await sb.from('meeting_attendance').select('*').eq('meeting_id', m.id));
     if (sub[2] === 'presence') return attendanceView(m, att);
+    if (sub[2] === 'feuille') return sheetView(m);
     if (sub[2] === 'compte-rendu') return minutesForm(m);
     const pres = att.filter(x => x.present), abs = att.filter(x => !x.present);
     const crText = `Compte rendu · ${m.title}\n${dLong(m.starts_at)}${m.place ? ' · ' + m.place : ''}\nPrésents : ${pres.length}\n\n${m.minutes}\n\n${a.name}`;
@@ -1586,7 +1587,7 @@
         <dl class="kv" style="margin:0"><dt>Date</dt><dd>${esc(dLong(m.starts_at))}</dd>${m.place ? `<dt>Lieu</dt><dd>${esc(m.place)}</dd>` : ''}</dl>
         ${m.agenda ? `<div class="stack" style="gap:4px"><span class="eyebrow">Ordre du jour</span><p style="margin:0;white-space:pre-line">${esc(m.agenda)}</p></div>` : ''}</section>
       <div class="row" style="flex-wrap:wrap">${m.status !== 'Annulée' ? `<a class="btn wa sm" target="_blank" rel="noopener" href="${waShare(convText(m))}">${I.wa} Envoyer la convocation</a>` : ''}${mg ? `<a class="btn ghost sm" href="${B()}/r/${m.id}/modifier">Modifier</a>` : ''}</div>
-      <section class="card stack"><div class="between"><h2>Présence</h2>${mg && m.status !== 'Annulée' ? `<a class="btn primary sm" href="${B()}/r/${m.id}/presence">Faire l’appel</a>` : ''}</div>
+      <section class="card stack"><div class="between"><h2>Présence</h2>${mg && m.status !== 'Annulée' ? `<span class="row" style="gap:8px;flex-wrap:wrap"><a class="btn ghost sm" href="${B()}/r/${m.id}/feuille">Feuille à imprimer</a><a class="btn primary sm" href="${B()}/r/${m.id}/presence">Faire l’appel</a></span>` : ''}</div>
         ${att.length ? `<div class="row num" style="gap:8px;flex-wrap:wrap"><span class="pill p-ok">${pres.length} présent${pres.length > 1 ? 's' : ''}</span><span class="pill p-late">${abs.length} absent${abs.length > 1 ? 's' : ''}</span></div>
           ${pres.length ? `<p style="margin:0" class="muted">${pres.map(x => esc(memberName(x.member_id))).join(', ')}</p>` : ''}` : `<span class="muted">${m.status === 'Prévue' ? 'L’appel se fait le jour de la réunion.' : 'Aucune présence enregistrée.'}</span>`}</section>
       <section class="card stack"><div class="between"><h2>Compte rendu</h2>${mg && m.status !== 'Annulée' ? `<a class="btn ${m.minutes ? 'ghost' : 'primary'} sm" href="${B()}/r/${m.id}/compte-rendu">${m.minutes ? 'Modifier' : 'Rédiger'}</a>` : ''}</div>
@@ -1708,6 +1709,89 @@ Abstention</textarea><p class="help">Entre 2 et 10 choix.</p></div>
 
   /* Rapport mensuel -------------------------------------------------- */
   const addMonthYM = (p, k) => { const [y, m] = p.split('-').map(Number); const d = new Date(y, m - 1 + k, 1); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}`; };
+
+  /* Export des données ------------------------------------------------ */
+  const csvCell = v => { let t = String(v ?? ''); if (/^[=+\-@\t\r]/.test(t)) t = "'" + t; return '"' + t.replace(/"/g, '""') + '"'; };
+  function csvOut(name, head, rows) {
+    const txt = '﻿' + [head].concat(rows).map(r => r.map(c => typeof c === 'number' ? String(c) : csvCell(c)).join(';')).join('\r\n');
+    const url = URL.createObjectURL(new Blob([txt], { type: 'text/csv;charset=utf-8' }));
+    const el = document.createElement('a'); el.href = url; el.download = name; document.body.appendChild(el); el.click(); el.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 5000);
+  }
+  const fileSlug = () => String(S.ctx.assoc.name).normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-zA-Z0-9]+/g, '-').replace(/^-|-$/g, '').toLowerCase().slice(0, 40) || 'association';
+  async function exportData(what) {
+    if (!can('members')) fail('Réservé au bureau.');
+    const a = S.ctx.assoc, day = todayISO();
+    if (what === 'membres') {
+      const rows = S.ctx.members.slice().sort((x, y) => x.full_name.localeCompare(y.full_name, 'fr')).map(m => [m.full_name, m.phone || '', m.email || '', m.city || '', m.country || '', ROLES[m.role] || m.role, m.joined_on || '', m.active ? 'Oui' : 'Non']);
+      csvOut(`membres-${fileSlug()}-${day}.csv`, ['Nom', 'Téléphone', 'Email', 'Ville', 'Pays', 'Rôle', 'Membre depuis', 'Actif'], rows);
+    } else {
+      const txs = await fetchAll(() => sb.from('transactions').select('id,kind,category,amount,occurred_on,description,member_id,period,payment_method,reversal_of').eq('association_id', a.id).order('id'));
+      const rows = txs.map(t => [t.occurred_on, txRef(t.id), t.kind === 'in' ? 'Entrée' : 'Sortie', t.category, (t.kind === 'in' ? 1 : -1) * Number(t.amount), t.member_id ? memberName(t.member_id) : '', t.period || '', t.description, t.payment_method || '', t.reversal_of ? txRef(t.reversal_of) : '']);
+      csvOut(`operations-${fileSlug()}-${day}.csv`, ['Date', 'Référence', 'Type', 'Catégorie', 'Montant (' + (CUR_LABEL[a.currency] || a.currency) + ')', 'Membre', 'Période', 'Description', 'Mode de paiement', 'Annule l’opération'], rows);
+    }
+    toast('Fichier téléchargé');
+  }
+
+  /* Feuille de présence à imprimer ---------------------------------- */
+  function sheetView(m) {
+    const a = S.ctx.assoc;
+    if (!can('meetings')) return `${subHead('Feuille de présence', B() + '/r/' + m.id)}<p class="note">Réservé au président, au vice-président et au secrétaire général.</p>`;
+    const list = activeMembers().slice().sort((x, y) => x.full_name.localeCompare(y.full_name, 'fr'));
+    return `<div class="no-print">${subHead('Feuille de présence', B() + '/r/' + m.id)}</div>
+      <div class="row no-print" style="flex-wrap:wrap"><button class="btn primary sm" data-act="print">Imprimer ou enregistrer en PDF</button></div>
+      <article class="report stack">
+        <header class="report-head"><span class="eyebrow">${esc(a.name)}</span><h1>Feuille de présence</h1><span class="muted" style="font-size:15px">${esc(m.title)} · ${esc(dLong(m.starts_at))}${m.place ? ' · ' + esc(m.place) : ''}</span></header>
+        <table class="sheet"><thead><tr><th>N°</th><th>Nom</th><th>Signature</th></tr></thead><tbody>${list.map((x, i) => `<tr><td class="num">${i + 1}</td><td>${esc(x.full_name)}</td><td></td></tr>`).join('')}</tbody></table>
+        <p class="muted" style="margin:0;font-size:14px">${list.length} membre${list.length > 1 ? 's' : ''} convoqué${list.length > 1 ? 's' : ''}.</p>
+      </article>`;
+  }
+
+  /* Rapport annuel --------------------------------------------------- */
+  V.rapportannuel = async (sub, q) => {
+    const a = S.ctx.assoc, cur = curYM(), cy = Number(cur.slice(0, 4));
+    const first = Math.max(cy - 5, a.created_at ? new Date(a.created_at).getFullYear() : cy - 5);
+    const Y = /^\d{4}$/.test(q.get('a') || '') && Number(q.get('a')) <= cy && Number(q.get('a')) >= first ? Number(q.get('a')) : cy;
+    const start = Y + '-01-01', end = (Y + 1) + '-01-01';
+    const txs = await fetchAll(() => sb.from('transactions').select('id,kind,amount,category,occurred_on').eq('association_id', a.id).lt('occurred_on', end).order('id'));
+    const fx = t => (t.kind === 'in' ? 1 : -1) * Number(t.amount);
+    const sum = (arr, k) => arr.filter(t => t.kind === k).reduce((x, t) => x + Number(t.amount), 0);
+    const open = txs.filter(t => t.occurred_on < start).reduce((x, t) => x + fx(t), 0);
+    const yr = txs.filter(t => t.occurred_on >= start);
+    const inY = sum(yr, 'in'), outY = sum(yr, 'out'), close = open + inY - outY;
+    let run = open; const rows = [];
+    for (let k = 1; k <= 12; k++) {
+      const p = Y + '-' + String(k).padStart(2, '0'); if (p > cur) break;
+      const ms = yr.filter(t => t.occurred_on.slice(0, 7) === p), i = sum(ms, 'in'), o = sum(ms, 'out'); run += i - o; rows.push([p, i, o, run]);
+    }
+    const byCat = kind => { const m = new Map(); yr.filter(t => t.kind === kind).forEach(t => m.set(t.category, (m.get(t.category) || 0) + Number(t.amount))); return [...m.entries()].filter(e => e[1] !== 0).sort((x, y) => y[1] - x[1]); };
+    const lo = new Date(start + 'T00:00:00').toISOString(), hi = new Date(end + 'T00:00:00').toISOString();
+    const [meets, projects, ptot] = await Promise.all([
+      sb.from('meetings').select('id,status').eq('association_id', a.id).gte('starts_at', lo).lt('starts_at', hi).then(r => r.error ? [] : r.data, () => []),
+      sb.from('projects').select('*').eq('association_id', a.id).then(r => r.error ? [] : r.data, () => []),
+      sb.from('v_project_totals').select('*').then(r => r.error ? [] : r.data, () => [])
+    ]);
+    const tot = new Map(ptot.map(x => [x.project_id, x]));
+    const held = meets.filter(m => m.status === 'Tenue').length;
+    const projs = projects.filter(p => p.status !== 'En préparation');
+    const title = `Rapport de l’année ${Y}`;
+    const wa = `${title.toUpperCase()} · ${a.name}\n\nSolde au 1er janvier : ${money(open)}\nEntrées : +${money(inY)}\nSorties : −${money(outY)}\nSolde en fin de période : ${money(close)}\n\nRéunions tenues : ${held}\n\nVérifiable par tous les membres dans VillageLink.`;
+    const catList = r => r.length ? `<dl class="kv num" style="margin:0">${r.map(([c, v]) => `<dt>${esc(c)}</dt><dd>${money(v)}</dd>`).join('')}</dl>` : '<span class="muted">Aucune.</span>';
+    const years = []; for (let y = cy; y >= first; y--) years.push(y);
+    return `<div class="no-print">${subHead('Rapport de l’année', B() + '/rapport')}</div>
+      <div class="field no-print"><label for="ra-y">Année</label><select id="ra-y" data-nav="rapportannuel">${years.map(y => opt(y, String(y), Y)).join('')}</select></div>
+      <div class="row no-print" style="flex-wrap:wrap"><button class="btn primary sm" data-act="print">Télécharger en PDF</button><a class="btn wa sm" target="_blank" rel="noopener" href="${waShare(wa)}">${I.wa} Partager le résumé</a></div>
+      <article class="report stack">
+        <header class="report-head"><span class="eyebrow">${esc(a.name)}</span><h1>${esc(title)}</h1><span class="muted" style="font-size:13px">Établi le ${dFR(todayISO())} avec VillageLink</span></header>
+        <section class="card stack"><h2>Caisse de l’année</h2><dl class="kv num" style="margin:0"><dt>Solde au 1er janvier</dt><dd>${money(open)}</dd><dt>Entrées</dt><dd style="color:var(--green)">${inY ? '+' : ''}${money(inY)}</dd><dt>Sorties</dt><dd style="color:var(--danger)">${outY ? '−' : ''}${money(outY)}</dd><dt><b>Solde en fin de période</b></dt><dd><b>${money(close)}</b></dd></dl></section>
+        <section class="card stack"><h2>Mois par mois</h2><table class="sheet num"><thead><tr><th>Mois</th><th>Entrées</th><th>Sorties</th><th>Solde</th></tr></thead><tbody>${rows.map(([p, i, o, r]) => `<tr><td>${esc(pFR(p).replace(/ \d{4}$/, ''))}</td><td>${i ? '+' : ''}${num(i)}</td><td>${o ? '−' : ''}${num(o)}</td><td>${num(r)}</td></tr>`).join('')}</tbody></table><span class="muted" style="font-size:13px">Montants en ${esc(CUR_LABEL[a.currency] || a.currency)}.</span></section>
+        <section class="card stack"><h2>Entrées par catégorie</h2>${catList(byCat('in'))}</section>
+        <section class="card stack"><h2>Dépenses par catégorie</h2>${catList(byCat('out'))}</section>
+        <section class="card stack"><h2>Vie de l’association</h2><dl class="kv num" style="margin:0"><dt>Membres actifs</dt><dd>${activeMembers().length}</dd><dt>Réunions tenues</dt><dd>${held}</dd></dl></section>
+        ${projs.length ? `<section class="card stack"><h2>Projets</h2>${projs.map(p => { const t = tot.get(p.id) || { collected: 0 }; const pc = pct(t.collected, p.goal); return `<div class="stack" style="gap:4px"><div class="between"><b>${esc(p.name)}</b><span class="num">${pc}${NB}%</span></div><div class="bar"><i style="width:${pc}%"></i></div><span class="muted num">${money(t.collected)} sur ${money(p.goal)} · ${esc(p.status)}</span></div>`; }).join('')}</section>` : ''}
+      </article>`;
+  };
+
   V.rapport = async (sub, q) => {
     const a = S.ctx.assoc, cur = curYM();
     const M = /^\d{4}-\d{2}$/.test(q.get('m') || '') && q.get('m') <= cur ? q.get('m') : cur;
@@ -1739,7 +1823,7 @@ Abstention</textarea><p class="help">Entre 2 et 10 choix.</p></div>
     const catList = rows => rows.length ? `<dl class="kv num" style="margin:0">${rows.map(([c, v]) => `<dt>${esc(c)}</dt><dd>${money(v)}</dd>`).join('')}</dl>` : '<span class="muted">Aucune.</span>';
     return `<div class="no-print">${subHead('Rapport mensuel', B() + '/transparence')}</div>
       <div class="field no-print"><label for="rp-m">Mois</label><select id="rp-m" data-nav="rapport">${months.map(x => opt(x, pFR(x).replace(/^./, c => c.toUpperCase()), M)).join('')}</select></div>
-      <div class="row no-print" style="flex-wrap:wrap"><button class="btn primary sm" data-act="print">Télécharger en PDF</button><a class="btn wa sm" target="_blank" rel="noopener" href="${waShare(wa)}">${I.wa} Partager le résumé</a></div>
+      <div class="row no-print" style="flex-wrap:wrap"><button class="btn primary sm" data-act="print">Télécharger en PDF</button><a class="btn wa sm" target="_blank" rel="noopener" href="${waShare(wa)}">${I.wa} Partager le résumé</a><a class="btn ghost sm" href="${B()}/rapportannuel">Rapport de l’année</a></div>
       <article class="report stack">
         <header class="report-head"><span class="eyebrow">${esc(a.name)}</span><h1>${esc(title)}</h1><span class="muted" style="font-size:13px">Établi le ${dFR(todayISO())} avec VillageLink</span></header>
         <section class="card stack"><h2>Caisse</h2><dl class="kv num" style="margin:0"><dt>Solde au début du mois</dt><dd>${money(open)}</dd><dt>Entrées du mois</dt><dd style="color:var(--green)">${inM ? '+' : ''}${money(inM)}</dd><dt>Sorties du mois</dt><dd style="color:var(--danger)">${outM ? '−' : ''}${money(outM)}</dd><dt><b>Solde à la fin du mois</b></dt><dd><b>${money(close)}</b></dd></dl></section>
@@ -1820,9 +1904,10 @@ Abstention</textarea><p class="help">Entre 2 et 10 choix.</p></div>
         <p class="help">Le pular est en essai : certains textes restent en français.</p></section>
       <section class="card stack"><h2>Apparence</h2><div class="seg seg3" role="group" aria-label="Apparence">${THEMES.map(([k, l]) => `<button data-act="theme" data-theme="${k}" aria-pressed="${themeNow() === k}">${l}</button>`).join('')}</div>
         <p class="help">Le mode clair se lit mieux en plein soleil.</p></section>
+      <section class="card stack"><h2>Verrou par code</h2>${pinGet() ? `<p class="muted" style="margin:0;font-size:15px">Le code est demandé à l’ouverture de l’application, et quand vous revenez après un moment.</p><button class="btn ghost sm" data-act="pinoff">Retirer le code</button>` : `<p class="muted" style="margin:0;font-size:15px">Un code à 4 chiffres protège l’application si quelqu’un prend votre téléphone.</p><form class="stack" data-form="pinset" novalidate><div class="field"><label for="pin-a">Nouveau code (4 chiffres)</label><input id="pin-a" name="pin" type="password" inputmode="numeric" maxlength="4" autocomplete="new-password"></div><div class="field"><label for="pin-b">Répétez le code</label><input id="pin-b" name="pin2" type="password" inputmode="numeric" maxlength="4" autocomplete="new-password"></div><p class="err" hidden></p><button class="btn primary block" type="submit">Activer le verrou</button></form>`}<p class="help">Ce verrou reste sur ce téléphone. Il ne remplace pas votre mot de passe.</p></section>
       <button class="btn danger block" data-act="signout">${I.out} Se déconnecter</button>
       ${delAcctBox()}
-      <p class="muted" style="font-size:13px;text-align:center">VillageLink · version 2.0 · <a class="link" href="confidentialite.html">Confidentialité</a> · <a class="link" href="conditions.html">Conditions</a></p>`;
+      <p class="muted" style="font-size:13px;text-align:center">VillageLink · version 2.2 · <a class="link" href="confidentialite.html">Confidentialité</a> · <a class="link" href="conditions.html">Conditions</a></p>`;
   };
 
   /* Notifications sur le téléphone ----------------------------------- */
@@ -1922,6 +2007,7 @@ Abstention</textarea><p class="help">Entre 2 et 10 choix.</p></div>
         <div class="code">${esc(a.invite_code)}</div>
         <a class="btn wa block" target="_blank" rel="noopener" href="${waShare(invite)}">${I.wa} Envoyer l’invitation sur WhatsApp</a>
         ${pres ? '<button class="btn ghost sm" data-act="newcode">Changer le code</button>' : ''}</section>
+      ${can('members') ? `<section class="card stack"><h2>Exporter les données</h2><p class="muted" style="margin:0;font-size:13.5px">Téléchargez un fichier que vous ouvrez dans Excel : la liste des membres, ou toutes les opérations de la caisse.</p><div class="row" style="flex-wrap:wrap"><button class="btn ghost sm" data-act="exp" data-what="membres">Les membres</button><button class="btn ghost sm" data-act="exp" data-what="operations">Les opérations</button></div><p class="help">La liste des membres contient les numéros de téléphone : gardez le fichier pour vous.</p></section>` : ''}
       ${can('cover') ? `<form class="card stack" data-form="cover" novalidate><h2>Photo de couverture</h2><p class="muted" style="margin:0;font-size:13.5px">Elle s’affiche en haut de l’accueil pour tous les membres. Choisissez une belle photo du village.</p>
         ${cvPrev ? `<div class="cover cover-sm"><img src="${esc(cvPrev)}" alt=""></div>` : ''}
         <div class="field"><label for="cv-f">${cvPrev ? 'Changer la photo' : 'Choisir une photo'}</label><input id="cv-f" name="file" type="file" accept="image/*"></div>
@@ -2202,6 +2288,15 @@ Abstention</textarea><p class="help">Entre 2 et 10 choix.</p></div>
       const id = must(await sb.rpc('create_poll', { p_assoc: S.ctx.assoc.id, p_question: question, p_description: val(fd, 'description'), p_options: options, p_closes_at: closes, p_anonymous: !!fd.get('anonymous') }));
       toast('Vote lancé'); go(B() + '/vote/' + id);
     },
+    async pinset(fd) {
+      const a = String(fd.get('pin') || ''), b = String(fd.get('pin2') || '');
+      if (!/^\d{4}$/.test(a)) fail('Le code doit faire exactement 4 chiffres.');
+      if (a !== b) fail('Les deux codes ne sont pas identiques.');
+      if (!window.crypto || !crypto.subtle) fail('Ce téléphone ne permet pas le verrou. Mettez à jour votre navigateur.');
+      const salt = [...crypto.getRandomValues(new Uint8Array(12))].map(x => x.toString(16).padStart(2, '0')).join('');
+      localStorage.setItem(PINK, JSON.stringify({ v: 1, salt, hash: await pinHash(a, salt) }));
+      toast('Verrou activé'); route();
+    },
     async cover(fd) {
       if (!can('cover')) fail('Réservé au président, au vice-président et au secrétaire.');
       const file = fd.get('file');
@@ -2469,6 +2564,11 @@ Abstention</textarea><p class="help">Entre 2 et 10 choix.</p></div>
         const box = $('#proof-box'); box.innerHTML = '<span class="muted">Chargement…</span>';
         const r = must(await sb.storage.from('proofs').createSignedUrl(b.dataset.path, 3600));
         box.innerHTML = /\.pdf$/i.test(b.dataset.path) ? `<a class="btn ghost sm" target="_blank" rel="noopener" href="${esc(r.signedUrl)}">Ouvrir le PDF</a>` : `<a href="${esc(r.signedUrl)}" target="_blank" rel="noopener"><img class="proof-img" src="${esc(r.signedUrl)}" alt="Justificatif"></a>`;
+      } else if (act === 'pinoff') {
+        try { localStorage.removeItem(PINK); } catch (e) { /* rien */ }
+        toast('Verrou retiré'); route();
+      } else if (act === 'exp') {
+        b.disabled = true; try { await exportData(b.dataset.what); } finally { b.disabled = false; }
       } else if (act === 'coverdel') {
         if (b.dataset.confirm !== '1') { b.dataset.confirm = '1'; b.textContent = 'Confirmer : retirer la photo'; b.classList.add('danger'); return; }
         const old = S.ctx.assoc.cover_path;
@@ -2485,6 +2585,7 @@ Abstention</textarea><p class="help">Entre 2 et 10 choix.</p></div>
 
   /* Mode hors ligne : un service worker garde une copie de l'application et des dernières données lues. */
   function clearOfflineData() {
+    try { localStorage.removeItem('vl:pin'); } catch (e) { /* rien */ }
     try { if (navigator.serviceWorker && navigator.serviceWorker.controller) navigator.serviceWorker.controller.postMessage('vl-clear'); } catch (e) { /* rien */ }
     try { if (window.caches) caches.delete('vl-data-v1'); } catch (e) { /* rien */ }
   }
@@ -2493,7 +2594,7 @@ Abstention</textarea><p class="help">Entre 2 et 10 choix.</p></div>
   }
   const setOnline = () => $('#offline').classList.toggle('hidden', navigator.onLine);
   window.addEventListener('online', setOnline); window.addEventListener('offline', setOnline); setOnline();
-  document.addEventListener('change', e => { const el = e.target; if (el && el.dataset && el.dataset.nav === 'rapport' && /^\d{4}-\d{2}$/.test(el.value)) go(B() + '/rapport?m=' + el.value); });
+  document.addEventListener('change', e => { const el = e.target; if (el && el.dataset && el.dataset.nav === 'rapport' && /^\d{4}-\d{2}$/.test(el.value)) go(B() + '/rapport?m=' + el.value); if (el && el.dataset && el.dataset.nav === 'rapportannuel' && /^\d{4}$/.test(el.value)) go(B() + '/rapportannuel?a=' + el.value); });
   const onScroll = () => document.body.classList.toggle('scrolled', window.scrollY > 8);
   window.addEventListener('scroll', onScroll, { passive: true }); window.addEventListener('hashchange', () => setTimeout(onScroll, 50));
   window.addEventListener('hashchange', route);
@@ -2507,6 +2608,50 @@ Abstention</textarea><p class="help">Entre 2 et 10 choix.</p></div>
   /* ------------------------------------------------------------------
      Session
   ------------------------------------------------------------------ */
+
+  /* Verrou par code (sur ce téléphone) -------------------------------- */
+  const PINK = 'vl:pin';
+  const pinGet = () => { try { return JSON.parse(localStorage.getItem(PINK) || 'null'); } catch (e) { return null; } };
+  const pinHash = async (pin, salt) => {
+    const k = await crypto.subtle.importKey('raw', new TextEncoder().encode(pin), 'PBKDF2', false, ['deriveBits']);
+    const b = await crypto.subtle.deriveBits({ name: 'PBKDF2', hash: 'SHA-256', salt: new TextEncoder().encode(salt), iterations: 100000 }, k, 256);
+    return [...new Uint8Array(b)].map(x => x.toString(16).padStart(2, '0')).join('');
+  };
+  let lockP = null, hiddenAt = 0, badTries = 0, waitUntil = 0;
+  function showLock() {
+    if (lockP) return lockP;
+    lockP = new Promise(ok => {
+      const el = document.createElement('div'); el.className = 'lock'; el.setAttribute('role', 'dialog'); el.setAttribute('aria-modal', 'true'); el.setAttribute('aria-label', 'Application verrouillée');
+      el.innerHTML = `<form class="lock-box stack" novalidate>${LOGO}<h2>Entrez votre code</h2><input class="lock-in num" name="pin" type="password" inputmode="numeric" autocomplete="off" maxlength="4" aria-label="Code à 4 chiffres"><p class="err" hidden></p><button class="btn primary block" type="submit">Ouvrir</button><button class="link" type="button" data-lock="out">Code oublié ? Se déconnecter</button></form>`;
+      document.body.appendChild(el);
+      const f = el.querySelector('form'), inp = el.querySelector('input'), err = el.querySelector('.err');
+      const done = () => { el.remove(); lockP = null; ok(); };
+      setTimeout(() => inp.focus(), 50);
+      f.addEventListener('submit', async ev => {
+        ev.preventDefault();
+        const st = pinGet(); if (!st) return done();
+        const left = Math.ceil((waitUntil - Date.now()) / 1000);
+        if (left > 0) { err.textContent = `Trop d’essais. Attendez ${left} secondes.`; err.hidden = false; return; }
+        let good = false; try { good = (await pinHash(inp.value, st.salt)) === st.hash; } catch (x) { good = false; }
+        if (good) { badTries = 0; return done(); }
+        inp.value = ''; badTries++;
+        if (badTries >= 5) { badTries = 0; waitUntil = Date.now() + 30000; err.textContent = 'Trop d’essais. Attendez 30 secondes.'; }
+        else err.textContent = 'Code incorrect.';
+        err.hidden = false;
+      });
+      el.querySelector('[data-lock=out]').addEventListener('click', async () => {
+        try { localStorage.removeItem(PINK); } catch (x) { /* rien */ }
+        done();
+        try { await pushOff(true).catch(() => {}); clearOfflineData(); await sb.auth.signOut(); } catch (x) { console.error(x); }
+        S.ctx = null; S.authMode = 'login'; S.authMsg = ''; S.session = null; S.user = null; location.hash = '#/'; renderAuth();
+      });
+    });
+    return lockP;
+  }
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') { hiddenAt = Date.now(); return; }
+    if (S.session && pinGet() && hiddenAt && Date.now() - hiddenAt > 30000) showLock();
+  });
   let started = false;
   sb.auth.onAuthStateChange((event, session) => {
     const had = !!S.session;
@@ -2524,6 +2669,7 @@ Abstention</textarea><p class="help">Entre 2 et 10 choix.</p></div>
     } catch (e) { console.error(e); }
     if (/^#access_token=/.test(location.hash)) history.replaceState(null, '', location.pathname + (S.session ? '#/' : ''));
     started = true;
+    if (S.session && pinGet()) await showLock();
     route();
   })();
 

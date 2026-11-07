@@ -104,6 +104,32 @@ async function main() {
     check(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1), 'les Paramètres ne débordent pas de l’écran');
     await page.screenshot({ path: path.join(OUT, `parametres-${theme}.png`), fullPage: true });
 
+    const hasLot2 = fs.readFileSync(path.join(ROOT, 'app.js'), 'utf8').includes('rapportannuel');
+    if (hasLot2) {
+      check(await page.locator('[data-act=exp]').count() === 2, 'les boutons d’export (membres, opérations) sont dans les Paramètres');
+      await page.goto(base + `#/a/${AID}/rapportannuel`, { waitUntil: 'domcontentloaded' });
+      await page.waitForTimeout(1200);
+      const txt3 = await page.evaluate(() => document.body.innerText);
+      check(/Rapport de l’année/.test(txt3) && /Mois par mois/.test(txt3), 'le rapport annuel s’affiche');
+      check(!/Impossible d’afficher/.test(txt3), 'le rapport annuel n’a pas d’erreur');
+      check(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1), 'le rapport annuel ne déborde pas de l’écran');
+      await page.screenshot({ path: path.join(OUT, `rapport-annuel-${theme}.png`), fullPage: true });
+      await page.goto(base + `#/a/${AID}/plus`, { waitUntil: 'domcontentloaded' });
+      await page.waitForTimeout(1200);
+      check(await page.locator('form[data-form=pinset]').count() === 1, 'la carte « Verrou par code » est dans Mon profil');
+      await page.fill('#pin-a', '1234'); await page.fill('#pin-b', '1234');
+      await page.click('form[data-form=pinset] button[type=submit]');
+      await page.waitForTimeout(800);
+      check(await page.evaluate(() => !!localStorage.getItem('vl:pin')), 'le code PIN est enregistré');
+      await page.reload({ waitUntil: 'domcontentloaded' });
+      await page.waitForTimeout(1200);
+      check(await page.locator('.lock').count() === 1, 'l’écran de verrouillage s’affiche à l’ouverture');
+      await page.screenshot({ path: path.join(OUT, `verrou-${theme}.png`) });
+      await page.fill('.lock-in', '0000'); await page.click('.lock button[type=submit]'); await page.waitForTimeout(800);
+      check(/Code incorrect/.test(await page.evaluate(() => document.body.innerText)), 'un mauvais code est refusé');
+      await page.fill('.lock-in', '1234'); await page.click('.lock button[type=submit]'); await page.waitForTimeout(1200);
+      check(await page.locator('.lock').count() === 0, 'le bon code déverrouille');
+    }
     check(errors.length === 0, 'aucune erreur de code dans le navigateur' + (errors.length ? ' : ' + errors.slice(0, 3).join(' | ') : ''));
     await ctx.close();
   }
