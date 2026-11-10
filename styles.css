@@ -460,3 +460,21 @@ details.more[open] summary::before{content:"− "}
 .cover-t{position:absolute;left:0;right:0;bottom:0;padding:10px 16px;background:rgba(20,22,27,.68);color:#fff;font-weight:700;font-size:18px}
 .cover-sm img{height:110px}
 @media (min-width:900px){.cover img{height:220px}}
+
+/* Lot 2 : verrou par code, feuille de présence, rapport annuel */
+.lock{position:fixed;inset:0;z-index:40;background:var(--color-bg);display:flex;align-items:center;justify-content:center;padding:24px}
+.lock-box{width:100%;max-width:340px;text-align:center;align-items:center}
+.lock-box .logo{width:56px;height:56px}
+.lock-box .err{margin:0}
+.lock-in{width:100%;min-height:64px;text-align:center;font-size:32px;letter-spacing:.5em;padding:8px 8px 8px calc(8px + .5em);border:1px solid var(--color-border-strong);border-radius:var(--radius-md);background:var(--color-surface);color:var(--color-text)}
+.lock-in:focus{outline:2px solid var(--color-focus-ring);outline-offset:2px}
+table.sheet{width:100%;border-collapse:collapse;font-size:16px}
+table.sheet th,table.sheet td{border:1px solid var(--color-border-strong);padding:12px 10px;text-align:left}
+table.sheet th{background:var(--color-surface-2);font-weight:600}
+table.sheet td:empty{min-width:120px}
+table.sheet.num td:not(:first-child),table.sheet.num th:not(:first-child){text-align:right}
+@media print{
+  .lock{display:none!important}
+  table.sheet th,table.sheet td{border:1px solid #888;padding:10px 8px;color:#111;background:#fff!important}
+  table.sheet tr{break-inside:avoid}
+}
