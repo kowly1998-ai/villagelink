@@ -449,7 +449,7 @@
      Cadre d'une association
   ------------------------------------------------------------------ */
   /* Navigation v2 : 5 onglets. Chaque onglet regroupe ses pages : barre de segments sur téléphone, sous-menu à gauche sur ordinateur. */
-  const LOGO = '<svg class="logo" viewBox="0 0 40 40" role="img" aria-label="VillageLink"><rect width="40" height="40" rx="10" fill="var(--color-primary)"/><path d="M11 21 20 13l9 8v8H11z" fill="none" stroke="var(--color-on-primary)" stroke-width="2.6" stroke-linejoin="round"/><circle cx="20" cy="22.5" r="2.6" fill="var(--color-on-primary)"/></svg>';
+  const LOGO = '<img class="logo" src="icon.svg" alt="VillageLink" width="40" height="40">';
   const NAV = [
     { tab: '', label: 'Accueil', icon: I.home, keys: ['home'] },
     { tab: 'membres', label: 'Membres', icon: I.users, keys: ['membres', 'm', 'sections'] },
