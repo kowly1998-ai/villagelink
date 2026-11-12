@@ -19,6 +19,8 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # historique complet : le contrôle des numéros ?v= compare avec main
       - uses: actions/setup-node@v4
         with:
           node-version: 22
