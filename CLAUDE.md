@@ -10,7 +10,7 @@ transparentes, projets, annonces, réunions et discussion.
   Claude écrit, vérifie et met en ligne le code.
 - Répondre en français simple, sans jargon. À la fin de chaque changement, dire précisément
   quoi tester sur le téléphone.
-- Version actuelle : **2.2** (design v2, suspension d'association, photo de couverture, nouvelle icône, export CSV, rapport annuel, feuille de présence, verrou par code).
+- Version actuelle : **2.2.5** (design v2, suspension d'association, photo de couverture, nouvelle icône, export CSV, rapport annuel, feuille de présence, verrou par code).
 
 ## Stack
 
@@ -117,7 +117,7 @@ Rôles : `president`, `vice_president`, `secretaire`, `tresorier`, `projets`, `m
    `apply_migration` (même nom, même contenu, ex. `v1_5_...`). La base d'abord, le code ensuite.
    Ajouter aussi le même SQL à la fin de `supabase/schema.sql`, qui doit rester la photo complète de la base.
 2. **Cache** : augmenter le numéro `?v=` dans `index.html` pour chaque fichier modifié
-   (aujourd'hui `styles.css?v=42`, `config.js?v=2`, `i18n-ff.js?v=1`, `receipt.js?v=3`, `app.js?v=60`). Sinon les téléphones gardent
+   (aujourd'hui `styles.css?v=42`, `config.js?v=2`, `i18n-ff.js?v=1`, `receipt.js?v=3`, `app.js?v=61`). Sinon les téléphones gardent
    l'ancienne version.
 3. **Vérification** : `node tests/verification.cjs` (avec Playwright, préparé au démarrage de chaque session cloud par `.claude/hooks/session-start.sh`, qui met aussi la branche à jour depuis `main` ou prévient si elle a du travail non fusionné) contrôle l'écriture du code, les fichiers appelés et leur `?v=` (rouge si un fichier a changé depuis `main` sans nouveau numéro), l'absence de clé secrète dans le dépôt, les empreintes SRI, le lecteur de reçus et l'ouverture des pages à 360 px. GitHub Actions (`.github/workflows/verification.yml`) la lance sur chaque demande de fusion et chaque envoi vers `main` : ne pas fusionner si elle est rouge. Ajouter un contrôle quand une nouvelle fonction le mérite.
 4. **Commit** sur `main`, en français : `Version X.Y : <ce qui change>`.
@@ -155,6 +155,7 @@ Rôles : `president`, `vice_president`, `secretaire`, `tresorier`, `projets`, `m
 - v2.2 lot 2 : export CSV des membres et des opérations (Paramètres, `exportData`), rapport annuel (`V.rapportannuel`), feuille de présence à imprimer (`r/<id>/feuille`), verrou par code PIN sur le téléphone (`vl:pin`, PBKDF2, effacé à la déconnexion). Politique de sécurité : plus de `'unsafe-inline'` pour `style-src` (seulement `style-src-attr`). Aucune migration de base.
 - v2.2.3 (audit) : montants avec point/virgule refusés ; monnaie bloquée dès qu'il y a des montants (`associations_guard`) ; historique des cotisations (`fee_history`, `member_category_history`, `feeOf(m, période)`) ; paiement réparti sur plusieurs mois (`spread`) ; téléphone et e-mail des membres réservés au bureau (colonnes `phone`/`email` non lisibles, fonction `member_contacts`) : **toute nouvelle colonne de `members` doit être ajoutée au `grant select (...)`** ; on ne confirme pas son propre paiement déclaré ; `loadCtx` en parallèle ; verrou par code avec compteur d'essais gardé (`vl:pin:try`).
 - v2.2.4 (suite de l'audit) : B6, les retards de cotisation utilisent la date du serveur (`server_now`, écart gardé dans `clockSkew` si plus de 2 minutes) ; B9, documentation remise à jour ; B8, test d'affichage étendu.
+- v2.2.5 (audit B7) : numéro de saisie `client_ref` sur `transactions` et `expense_requests` (index unique par association). Les formulaires `pay` et `op` le reçoivent (`refField()`) ; un doublon refusé (`isDup`) s'affiche « déjà enregistré ». Un paiement réparti sur plusieurs mois envoie `<numéro>:1`, `:2`… **Tout nouveau formulaire qui crée de l'argent doit porter `refField()`.**
 - **Mis de côté** : paiement mobile directement dans l'app (agrégateurs type SasPay).
 - **Plus tard** : publication sur le Play Store.
 - La colonne `associations.plan` existe déjà pour de futures offres.

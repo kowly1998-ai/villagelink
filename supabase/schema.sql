@@ -3132,3 +3132,16 @@ language sql stable security invoker set search_path = public as $$
 $$;
 revoke all on function public.server_now() from public, anon;
 grant execute on function public.server_now() to authenticated;
+
+-- ---------------------------------------------------------------------
+-- Numéro de saisie (version 2.2.5, audit B7)
+-- ---------------------------------------------------------------------
+alter table public.transactions add column if not exists client_ref text
+  check (client_ref is null or client_ref ~ '^[A-Za-z0-9-]{16,64}(:[0-9]{1,2})?$');
+create unique index if not exists transactions_client_ref_uq
+  on public.transactions(association_id, client_ref) where client_ref is not null;
+
+alter table public.expense_requests add column if not exists client_ref text
+  check (client_ref is null or client_ref ~ '^[A-Za-z0-9-]{16,64}$');
+create unique index if not exists expense_requests_client_ref_uq
+  on public.expense_requests(association_id, client_ref) where client_ref is not null;

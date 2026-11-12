@@ -91,6 +91,11 @@
     return m;
   }
   function must(res) { if (res.error) throw res.error; return res.data; }
+  // Numéro de saisie (audit B7) : tiré au hasard quand un formulaire d'argent s'affiche. Si le même
+  // formulaire est envoyé deux fois (connexion coupée, double appui), la base refuse le doublon.
+  const newRef = () => { const b = new Uint8Array(16); crypto.getRandomValues(b); return Array.from(b, x => x.toString(16).padStart(2, '0')).join(''); };
+  const refField = () => `<input type="hidden" name="client_ref" value="${newRef()}">`;
+  const isDup = e => !!e && e.code === '23505' && /client_ref/.test(e.message || '');
   async function fetchAll(make, size = 1000) {
     const out = [];
     for (let from = 0; from < 100000; from += size) {
@@ -934,7 +939,7 @@
     if (!list.length) return `${subHead('Encaisser', B() + '/cotisations')}<p class="note">Ajoutez d’abord des membres.</p>`;
     const sm = S.ctx.byId.get(sel) || list[0];
     return `${subHead('Encaisser une cotisation', B() + '/cotisations')}
-      <form class="stack" data-form="pay" novalidate>
+      <form class="stack" data-form="pay" novalidate>${refField()}
         <div class="card pay-member"><div class="av" id="pay-av" aria-hidden="true">${esc(initials(sm.full_name))}</div><div style="flex:1;min-width:0"><label for="pay-m" class="sub">Membre</label><select id="pay-m" name="member_id">${list.map(m => opt(m.id, m.full_name + (dues(m).isLate ? ' · en retard' : ''), sel)).join('')}</select><div class="sub" id="pay-cat"></div></div></div>
         <div class="field"><label for="pay-p">Mois concerné</label><select id="pay-p" name="period"></select></div>
         <div class="big-amount"><label for="pay-a" class="muted" style="font-size:14px">Montant (${esc(CUR_LABEL[a.currency] || a.currency)})</label><input id="pay-a" name="amount" type="number" inputmode="decimal" min="0" step="1"><span class="muted num" id="pay-rule" style="font-size:11.5px"></span><p class="help num" id="pay-conv" hidden></p></div>
@@ -1179,7 +1184,7 @@
       const mem = activeMembers().slice().sort((x, y) => x.full_name.localeCompare(y.full_name, 'fr'));
       return `${subHead(type === 'out' ? 'Remise de la collecte' : 'Contribution', back)}
       <p class="note"><b>${esc(col.title)}</b>${col.beneficiary ? ' · ' + esc(col.beneficiary) : ''}${approval ? '<br>La remise sera envoyée au président ou au vice-président pour approbation.' : ''}</p>
-      <form class="stack" data-form="op" data-type="${type}" novalidate><input type="hidden" name="collection_id" value="${esc(col.id)}">
+      <form class="stack" data-form="op" data-type="${type}" novalidate>${refField()}<input type="hidden" name="collection_id" value="${esc(col.id)}">
         <input type="hidden" name="category" value="${type === 'out' ? 'Autres' : 'Contributions exceptionnelles'}">
         ${type === 'in' ? `<div class="field"><label for="op-m">Contributeur</label><select id="op-m" name="member_id"><option value="">Une personne hors de l’association</option>${mem.map(m => opt(m.id, m.full_name)).join('')}</select></div>` : ''}
         ${fxFields('op')}
@@ -1194,7 +1199,7 @@
     return `${subHead(approval ? 'Proposer une dépense' : type === 'out' ? 'Nouvelle dépense' : 'Nouvelle recette', B() + '/finances')}
       ${approval ? '<p class="note">Double validation : la dépense n’entrera dans la caisse qu’après l’approbation du président ou du vice-président. Joignez le reçu pour l’aider à décider.</p>' : ''}
       ${type === 'in' ? `<p class="note">Pour une cotisation mensuelle, utilisez plutôt <a class="link" href="${B()}/encaisser">Enregistrer un paiement</a> : le membre sera marqué à jour.</p>` : ''}
-      <form class="stack" data-form="op" data-type="${type}" novalidate>
+      <form class="stack" data-form="op" data-type="${type}" novalidate>${refField()}
         <div class="field"><label for="op-cat">Catégorie</label><select id="op-cat" name="category">${cats.map(c => opt(c, c, pre && type === 'in' ? 'Dons' : pre ? 'Projet' : '')).join('')}</select></div>
         ${fxFields('op')}
         <div class="field"><label for="op-a">Montant (${esc(CUR_LABEL[S.ctx.assoc.currency] || S.ctx.assoc.currency)})</label><input id="op-a" name="amount" type="number" inputmode="decimal" min="0" step="1" required><p class="help num" id="op-conv" hidden></p></div>
@@ -2209,8 +2214,12 @@ Abstention</textarea><p class="help">Entre 2 et 10 choix.</p></div>
         member_id: mid, payment_method: val(fd, 'payment_method') };
       const note = val(fd, 'comment'), many = parts.length > 1;
       // Une seule demande à la base : soit tous les mois sont enregistrés, soit aucun.
-      const rows = must(await sb.from('transactions').insert(parts.map(x => ({ ...base, amount: x.amount, period: x.period, description: 'Cotisation de ' + pFR(x.period),
-        comment: many ? [note, `Paiement de ${money(amount)} réparti sur ${parts.length} mois.`].filter(Boolean).join(' ') : note, ...(many ? {} : fx) }))).select('id'));
+      const ref = val(fd, 'client_ref') || null;
+      const res = await sb.from('transactions').insert(parts.map((x, i) => ({ ...base, amount: x.amount, period: x.period, description: 'Cotisation de ' + pFR(x.period),
+        comment: many ? [note, `Paiement de ${money(amount)} réparti sur ${parts.length} mois.`].filter(Boolean).join(' ') : note, ...(many ? {} : fx),
+        client_ref: ref && (many ? `${ref}:${i + 1}` : ref) }))).select('id');
+      if (isDup(res.error)) { await refresh(); toast('Ce paiement était déjà enregistré'); return go(B() + '/m/' + mid); }
+      const rows = must(res);
       await refresh();
       if (many) { toast(`Paiement réparti sur ${parts.length} mois`); return go(B() + '/m/' + mid); }
       toast('Paiement enregistré'); go(B() + '/op/' + rows[0].id + '?recu=1');
@@ -2222,6 +2231,7 @@ Abstention</textarea><p class="help">Entre 2 et 10 choix.</p></div>
       const { amount, fx } = readAmount(fd);
       if (desc.length < 2) fail('Ajoutez une description pour que les membres comprennent l’opération.');
       if (kind === 'out' && amount > S.ctx.bal.in - S.ctx.bal.out) fail(`Le montant dépasse le solde disponible (${money(S.ctx.bal.in - S.ctx.bal.out)}).`);
+      const ref = val(fd, 'client_ref') || null;
       let proof_path = '';
       const file = await compress(fd.get('proof'));
       if (file) {
@@ -2231,16 +2241,24 @@ Abstention</textarea><p class="help">Entre 2 et 10 choix.</p></div>
         must(await sb.storage.from('proofs').upload(proof_path, file, { contentType: file.type, upsert: false }));
       }
       if (kind === 'out' && S.ctx.assoc.expense_approval) {
-        const r = must(await sb.from('expense_requests').insert({
+        const er = await sb.from('expense_requests').insert({
           association_id: S.ctx.assoc.id, category: val(fd, 'category'), amount, occurred_on: val(fd, 'occurred_on') || todayISO(),
-          description: desc, project_id: val(fd, 'project_id') || null, comment: val(fd, 'comment'), proof_path, collection_id: colId, ...fx
-        }).select('id').single());
+          description: desc, project_id: val(fd, 'project_id') || null, comment: val(fd, 'comment'), proof_path, collection_id: colId, client_ref: ref, ...fx
+        }).select('id').single();
+        if (isDup(er.error)) { await refresh(); toast('Cette dépense était déjà envoyée'); return go(B() + '/depenses'); }
+        const r = must(er);
         await refresh(); toast('Dépense envoyée pour approbation'); return go(B() + '/depense/' + r.id);
       }
-      const t = must(await sb.from('transactions').insert({
+      const tr = await sb.from('transactions').insert({
         association_id: S.ctx.assoc.id, kind, category: val(fd, 'category'), amount, occurred_on: val(fd, 'occurred_on') || todayISO(),
-        description: desc, project_id: val(fd, 'project_id') || null, payment_method: val(fd, 'payment_method'), comment: val(fd, 'comment'), proof_path, collection_id: colId, member_id: mid, ...fx
-      }).select('*').single());
+        description: desc, project_id: val(fd, 'project_id') || null, payment_method: val(fd, 'payment_method'), comment: val(fd, 'comment'), proof_path, collection_id: colId, member_id: mid, client_ref: ref, ...fx
+      }).select('*').single();
+      if (isDup(tr.error)) {
+        const old = await sb.from('transactions').select('id').eq('association_id', S.ctx.assoc.id).eq('client_ref', ref).maybeSingle();
+        await refresh(); toast('Cette opération était déjà enregistrée');
+        return go(old.data ? B() + '/op/' + old.data.id : B() + '/finances');
+      }
+      const t = must(tr);
       await refresh();
       if (colId) { toast(kind === 'out' ? 'Remise enregistrée' : 'Contribution enregistrée'); return go(B() + '/collecte/' + colId); }
       toast(kind === 'out' ? 'Dépense enregistrée' : 'Recette enregistrée'); go(B() + '/op/' + t.id);
