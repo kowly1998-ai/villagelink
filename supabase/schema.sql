@@ -2974,3 +2974,150 @@ language sql stable security definer set search_path = public as $$
                    and (auth.uid() is null or is_member(e.association_id) or am_owner()
                         or coalesce(current_setting('vl.system', true), '') = 'on'));
 $$;
+
+-- v2.2.3 : monnaie verrouillée dès qu’il y a des montants
+create or replace function public.associations_guard() returns trigger
+language plpgsql set search_path = public as $$
+begin
+  if new.invite_code <> old.invite_code and coalesce(current_setting('vl.system', true), '') <> 'on' then
+    raise exception 'Le code d''invitation se change avec la fonction prévue.';
+  end if;
+  if (new.plan <> old.plan or new.trial_ends is distinct from old.trial_ends or new.paid_until is distinct from old.paid_until
+      or new.blocked_at is distinct from old.blocked_at or new.blocked_reason is distinct from old.blocked_reason)
+     and coalesce(current_setting('vl.system', true), '') <> 'on' then
+    raise exception 'L''offre se change par VillageLink.';
+  end if;
+  if new.currency <> old.currency and coalesce(current_setting('vl.system', true), '') <> 'on'
+     and (exists (select 1 from transactions where association_id = old.id)
+       or exists (select 1 from expense_requests where association_id = old.id)
+       or exists (select 1 from payment_claims where association_id = old.id)
+       or exists (select 1 from collections where association_id = old.id)
+       or exists (select 1 from projects where association_id = old.id)) then
+    raise exception 'La monnaie ne peut plus changer : l''association a déjà des montants enregistrés dans cette monnaie.';
+  end if;
+  return new;
+end $$;
+
+-- v2.2.3 : contacts_et_confirmation
+-- (1) Confirmation d'un paiement déclaré : jamais par la personne qui l'a déclaré
+create or replace function public.confirm_payment_claim(p_id bigint) returns bigint
+language plpgsql security definer set search_path = public as $$
+declare r payment_claims; tid bigint;
+begin
+  select * into r from payment_claims where id = p_id for update;
+  if r.id is null or not can_collect_member(r.member_id) then
+    raise exception 'Seuls le trésorier, le président, le vice-président ou le trésorier de section confirment un paiement.';
+  end if;
+  if r.status <> 'pending' then raise exception 'Cette déclaration a déjà été traitée.'; end if;
+  if r.created_by = auth.uid() or exists (select 1 from members m where m.id = r.member_id and m.user_id = auth.uid()) then
+    raise exception 'Vous ne pouvez pas confirmer votre propre paiement. Un autre membre du bureau doit le faire.';
+  end if;
+  insert into transactions(association_id, kind, category, amount, occurred_on, description, member_id, period, payment_method, comment)
+  values (r.association_id, 'in', 'Cotisations', r.amount, r.created_at::date, 'Cotisation de ' || pfr(r.period), r.member_id, r.period, r.method,
+          'Payé par ' || r.method || ' au ' || r.sent_to || case when r.reference <> '' then ', réf. ' || r.reference else '' end || '. Déclaré par le membre.')
+  returning id into tid;
+  update payment_claims set status = 'confirmed', decided_by = auth.uid(), decided_label = actor_label(r.association_id),
+         decided_at = now(), transaction_id = tid where id = p_id;
+  return tid;
+end $$;
+
+-- (2) Les colonnes phone et email ne se lisent plus directement.
+--     Attention : une nouvelle colonne de members doit être ajoutée à ce grant.
+revoke select on public.members from authenticated, anon;
+grant select (id, association_id, user_id, full_name, city, country, role, joined_on, active, created_at,
+              pending, created_by_join, section_id, category_id) on public.members to authenticated;
+
+-- Contacts : le bureau voit tout le monde ; un membre voit sa fiche et le bureau.
+create or replace function public.member_contacts(p_assoc uuid)
+returns table (id uuid, phone text, email text)
+language sql stable security definer set search_path = public as $$
+  select m.id, m.phone, m.email from members m
+  where m.association_id = p_assoc and is_member(p_assoc)
+    and (has_role(p_assoc, array['president','vice_president','secretaire','tresorier'])
+         or m.user_id = auth.uid()
+         or (m.role in ('president','vice_president','secretaire','tresorier') and m.active and not m.pending));
+$$;
+revoke all on function public.member_contacts(uuid) from public, anon;
+grant execute on function public.member_contacts(uuid) to authenticated;
+
+-- v2.2.3 : historique_cotisations
+
+create table if not exists public.fee_history (
+  id bigserial primary key,
+  association_id uuid not null references public.associations(id) on delete cascade,
+  category_id uuid references public.member_categories(id) on delete cascade,
+  from_period text not null check (from_period ~ '^\d{4}-(0[1-9]|1[0-2])$'),
+  fee_amount bigint not null check (fee_amount >= 0),
+  created_at timestamptz not null default now()
+);
+create unique index if not exists fee_history_one_per_month
+  on public.fee_history (association_id, coalesce(category_id, '00000000-0000-0000-0000-000000000000'::uuid), from_period);
+
+create table if not exists public.member_category_history (
+  id bigserial primary key,
+  association_id uuid not null references public.associations(id) on delete cascade,
+  member_id uuid not null references public.members(id) on delete cascade,
+  category_id uuid references public.member_categories(id) on delete set null,
+  from_period text not null check (from_period ~ '^\d{4}-(0[1-9]|1[0-2])$'),
+  created_at timestamptz not null default now(),
+  unique (member_id, from_period)
+);
+
+alter table public.fee_history enable row level security;
+alter table public.member_category_history enable row level security;
+drop policy if exists fee_history_select on public.fee_history;
+create policy fee_history_select on public.fee_history for select to authenticated using (is_member(association_id));
+drop policy if exists member_category_history_select on public.member_category_history;
+create policy member_category_history_select on public.member_category_history for select to authenticated using (is_member(association_id));
+revoke all on public.fee_history, public.member_category_history from anon, authenticated;
+grant select on public.fee_history, public.member_category_history to authenticated;
+
+-- Point de départ : les montants et catégories actuels valent pour tout le passé.
+insert into public.fee_history (association_id, category_id, from_period, fee_amount)
+  select id, null, '2000-01', fee_amount from public.associations
+  on conflict do nothing;
+insert into public.fee_history (association_id, category_id, from_period, fee_amount)
+  select association_id, id, '2000-01', fee_amount from public.member_categories
+  on conflict do nothing;
+insert into public.member_category_history (association_id, member_id, category_id, from_period)
+  select association_id, id, category_id, '2000-01' from public.members
+  on conflict do nothing;
+
+-- Enregistrement automatique, à partir du mois en cours.
+create or replace function public.fee_history_track() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare p text := to_char(now() at time zone 'utc', 'YYYY-MM'); a uuid; c uuid;
+begin
+  if tg_table_name = 'associations' then a := new.id; c := null;
+  else a := new.association_id; c := new.id; end if;
+  if tg_op = 'INSERT' then p := '2000-01';
+  elsif new.fee_amount is not distinct from old.fee_amount then return new; end if;
+  insert into fee_history (association_id, category_id, from_period, fee_amount) values (a, c, p, new.fee_amount)
+  on conflict (association_id, (coalesce(category_id, '00000000-0000-0000-0000-000000000000'::uuid)), from_period)
+  do update set fee_amount = excluded.fee_amount, created_at = now();
+  return new;
+end $$;
+
+create or replace function public.member_category_track() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare p text := to_char(now() at time zone 'utc', 'YYYY-MM');
+begin
+  if tg_op = 'INSERT' then p := '2000-01';
+  elsif new.category_id is not distinct from old.category_id then return new; end if;
+  insert into member_category_history (association_id, member_id, category_id, from_period)
+  values (new.association_id, new.id, new.category_id, p)
+  on conflict (member_id, from_period) do update set category_id = excluded.category_id, created_at = now();
+  return new;
+end $$;
+
+revoke execute on function public.fee_history_track(), public.member_category_track() from public, anon, authenticated;
+
+drop trigger if exists zz_fee_history on public.associations;
+create trigger zz_fee_history after insert or update of fee_amount on public.associations
+  for each row execute function public.fee_history_track();
+drop trigger if exists zz_fee_history on public.member_categories;
+create trigger zz_fee_history after insert or update of fee_amount on public.member_categories
+  for each row execute function public.fee_history_track();
+drop trigger if exists zz_category_history on public.members;
+create trigger zz_category_history after insert or update of category_id on public.members
+  for each row execute function public.member_category_track();

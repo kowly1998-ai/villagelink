@@ -34,6 +34,8 @@
   const nf = new Intl.NumberFormat('fr-FR', { maximumFractionDigits: 0 });
   const CUR_LABEL = { XOF: 'FCFA', XAF: 'FCFA', GNF: 'GNF', EUR: '€', USD: '$', CAD: '$ CA', GBP: '£' };
   const num = n => nf.format(Math.round(Number(n) || 0)).replace(/[   ]/g, NB);
+  // Grand chiffre trop long pour l'écran (souvent en GNF) : taille réduite.
+  const fit = n => { const l = num(n).length; return l >= 16 ? ' xl' : l >= 12 ? ' lg' : ''; };
   const money = (n, cur) => num(n) + NB + (CUR_LABEL[cur || (S.ctx && S.ctx.assoc.currency)] || 'FCFA');
   const moneyW = n => money(n).replace(/\u00a0(\S+)$/, ' $1');
   const nf2 = new Intl.NumberFormat('fr-FR', { maximumFractionDigits: 2 });
@@ -166,7 +168,7 @@
   };
   // Formule Village : sans sections, catégories ni plusieurs monnaies, 50 membres au plus. Essai et Diaspora : tout.
   const fullPlan = () => !S.ctx || S.ctx.assoc.plan !== 'association';
-  const upsell = what => canManageSub() && !IS_TWA ? `<a class="card stack upsell" href="${B()}/abonnement" style="text-decoration:none"><span class="eyebrow">Formule Diaspora</span><b>${what}</b><span class="muted" style="font-size:13.5px">Disponible avec la formule Diaspora : toutes les fonctionnalités, jusqu’à 200 membres.</span></a>` : `<p class="note">${what} : disponible avec la formule Diaspora. Parlez-en au président.</p>`;
+  const upsell = what => canManageSub() && !IS_TWA ? `<a class="card stack upsell" href="${B()}/abonnement" style="text-decoration:none"><span class="eyebrow">Formule Diaspora</span><b>${what}</b><span class="muted" style="font-size:14px">Disponible avec la formule Diaspora : toutes les fonctionnalités, jusqu’à 200 membres.</span></a>` : `<p class="note">${what} : disponible avec la formule Diaspora. Parlez-en au président.</p>`;
   const isRO = () => !!(S.ctx && ['readonly', 'blocked'].includes(subStatus(S.ctx.assoc)));
   const canManageSub = () => !!(S.ctx && S.ctx.me && ['president', 'vice_president', 'tresorier'].includes(S.ctx.me.role));
   const can = a => !!(S.ctx && S.ctx.me && CAN[a].includes(S.ctx.me.role)) && !isRO();
@@ -193,42 +195,44 @@
      Contexte d'une association
   ------------------------------------------------------------------ */
   async function loadCtx(id) {
-    const [a, members, paid, bal] = await Promise.all([
+    // Tout est demandé en même temps : sur une connexion lente, l'attente est celle de la demande la plus longue, pas leur somme.
+    const soft = q => q.then(r => (r.error ? null : r.data), () => null);
+    const MCOLS = 'id,association_id,user_id,full_name,city,country,role,joined_on,active,created_at,pending,created_by_join,section_id,category_id';
+    const seenKey = 'vl:notif:' + id, seen = Number(store.get(seenKey) || 0);
+    const [a, members, paid, bal, contacts, msg, log, newLog, sectionsR, catsR, exemptsR, payNumsR, claimsR, expR, feeH, catH] = await Promise.all([
       sb.from('associations').select('*').eq('id', id).maybeSingle().then(must),
-      fetchAll(() => sb.from('members').select('*').eq('association_id', id).order('full_name').order('id')),
+      fetchAll(() => sb.from('members').select(MCOLS).eq('association_id', id).order('full_name').order('id')),
       fetchAll(() => sb.from('v_member_paid').select('member_id,period,paid').eq('association_id', id).order('period').order('member_id')),
-      sb.from('v_balances').select('*').eq('association_id', id).maybeSingle().then(must)
+      sb.from('v_balances').select('*').eq('association_id', id).maybeSingle().then(must),
+      soft(sb.rpc('member_contacts', { p_assoc: id })),
+      soft(sb.from('messages').select('id').eq('association_id', id).order('id', { ascending: false }).limit(1)),
+      soft(sb.from('activity_log').select('id').eq('association_id', id).order('id', { ascending: false }).limit(1)),
+      store.get(seenKey) ? soft(sb.from('activity_log').select('id').eq('association_id', id).gt('id', seen).neq('actor_id', S.user.id).limit(99)) : Promise.resolve(null),
+      soft(sb.from('sections').select('*').eq('association_id', id).order('name')),
+      soft(sb.from('member_categories').select('*').eq('association_id', id).order('fee_amount', { ascending: false })),
+      soft(sb.from('member_exemptions').select('id,member_id,from_period,to_period,created_label,created_at,ended_label').eq('association_id', id).order('from_period')),
+      soft(sb.from('pay_numbers').select('*').eq('association_id', id).maybeSingle()),
+      soft(sb.from('payment_claims').select('*').eq('association_id', id).eq('status', 'pending').order('id', { ascending: true }).limit(99)),
+      soft(sb.from('expense_requests').select('id').eq('association_id', id).eq('status', 'En attente').limit(99)),
+      soft(sb.from('fee_history').select('category_id,from_period,fee_amount').eq('association_id', id).order('from_period').limit(2000)),
+      soft(sb.from('member_category_history').select('member_id,category_id,from_period').eq('association_id', id).order('from_period').limit(5000))
     ]);
     if (!a) { S.ctx = null; return null; }
-    let lastMsg = 0;
-    try { const r = await sb.from('messages').select('id').eq('association_id', id).order('id', { ascending: false }).limit(1); if (!r.error && r.data[0]) lastMsg = r.data[0].id; } catch (e) { /* discussion pas encore installée */ }
-    let notif = 0, lastLog = 0;
-    try {
-      const r = await sb.from('activity_log').select('id').eq('association_id', id).order('id', { ascending: false }).limit(1);
-      if (!r.error && r.data[0]) lastLog = r.data[0].id;
-      const seenKey = 'vl:notif:' + id, seen = Number(store.get(seenKey) || 0);
-      if (!store.get(seenKey)) store.set(seenKey, String(lastLog));
-      else if (lastLog > seen) {
-        const n = await sb.from('activity_log').select('id').eq('association_id', id).gt('id', seen).neq('actor_id', S.user.id).limit(99);
-        if (!n.error) notif = n.data.length;
-      }
-    } catch (e) { /* pas bloquant */ }
-    let sections = [];
-    try { const r = await sb.from('sections').select('*').eq('association_id', id).order('name'); if (!r.error) sections = r.data || []; } catch (e) { /* sections pas encore installées */ }
-    let cats = [];
-    try { const r = await sb.from('member_categories').select('*').eq('association_id', id).order('fee_amount', { ascending: false }); if (!r.error) cats = r.data || []; } catch (e) { /* catégories pas encore installées */ }
-    let exempts = [];
-    try { const r = await sb.from('member_exemptions').select('id,member_id,from_period,to_period,created_label,created_at,ended_label').eq('association_id', id).order('from_period'); if (!r.error) exempts = r.data || []; } catch (e) { /* dispenses pas encore installées */ }
-    let payNums = null, claims = [];
-    try { const r = await sb.from('pay_numbers').select('*').eq('association_id', id).maybeSingle(); if (!r.error) payNums = r.data || null; } catch (e) { /* mobile money pas encore installé */ }
-    try { const r = await sb.from('payment_claims').select('*').eq('association_id', id).eq('status', 'pending').order('id', { ascending: true }).limit(99); if (!r.error) claims = r.data || []; } catch (e) { /* idem */ }
-    let expPending = 0;
-    try { const r = await sb.from('expense_requests').select('id').eq('association_id', id).eq('status', 'En attente').limit(99); if (!r.error) expPending = r.data.length; } catch (e) { /* double validation pas encore installée */ }
+    // Téléphone et e-mail : seulement ceux que la base autorise (bureau : tous ; membre : sa fiche et le bureau).
+    const cmap = new Map((contacts || []).map(c => [c.id, c]));
+    members.forEach(m => { const c = cmap.get(m.id); m.phone = c ? c.phone || '' : ''; m.email = c ? c.email || '' : ''; });
+    const lastMsg = msg && msg[0] ? msg[0].id : 0, lastLog = log && log[0] ? log[0].id : 0;
+    let notif = 0;
+    if (!store.get(seenKey)) store.set(seenKey, String(lastLog));
+    else if (lastLog > seen && newLog) notif = newLog.length;
+    const group = (rows, key) => { const g = new Map(); (rows || []).forEach(r => { const k = key(r); if (!g.has(k)) g.set(k, []); g.get(k).push(r); }); return g; };
+    const feeHist = group(feeH, r => r.category_id || ''), catHist = group(catH, r => r.member_id);
+    const sections = sectionsR || [], cats = catsR || [], exempts = exemptsR || [], payNums = payNumsR || null, claims = claimsR || [], expPending = (expR || []).length;
     try { if (navigator.setAppBadge) { if (notif) navigator.setAppBadge(notif); else navigator.clearAppBadge(); } } catch (e) { /* non pris en charge */ }
     const paidMap = new Map();
     paid.forEach(r => paidMap.set(r.member_id + '|' + r.period, Number(r.paid)));
     const me = members.find(m => m.user_id === S.user.id) || null;
-    S.ctx = { loadedAt: Date.now(), lastMsg, notif, expPending, payNums, claims, exempts, sections, cats, lastLog, assoc: a, me, members, byId: new Map(members.map(m => [m.id, m])), paidMap,
+    S.ctx = { loadedAt: Date.now(), feeHist, catHist, lastMsg, notif, expPending, payNums, claims, exempts, sections, cats, lastLog, assoc: a, me, members, byId: new Map(members.map(m => [m.id, m])), paidMap,
       bal: { in: Number(bal ? bal.total_in : 0), out: Number(bal ? bal.total_out : 0) } };
     store.set('vl:last', id);
     return S.ctx;
@@ -254,16 +258,27 @@
   const paidFor = (mid, p) => S.ctx.paidMap.get(mid + '|' + p) || 0;
   // Cotisation mensuelle d'un membre : celle de sa catégorie, sinon la cotisation générale.
   const catOf = m => (m && m.category_id ? (S.ctx.cats || []).find(c => c.id === m.category_id) : null) || null;
-  const feeOf = m => { const c = catOf(m); return Number(c ? c.fee_amount : S.ctx.assoc.fee_amount) || 0; };
+  // Historique (v2.2.3) : un mois passé garde la catégorie et le montant valables à ce moment-là.
+  const lastFrom = (rows, p) => { let r = null; for (const x of rows || []) if (x.from_period <= p && (!r || x.from_period > r.from_period)) r = x; return r; };
+  const feeOf = (m, p) => {
+    if (!m) return 0;
+    const h = p ? lastFrom(S.ctx.catHist && S.ctx.catHist.get(m.id), p) : null;
+    const cid = h ? h.category_id : m.category_id;
+    const c = cid ? (S.ctx.cats || []).find(x => x.id === cid) || null : null;
+    const now = Number(c ? c.fee_amount : S.ctx.assoc.fee_amount) || 0;
+    if (!p) return now;
+    const f = lastFrom(S.ctx.feeHist && S.ctx.feeHist.get(c ? c.id : ''), p);
+    return f ? Number(f.fee_amount) || 0 : now;
+  };
   const hasFees = () => Number(S.ctx.assoc.fee_amount) > 0 || (S.ctx.cats || []).some(c => Number(c.fee_amount) > 0);
   const exemptOf = (m, p) => (S.ctx.exempts || []).find(e => e.member_id === m.id && e.from_period <= p && (!e.to_period || e.to_period >= p)) || null;
-  const dueIn = (m, p) => feeOf(m) > 0 && [ym(S.ctx.assoc.dues_start), ym(m.joined_on)].sort().pop() <= p && !exemptOf(m, p);
+  const dueIn = (m, p) => feeOf(m, p) > 0 && [ym(S.ctx.assoc.dues_start), ym(m.joined_on)].sort().pop() <= p && !exemptOf(m, p);
   function dues(m) {
-    const a = S.ctx.assoc, fee = feeOf(m), cur = curYM();
-    if (!fee || !m.active || m.pending) return { owed: [], late: [], remaining: 0, isLate: false };
+    const a = S.ctx.assoc, cur = curYM();
+    if (!m.active || m.pending) return { owed: [], late: [], remaining: 0, isLate: false };
     const start = [ym(a.dues_start), ym(m.joined_on)].sort().pop();
-    const periods = start <= cur ? monthsBetween(start, cur).filter(p => !exemptOf(m, p)) : [];
-    const owed = periods.filter(p => paidFor(m.id, p) < fee);
+    const periods = start <= cur ? monthsBetween(start, cur).filter(p => !exemptOf(m, p) && feeOf(m, p) > 0) : [];
+    const owed = periods.filter(p => paidFor(m.id, p) < feeOf(m, p));
     // Un mois est en retard quand son échéance est passée. Pour les mois suivis depuis la
     // création de l'association dans l'app, l'échéance doit aussi tomber après l'adhésion
     // et après cette création (sinon tout le monde serait en retard dès le premier jour).
@@ -276,7 +291,18 @@
       return due >= since;
     };
     const late = owed.filter(isLate);
-    return { owed, late, remaining: owed.reduce((s, p) => s + fee - paidFor(m.id, p), 0), isLate: late.length > 0 };
+    return { owed, late, remaining: owed.reduce((s, p) => s + feeOf(m, p) - paidFor(m.id, p), 0), isLate: late.length > 0 };
+  }
+  // Un paiement plus grand que le reste du mois est réparti sur les mois suivants (v2.2.3).
+  function spread(m, period, amount) {
+    const rows = []; let rem = amount, p = period;
+    for (let k = 0; rem > 0 && k < 24; k++, p = addMonth(p, 1)) {
+      if (exemptOf(m, p)) continue;
+      const left = feeOf(m, p) - paidFor(m.id, p);
+      if (left <= 0) continue;
+      const take = Math.min(rem, left); rows.push({ period: p, amount: take }); rem -= take;
+    }
+    return rem > 0 ? null : rows;
   }
   const activeMembers = () => S.ctx.members.filter(m => m.active && !m.pending);
   const pendingMembers = () => S.ctx.members.filter(m => m.pending);
@@ -377,7 +403,7 @@
     const SUBST = { trial: ['p-blue', 'Essai'], active: ['p-ok', 'Abonnée'], grace: ['p-late', 'Grâce'], readonly: ['p-red', 'Lecture seule'], blocked: ['p-red', 'Bloquée'] };
     const untilFor = q => { const base = [(subs.assocs.find(x => x.id === q.association_id) || {}).paid_until, todayISO()].filter(Boolean).sort().pop(); const dd = new Date(base + 'T12:00:00Z'); dd.setUTCMonth(dd.getUTCMonth() + q.months); return dd.toISOString().slice(0, 10); };
     const subsHtml = sd => `<section class="card stack"><h2>Abonnements</h2>
-        ${sd.requests.length ? sd.requests.map(q => `<div class="stack" style="gap:8px;border-bottom:1px solid var(--line);padding-bottom:12px"><b>${esc(q.assoc_name)}</b><span class="num">${money(q.amount, 'XOF')} · formule ${esc((PLANS[q.plan] || {}).label || q.plan)} · ${q.months === 12 ? '1 an' : '1 mois'}</span><span class="muted" style="font-size:13px">Déclaré le ${dFR(localDay(q.created_at))} par ${esc(q.created_label)}${q.reference ? ' · réf. ' + esc(q.reference) : ''}</span><span class="help" style="margin:0">Vérifiez dans votre application Wave que ce paiement est bien arrivé avant d’activer.</span>
+        ${sd.requests.length ? sd.requests.map(q => `<div class="stack" style="gap:8px;border-bottom:1px solid var(--line);padding-bottom:12px"><b>${esc(q.assoc_name)}</b><span class="num">${money(q.amount, 'XOF')} · formule ${esc((PLANS[q.plan] || {}).label || q.plan)} · ${q.months === 12 ? '1 an' : '1 mois'}</span><span class="muted" style="font-size:14px">Déclaré le ${dFR(localDay(q.created_at))} par ${esc(q.created_label)}${q.reference ? ' · réf. ' + esc(q.reference) : ''}</span><span class="help" style="margin:0">Vérifiez dans votre application Wave que ce paiement est bien arrivé avant d’activer.</span>
           <div class="row" style="flex-wrap:wrap"><button class="btn primary sm" data-act="own-act" data-id="${q.id}" data-until="${untilFor(q)}">Activer jusqu’au ${dFR(untilFor(q))}</button><button class="btn ghost sm" data-act="own-rej" data-id="${q.id}">Refuser</button></div>
           <form class="stack" data-form="ownreject" data-id="${q.id}" id="orj-${q.id}" hidden novalidate><input name="note" placeholder="Motif (ex. rien reçu sur Wave)"><p class="err" hidden></p><button class="btn danger sm" type="submit">Refuser ce paiement</button></form></div>`).join('') : '<span class="muted">Aucun paiement à valider.</span>'}
         <div class="list">${sd.assocs.map(x => { const [c, l] = SUBST[x.status] || ['p-blue', x.status]; return `<div class="item"><div class="body"><div class="t">${esc(x.name)}</div><div class="s wrap num">${N(x.members)} membre${x.members > 1 ? 's' : ''} · ${x.paid_until ? 'payé jusqu’au ' + dFR(x.paid_until) : 'essai jusqu’au ' + dFR(x.trial_ends)}</div><button class="btn ghost sm" style="margin-top:6px" data-act="own-trial" data-id="${x.id}" data-te="${x.trial_ends}" data-pu="${x.paid_until || ''}">+30 jours d’essai</button> ${x.status === 'blocked' ? `<button class="btn primary sm" style="margin-top:6px" data-act="own-unblock" data-id="${x.id}">Débloquer</button><div class="s wrap">Motif : ${esc(x.blocked_reason || '')}</div>` : `<button class="btn ghost sm" style="margin-top:6px" data-act="own-block" data-id="${x.id}">Bloquer</button><form class="stack" data-form="ownblock" data-id="${x.id}" id="obk-${x.id}" hidden novalidate><input name="note" placeholder="Motif (ex. abonnement non payé)"><p class="err" hidden></p><button class="btn danger sm" type="submit">Bloquer cette association</button></form>`}</div><span class="pill ${c}">${l}</span></div>`; }).join('')}</div></section>`;
@@ -387,7 +413,7 @@
     const tile = (v, l, s2) => `<div class="stat"><span class="v num">${v}</span><span class="l">${l}</span>${s2 ? `<span class="l">${s2}</span>` : ''}</div>`;
     root.innerHTML = `<div class="auth admin" style="max-width:720px">
       <div class="between"><a class="brand" href="#/bienvenue" style="text-decoration:none;color:inherit"><img class="logo brand-ic" src="icon.svg" alt="" width="44" height="44"><b>Tableau de bord</b></a><button class="btn ghost sm" data-act="reload">Actualiser</button></div>
-      <p class="muted" style="margin:0;font-size:13px">Chiffres de toutes les associations, au ${dFR(d.generated_at)} à ${hm(d.generated_at)}.</p>
+      <p class="muted" style="margin:0;font-size:14px">Chiffres de toutes les associations, au ${dFR(d.generated_at)} à ${hm(d.generated_at)}.</p>
       <div class="grid2">
         ${tile(N(d.associations), 'Associations', d.associations_30d ? '+' + N(d.associations_30d) + ' en 30 jours' : 'aucune nouvelle en 30 jours')}
         ${tile(N(d.members), 'Membres', N(d.members_on_app) + ' sur l’application (' + pc(d.members_on_app, d.members) + NB + '%)')}
@@ -408,7 +434,7 @@
 
   const delAcctBox = () => `<details class="card more" id="del-acct"><summary>Supprimer mon compte</summary>
       <form class="stack" data-form="delacct" novalidate style="margin-top:10px">
-        <p class="muted" style="margin:0;font-size:13.5px">Votre compte de connexion (${esc(S.user.email || '')}) sera supprimé définitivement, avec vos rappels sur ce téléphone. Votre fiche de membre et les opérations déjà enregistrées restent dans l’historique de l’association, pour la transparence des comptes ; le bureau peut retirer votre fiche.</p>
+        <p class="muted" style="margin:0;font-size:14px">Votre compte de connexion (${esc(S.user.email || '')}) sera supprimé définitivement, avec vos rappels sur ce téléphone. Votre fiche de membre et les opérations déjà enregistrées restent dans l’historique de l’association, pour la transparence des comptes ; le bureau peut retirer votre fiche.</p>
         <div class="field"><label for="da-c">Tapez SUPPRIMER pour confirmer</label><input id="da-c" name="confirm" autocomplete="off" autocapitalize="characters" spellcheck="false"></div>
         <p class="err" hidden></p><button class="btn danger block" type="submit">Supprimer définitivement mon compte</button>
         <p class="help">Vous pouvez aussi écrire à contact@villagelinkafrica.com.</p></form></details>`;
@@ -580,9 +606,9 @@
     if (n) out += `<a class="card between pay-cta" href="${B()}/cotisations?f=claims"><span><span class="eyebrow">À vérifier dans votre Wave ou Orange Money</span><br><b>${n} paiement${n > 1 ? 's' : ''} à confirmer</b></span><span class="pill p-late num">${n}</span></a>`;
     const me = S.ctx.me;
     if (me && hasFees() && feeOf(me) > 0 && mmAvail().length) {
-      const d = dues(me), cur = curYM(), due = d.remaining || (dueIn(me, cur) ? Math.max(feeOf(me) - paidFor(me.id, cur), 0) : 0);
+      const d = dues(me), cur = curYM(), due = d.remaining || (dueIn(me, cur) ? Math.max(feeOf(me, cur) - paidFor(me.id, cur), 0) : 0);
       const pend = (S.ctx.claims || []).some(c => c.member_id === me.id);
-      if (due > 0 || pend) out += `<a class="card between pay-cta gold" href="${B()}/payer"><span><span class="eyebrow">${pend ? 'Paiement en attente de confirmation' : d.isLate ? d.late.length + ' mois en retard' : 'Cotisation de ' + esc(pFR(cur))}</span><br><b class="num">${pend && !due ? 'Voir mon paiement' : 'Payer ' + money(due)}</b><br><span class="muted" style="font-size:12.5px">${mmAvail().map(([l]) => l).join(' · ')}</span></span><span class="q-ico">${I.wallet}</span></a>`;
+      if (due > 0 || pend) out += `<a class="card between pay-cta gold" href="${B()}/payer"><span><span class="eyebrow">${pend ? 'Paiement en attente de confirmation' : d.isLate ? d.late.length + ' mois en retard' : 'Cotisation de ' + esc(pFR(cur))}</span><br><b class="num">${pend && !due ? 'Voir mon paiement' : 'Payer ' + money(due)}</b><br><span class="muted" style="font-size:14px">${mmAvail().map(([l]) => l).join(' · ')}</span></span><span class="q-ico">${I.wallet}</span></a>`;
     }
     return out;
   };
@@ -619,8 +645,8 @@
     }
     const act = activeMembers(), late = lateMembers().length;
     const dueNow = act.filter(m => dueIn(m, cur));
-    const collected = dueNow.reduce((s, m) => s + Math.min(paidFor(m.id, cur), feeOf(m)), 0), expected = dueNow.reduce((s, m) => s + feeOf(m), 0);
-    const paidCount = dueNow.filter(m => paidFor(m.id, cur) >= feeOf(m)).length;
+    const collected = dueNow.reduce((s, m) => s + Math.min(paidFor(m.id, cur), feeOf(m, cur)), 0), expected = dueNow.reduce((s, m) => s + feeOf(m, cur), 0);
+    const paidCount = dueNow.filter(m => paidFor(m.id, cur) >= feeOf(m, cur)).length;
     const bal = S.ctx.bal, solde = bal.in - bal.out, CURL = esc(CUR_LABEL[a.currency] || 'FCFA');
     const inMonth = recentTx.filter(t => t.kind === 'in' && ym(t.occurred_on) === cur).reduce((x, t) => x + Number(t.amount), 0);
     const outMonth = recentTx.filter(t => t.kind === 'out' && ym(t.occurred_on) === cur).reduce((x, t) => x + Number(t.amount), 0);
@@ -639,7 +665,7 @@
       if (due > 0 || pend) {
         status = `<section class="card status-card${d.isLate ? ' late' : ''}"><div class="between"><span class="eyebrow">Ma cotisation · ${esc(monthName)}</span>${pend && !due ? '<span class="pill p-late">En attente de confirmation</span>' : d.isLate ? '<span class="pill p-late">En retard</span>' : '<span class="pill p-blue">À payer</span>'}</div>
           ${pend && !due ? '<div class="big" style="font-size:26px">Paiement déclaré</div><span class="muted">Le trésorier va le confirmer.</span>'
-            : `<div><div class="muted" style="font-size:15px">Vous devez</div><div class="big num">${num(due)}<small>${CURL}</small></div><div class="muted" style="font-size:15px;margin-top:4px">${d.isLate ? d.late.length + ' mois en retard' : 'à payer avant le ' + dFR(cur + '-' + pad(a.fee_due_day))}</div></div>`}
+            : `<div><div class="muted" style="font-size:15px">Vous devez</div><div class="big num${fit(due)}">${num(due)}<small>${CURL}</small></div><div class="muted" style="font-size:15px;margin-top:4px">${d.isLate ? d.late.length + ' mois en retard' : 'à payer avant le ' + dFR(cur + '-' + pad(a.fee_due_day))}</div></div>`}
           ${canPay ? `<a class="btn primary block" href="${B()}/payer">${I.wallet} ${pend && !due ? 'Voir mon paiement' : 'Payer ma cotisation'}</a>` : (due > 0 ? '<span class="help">Remettez votre cotisation au trésorier.</span>' : '')}</section>`;
       } else if (!pres && !trea) {
         status = `<section class="card status-card ok"><div class="between"><span class="eyebrow">Ma cotisation · ${esc(monthName)}</span><span class="pill p-ok">À jour</span></div><div class="big" style="font-size:28px">Vous êtes à jour</div><span class="muted">Merci ! Votre cotisation est payée.</span></section>`;
@@ -654,10 +680,10 @@
       act.length <= 1 && can('members') ? todo(`${B()}/membres/import`, I.list, 'Ajoutez la liste des membres', 'Collez-la depuis votre cahier, Excel ou WhatsApp.', false) : ''
     ].join('');
     const monthCard = fee && (pres || trea) && dueNow.length ? `<section class="card stack"><div class="between"><span class="eyebrow">${esc(monthName)}</span><b class="num">${paidCount} sur ${dueNow.length} ont payé</b></div><div class="bar"><i style="width:${pct(collected, expected)}%"></i></div><span class="muted num" style="font-size:14px">${money(collected)} sur ${money(expected)} collectés</span></section>` : '';
-    const presCash = `<section class="card hero"><span class="eyebrow">Dans la caisse</span><div class="big num">${num(solde)} <span class="cur">${CURL}</span></div>
+    const presCash = `<section class="card hero"><span class="eyebrow">Dans la caisse</span><div class="big num${fit(solde)}">${num(solde)} <span class="cur">${CURL}</span></div>
       <div class="boxes num"><div><small>Entrées ce mois</small><b>+ ${money(inMonth)}</b></div><div><small>Sorties ce mois</small><b>− ${money(outMonth)}</b></div></div>
       <div class="foot"><span>${act.length} membre${act.length > 1 ? 's' : ''} · vérifiable par tous</span><a href="${B()}/transparence">Où va l’argent</a></div></section>`;
-    const cash = `<section class="card stack"><span class="eyebrow">Dans la caisse de l’association</span><div class="status-card"><div class="big num">${num(solde)}<small>${CURL}</small></div></div><a class="link" href="${B()}/transparence">Voir où va l’argent ${I.chev}</a></section>`;
+    const cash = `<section class="card stack"><span class="eyebrow">Dans la caisse de l’association</span><div class="status-card"><div class="big num${fit(solde)}">${num(solde)}<small>${CURL}</small></div></div><a class="link" href="${B()}/transparence">Voir où va l’argent ${I.chev}</a></section>`;
     const outs = catTot.filter(c => c.kind === 'out' && Number(c.total) > 0).sort((x, y) => y.total - x.total).slice(0, 4), maxOut = outs[0] ? Number(outs[0].total) : 0;
     const where = outs.length ? `<section class="card stack"><div class="between"><h2>Où va l’argent</h2><a class="link" href="${B()}/transparence">Détail</a></div><div class="cat-list">${outs.map(c => `<div><div class="l"><span>${esc(c.category)}</span><b class="num">${money(c.total)}</b></div><div class="bar"><i style="width:${pct(c.total, maxOut)}%"></i></div></div>`).join('')}</div></section>` : '';
     const outIco = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 17 17 7M9 7h8v8"/></svg>';
@@ -732,12 +758,14 @@
     const hist = must(await sb.from('transactions').select('*').eq('association_id', S.ctx.assoc.id).eq('member_id', m.id).order('occurred_on', { ascending: false }).order('id', { ascending: false }).limit(60));
     const rset = await reversedSet(hist);
     const start = [ym(S.ctx.assoc.dues_start), ym(m.joined_on)].sort().pop(), cur = curYM();
-    const periods = fee && start <= cur ? monthsBetween(start, cur).reverse().slice(0, 12) : [];
+    // Les mois payés d'avance s'affichent aussi (paiement réparti sur plusieurs mois).
+    const ahead = [...S.ctx.paidMap.keys()].filter(k => k.startsWith(m.id + '|')).map(k => k.split('|')[1]).filter(p => p > cur).sort().pop();
+    const periods = fee && start <= cur ? monthsBetween(start, ahead || cur).reverse().slice(0, 12 + (ahead ? monthsBetween(cur, ahead).length - 1 : 0)) : [];
     const relance = relanceText(m, d);
     return `${subHead('Fiche membre', B() + '/membres')}
       <div class="row"><div class="av lg">${esc(initials(m.full_name))}</div><div style="min-width:0"><h2 style="font-size:20px">${esc(m.full_name)}</h2><div class="row" style="flex-wrap:wrap;gap:6px;margin-top:4px"><span class="pill p-blue">${esc(ROLES[m.role])}</span>${statusPill(m)}</div></div></div>
       <section class="card"><dl class="kv num" style="margin:0"><dt>Téléphone</dt><dd>${esc(m.phone) || '<span class="muted">—</span>'}</dd><dt>Email</dt><dd>${esc(m.email) || '<span class="muted">—</span>'}</dd><dt>Résidence</dt><dd>${esc([m.city, m.country].filter(Boolean).join(', ')) || '<span class="muted">—</span>'}</dd>${m.section_id ? `<dt>Section</dt><dd>${esc(secName(m.section_id))}${(S.ctx.sections || []).some(x => x.treasurer_member_id === m.id) ? ' · trésorier de section' : ''}</dd>` : ''}${(S.ctx.cats || []).length ? `<dt>Catégorie</dt><dd>${catOf(m) ? esc(catOf(m).name) : 'Cotisation générale'}${hasFees() ? ' · ' + (fee ? money(fee) + ' par mois' : 'dispensé') : ''}</dd>` : ''}<dt>Adhésion</dt><dd>${dFR(m.joined_on)}</dd><dt>Application</dt><dd>${m.user_id ? 'Oui' : 'Non, suivi par le trésorier'}</dd></dl></section>
-      ${periods.length ? `<section class="card stack"><h2>Cotisations</h2>${periods.map(p => { const pd = paidFor(m.id, p); return `<div class="between num"><span>${pFR(p)}</span>${pd >= fee ? `<span class="pill p-ok">${money(pd)} payé</span>` : exemptOf(m, p) ? '<span class="pill p-blue">Dispensé</span>' : `<span class="pill ${d.late.includes(p) ? 'p-late' : 'p-blue'}">Reste ${money(fee - pd)}</span>`}</div>`; }).join('')}
+      ${periods.length ? `<section class="card stack"><h2>Cotisations</h2>${periods.map(p => { const pd = paidFor(m.id, p), fee = feeOf(m, p); return `<div class="between num"><span>${pFR(p)}</span>${pd >= fee ? `<span class="pill p-ok">${money(pd)} payé</span>` : exemptOf(m, p) ? '<span class="pill p-blue">Dispensé</span>' : p > cur ? `<span class="pill p-blue">${pd ? money(pd) + ' payé d’avance' : 'À venir'}</span>` : `<span class="pill ${d.late.includes(p) ? 'p-late' : 'p-blue'}">Reste ${money(fee - pd)}</span>`}</div>`; }).join('')}
         ${d.remaining ? `<div class="between num" style="border-top:1px solid var(--line);padding-top:10px"><b>Total dû</b><b style="color:var(--warn)">${money(d.remaining)}</b></div>` : ''}</section>` : ''}
       ${await exemptCard(m)}
       <div class="stack">
@@ -764,7 +792,7 @@
     if (!mine.length && !bureau) return '';
     const per = e => `${pFR(e.from_period)} → ${e.to_period ? pFR(e.to_period) : 'jusqu’à nouvel ordre'}`;
     return `<section class="card stack" id="dispense"><div class="between"><h2>Dispense de cotisation</h2>${now ? '<span class="pill p-blue">Dispensé</span>' : ''}</div>
-      ${mine.length ? `<div class="stack">${mine.map(e => `<div class="between" style="align-items:flex-start;gap:10px"><span style="min-width:0"><b class="num">${per(e)}</b><br><span class="muted" style="font-size:12.5px">Accordée par ${esc(String(e.created_label).replace(/\s*\(.*\)$/, ''))}${reasons.get(Number(e.id)) ? ' · ' + esc(reasons.get(Number(e.id))) : ''}</span></span>
+      ${mine.length ? `<div class="stack">${mine.map(e => `<div class="between" style="align-items:flex-start;gap:10px"><span style="min-width:0"><b class="num">${per(e)}</b><br><span class="muted" style="font-size:14px">Accordée par ${esc(String(e.created_label).replace(/\s*\(.*\)$/, ''))}${reasons.get(Number(e.id)) ? ' · ' + esc(reasons.get(Number(e.id))) : ''}</span></span>
         ${bureau && (!e.to_period || e.to_period >= cur) ? `<button class="btn ghost sm" data-act="ex-end" data-id="${e.id}" data-from="${esc(e.from_period)}">Il reprend</button>` : ''}</div>`).join('')}</div>` : ''}
       ${bureau && !now ? `<details class="more"><summary>Dispenser ${esc(m.full_name.split(' ')[0])}</summary>
         <form class="stack" data-form="exempt" data-id="${m.id}" novalidate style="margin-top:8px">
@@ -837,13 +865,13 @@
     const f = q.get('f') || (toConf.length ? 'claims' : 'late');
     const late = lateMembers().sort((x, y) => dues(y).remaining - dues(x).remaining || x.full_name.localeCompare(y.full_name, 'fr'));
     const dueNow = activeMembers().filter(m => dueIn(m, cur));
-    const collected = dueNow.reduce((s, m) => s + Math.min(paidFor(m.id, cur), feeOf(m)), 0), expected = dueNow.reduce((s, m) => s + feeOf(m), 0);
-    const paidCount = dueNow.filter(m => paidFor(m.id, cur) >= feeOf(m)).length;
+    const collected = dueNow.reduce((s, m) => s + Math.min(paidFor(m.id, cur), feeOf(m, cur)), 0), expected = dueNow.reduce((s, m) => s + feeOf(m, cur), 0);
+    const paidCount = dueNow.filter(m => paidFor(m.id, cur) >= feeOf(m, cur)).length;
     let list = '';
     if (f === 'claims') {
       list = `<p class="note" style="margin:0"><b>Avant de confirmer</b>, ouvrez VOTRE application Wave, Orange Money ou Free Money et vérifiez que l’argent est bien arrivé. Ne vous fiez jamais à un SMS ni à une capture d’écran. Wave permet d’annuler un envoi pendant une heure : pour un paiement Wave très récent, attendez une heure avant de confirmer.</p>
         <div class="list">${toConf.map(c => { const m = S.ctx.byId.get(c.member_id) || { full_name: '?' }; return `<div class="item" style="flex-wrap:wrap"><div class="av">${esc(initials(m.full_name))}</div><div class="body"><div class="t">${esc(m.full_name)}</div><div class="s wrap num"><b style="color:var(--ink)">${money(c.amount)}</b> par ${esc(c.method)} · ${esc(pFR(c.period))}<br>Envoyé au ${esc(c.sent_to)} · déclaré le ${dFR(localDay(c.created_at))} à ${hm(c.created_at)}${c.reference ? '<br>Réf. ' + esc(c.reference) : '<br>Sans référence'}</div>
-          <div class="row" style="margin-top:8px;flex-wrap:wrap"><button class="btn primary sm" data-act="claim-ok" data-id="${c.id}">Confirmer la réception</button><button class="btn ghost sm" data-act="claim-no" data-id="${c.id}">Refuser</button></div>
+          ${c.created_by === S.user.id || m.user_id === S.user.id ? '<p class="help" style="margin:8px 0 0">C’est votre propre paiement : un autre membre du bureau doit le confirmer.</p>' : `<div class="row" style="margin-top:8px;flex-wrap:wrap"><button class="btn primary sm" data-act="claim-ok" data-id="${c.id}">Confirmer la réception</button><button class="btn ghost sm" data-act="claim-no" data-id="${c.id}">Refuser</button></div>`}
           <form class="stack" data-form="rejectclaim" data-id="${c.id}" id="rjc-${c.id}" hidden style="margin-top:8px" novalidate><div class="field"><label for="rjc-r-${c.id}">Motif du refus</label><input id="rjc-r-${c.id}" name="reason" placeholder="Ex. rien reçu sur Wave"></div><p class="err" hidden></p><button class="btn danger sm" type="submit">Refuser ce paiement</button></form></div></div>`; }).join('') || '<div class="empty">Aucun paiement à confirmer.</div>'}</div>`;
     } else if (f === 'late') {
       const row = (m, ps) => { const d = dues(m); return `<div class="item"><div class="av">${esc(initials(m.full_name))}</div><div class="body"><a class="t" href="${B()}/m/${m.id}" style="display:block;text-decoration:none">${esc(m.full_name)}</a><div class="s wrap num">${ps(d).map(pFR).join(', ')} · reste ${money(d.remaining)}</div><div class="row" style="margin-top:8px;flex-wrap:wrap">${canCollectFor(m) ? `<a class="btn primary sm" href="${B()}/encaisser?m=${m.id}">Encaisser</a>` : ''}<a class="btn wa sm" target="_blank" rel="noopener" href="${waTo(m.phone, relanceText(m, d))}">${I.wa} Relancer</a></div></div></div>`; };
@@ -857,15 +885,15 @@
       list = `<div class="list">${recent.map(t => txItem(t, rset)).join('') || '<div class="empty">Aucun paiement enregistré.</div>'}</div>`;
     }
     const secs = S.ctx.sections || [];
-    const secRows = secs.map(x => { const ms = dueNow.filter(m => m.section_id === x.id); return { x, n: ms.length, paid: ms.filter(m => paidFor(m.id, cur) >= feeOf(m)).length, got: ms.reduce((t, m) => t + Math.min(paidFor(m.id, cur), feeOf(m)), 0), late: ms.filter(m => dues(m).isLate).length }; });
+    const secRows = secs.map(x => { const ms = dueNow.filter(m => m.section_id === x.id); return { x, n: ms.length, paid: ms.filter(m => paidFor(m.id, cur) >= feeOf(m, cur)).length, got: ms.reduce((t, m) => t + Math.min(paidFor(m.id, cur), feeOf(m, cur)), 0), late: ms.filter(m => dues(m).isLate).length }; });
     const noSec = dueNow.filter(m => !m.section_id);
-    const secCard = secs.length ? `<section class="card stack"><div class="between"><h2>Par section</h2><a class="link" href="${B()}/sections">Gérer</a></div>${secRows.map(r => `<a class="between num" href="${B()}/membres?f=s:${r.x.id}" style="text-decoration:none;color:inherit;gap:10px"><span style="min-width:0"><b>${esc(r.x.name)}</b><br><span class="muted" style="font-size:13px">${r.paid}/${r.n} à jour${r.late ? ' · ' + r.late + ' en retard' : ''}</span></span><b>${money(r.got)}</b></a>`).join('')}${noSec.length ? `<span class="muted" style="font-size:13px">${noSec.length} membre${noSec.length > 1 ? 's' : ''} sans section</span>` : ''}</section>` : '';
+    const secCard = secs.length ? `<section class="card stack"><div class="between"><h2>Par section</h2><a class="link" href="${B()}/sections">Gérer</a></div>${secRows.map(r => `<a class="between num" href="${B()}/membres?f=s:${r.x.id}" style="text-decoration:none;color:inherit;gap:10px"><span style="min-width:0"><b>${esc(r.x.name)}</b><br><span class="muted" style="font-size:14px">${r.paid}/${r.n} à jour${r.late ? ' · ' + r.late + ' en retard' : ''}</span></span><b>${money(r.got)}</b></a>`).join('')}${noSec.length ? `<span class="muted" style="font-size:14px">${noSec.length} membre${noSec.length > 1 ? 's' : ''} sans section</span>` : ''}</section>` : '';
     return `<div class="between"><h1>Cotisations</h1></div>
       ${payCard()}
       <section class="card stack"><div class="between"><span class="eyebrow">${pFR(cur)}</span><span class="pill p-blue num">${paidCount}/${dueNow.length} membres</span></div>
         <div class="num" style="font-family:var(--f-display);font-size:24px;font-weight:700">${money(collected)} <span class="muted" style="font-size:14px;font-family:var(--f-body);font-weight:500">sur ${money(expected)}</span></div>
         <div class="bar"><i style="width:${pct(collected, expected)}%"></i></div>
-        <span class="muted num" style="font-size:13px">Reste à encaisser, arriérés compris : ${money(activeMembers().reduce((s, m) => s + dues(m).remaining, 0))}</span></section>
+        <span class="muted num" style="font-size:14px">Reste à encaisser, arriérés compris : ${money(activeMembers().reduce((s, m) => s + dues(m).remaining, 0))}</span></section>
       <div class="chips" role="group" aria-label="Filtrer">${toConf.length ? `<a class="chip" style="text-decoration:none" href="${B()}/cotisations?f=claims" aria-pressed="${f === 'claims'}">À confirmer (${toConf.length})</a>` : ''}<a class="chip" style="text-decoration:none" href="${B()}/cotisations?f=late" aria-pressed="${f === 'late'}">En retard (${late.length})</a><a class="chip" style="text-decoration:none" href="${B()}/cotisations?f=recent" aria-pressed="${f === 'recent'}">Derniers paiements</a></div>
       ${list}
       ${secCard}
@@ -884,9 +912,9 @@
       <form class="stack" data-form="pay" novalidate>
         <div class="card pay-member"><div class="av" id="pay-av" aria-hidden="true">${esc(initials(sm.full_name))}</div><div style="flex:1;min-width:0"><label for="pay-m" class="sub">Membre</label><select id="pay-m" name="member_id">${list.map(m => opt(m.id, m.full_name + (dues(m).isLate ? ' · en retard' : ''), sel)).join('')}</select><div class="sub" id="pay-cat"></div></div></div>
         <div class="field"><label for="pay-p">Mois concerné</label><select id="pay-p" name="period"></select></div>
-        <div class="big-amount"><label for="pay-a" class="muted" style="font-size:12.5px">Montant (${esc(CUR_LABEL[a.currency] || a.currency)})</label><input id="pay-a" name="amount" type="number" inputmode="decimal" min="0" step="1"><span class="muted num" id="pay-rule" style="font-size:11.5px"></span><p class="help num" id="pay-conv" hidden></p></div>
+        <div class="big-amount"><label for="pay-a" class="muted" style="font-size:14px">Montant (${esc(CUR_LABEL[a.currency] || a.currency)})</label><input id="pay-a" name="amount" type="number" inputmode="decimal" min="0" step="1"><span class="muted num" id="pay-rule" style="font-size:11.5px"></span><p class="help num" id="pay-conv" hidden></p></div>
         ${fxFields('pay')}
-        <div class="field"><span style="font-size:13px;font-weight:500;color:var(--muted)" id="pay-mode-l">Mode de paiement</span><div class="radios" role="radiogroup" aria-labelledby="pay-mode-l">${MODES.map((x, k) => `<label><input type="radio" name="payment_method" value="${esc(x)}" ${k === 0 ? 'checked' : ''}>${esc(x)}</label>`).join('')}</div></div>
+        <div class="field"><span style="font-size:14px;font-weight:500;color:var(--muted)" id="pay-mode-l">Mode de paiement</span><div class="radios" role="radiogroup" aria-labelledby="pay-mode-l">${MODES.map((x, k) => `<label><input type="radio" name="payment_method" value="${esc(x)}" ${k === 0 ? 'checked' : ''}>${esc(x)}</label>`).join('')}</div></div>
         <details class="more"><summary>Date et commentaire</summary><div class="stack" style="margin-top:8px">
         <div class="field"><label for="pay-date">Date du paiement</label><input id="pay-date" name="occurred_on" type="date" value="${todayISO()}" max="${todayISO()}"></div>
         <div class="field"><label for="pay-c">Commentaire (facultatif)</label><input id="pay-c" name="comment" placeholder="Ex. remis en main propre à l’AG"></div></div></details>
@@ -897,14 +925,14 @@
   AFTER.encaisser = () => {
     const ms = $('#pay-m'), ps = $('#pay-p'), am = $('#pay-a');
     if (!ms) return;
-    const feeSel = () => feeOf(S.ctx.byId.get(ms.value));
+    const feeSel = () => feeOf(S.ctx.byId.get(ms.value), ps.value);
     const fill = () => {
       const m = S.ctx.byId.get(ms.value); if (!m) return;
       const d = dues(m), cur = curYM(), fee = feeOf(m);
       const opts = [...new Set([...d.owed, cur, addMonth(cur, 1), addMonth(cur, 2)])].sort();
-      ps.innerHTML = opts.map(p => opt(p, `${pFR(p)} · ${paidFor(m.id, p) >= fee ? 'déjà payé' : 'reste ' + money(fee - paidFor(m.id, p))}`)).join('');
-      const first = opts.find(p => paidFor(m.id, p) < fee) || cur; ps.value = first;
-      am.value = Math.max(fee - paidFor(m.id, first), 0) || fee;
+      ps.innerHTML = opts.map(p => opt(p, `${pFR(p)} · ${paidFor(m.id, p) >= feeOf(m, p) ? 'déjà payé' : 'reste ' + money(feeOf(m, p) - paidFor(m.id, p))}`)).join('');
+      const first = opts.find(p => paidFor(m.id, p) < feeOf(m, p)) || cur; ps.value = first;
+      const ff = feeOf(m, first); am.value = Math.max(ff - paidFor(m.id, first), 0) || ff;
       $('#pay-av').textContent = initials(m.full_name);
       const c = catOf(m); $('#pay-cat').textContent = [c ? c.name : '', d.isLate ? d.late.length + ' mois de retard' : 'à jour'].filter(Boolean).join(' · ');
       $('#pay-rule').textContent = 'Cotisation' + (c ? ' ' + c.name.toLowerCase() : '') + ' : ' + money(fee) + ' / mois';
@@ -913,7 +941,8 @@
       const m = S.ctx.byId.get(ms.value); if (!m) return;
       const base = S.ctx.assoc.currency, c = $('#pay-cur') ? $('#pay-cur').value : base, r = Number(($('#pay-rate') || {}).value), v = Number(String(am.value).replace(',', '.')) || 0;
       const got = c === base ? v : (r > 0 ? Math.round(v * r) : 0), left = Math.max(dues(m).remaining - got, 0);
-      $('#pay-recap').innerHTML = `<dt>Mois couvert</dt><dd>${esc(pFR(ps.value))}</dd><dt>Reste dû après</dt><dd class="${left ? 'due' : ''}">${left ? money(left) : 'À jour'}</dd>${m.phone ? `<dt>Reçu à envoyer à</dt><dd>${esc(m.phone)}</dd>` : ''}`;
+      const sp = c === base && Number.isInteger(v) && v > 0 ? spread(m, ps.value, v) : null;
+      $('#pay-recap').innerHTML = `<dt>${sp && sp.length > 1 ? 'Mois couverts' : 'Mois couvert'}</dt><dd>${sp && sp.length > 1 ? esc(sp.map(x => pFR(x.period)).join(', ')) : esc(pFR(ps.value))}</dd><dt>Reste dû après</dt>${c === base && !Number.isInteger(v) ? '<dd class="due">Montant à corriger</dd>' : `<dd class="${left ? 'due' : ''}">${left ? money(left) : 'À jour'}</dd>`}${m.phone ? `<dt>Reçu à envoyer à</dt><dd>${esc(m.phone)}</dd>` : ''}`;
     };
     // Montant proposé = reste dû, converti dans la monnaie reçue.
     const due = () => Math.max(feeSel() - paidFor(ms.value, ps.value), 0) || feeSel();
@@ -976,15 +1005,15 @@
     const mine = must(await sb.from('payment_claims').select('*').eq('member_id', me.id).order('id', { ascending: false }).limit(12));
     const pendP = new Set(mine.filter(c => c.status === 'pending').map(c => c.period));
     const d = dues(me), cur = curYM();
-    const opts = [...new Set([...d.owed, cur, addMonth(cur, 1), addMonth(cur, 2)])].sort().filter(p => paidFor(me.id, p) < fee && !pendP.has(p) && !exemptOf(me, p));
+    const opts = [...new Set([...d.owed, cur, addMonth(cur, 1), addMonth(cur, 2)])].sort().filter(p => paidFor(me.id, p) < feeOf(me, p) && !pendP.has(p) && !exemptOf(me, p));
     const ST = { pending: ['p-late', 'En attente du trésorier'], confirmed: ['p-ok', 'Confirmé'], rejected: ['p-red', 'Refusé'], cancelled: ['p-blue', 'Annulé'] };
     const hist = mine.length ? `<section class="stack"><h2>Mes paiements déclarés</h2><div class="list">${mine.map(c => `<div class="item" style="align-items:flex-start"><div class="body"><div class="t num" style="white-space:normal">${money(c.amount)} · ${esc(c.method)}</div><div class="s wrap">${esc(pFR(c.period))} · ${dFR(localDay(c.created_at))} à ${hm(c.created_at)}${c.reference ? ' · réf. ' + esc(c.reference) : ''}${c.status === 'rejected' && c.reason ? '<br>Motif : ' + esc(c.reason) : ''}</div>${c.status === 'pending' ? `<button class="btn ghost sm" style="margin-top:8px" data-act="claim-cancel" data-id="${c.id}">Annuler cette déclaration</button>` : ''}${c.status === 'confirmed' && c.transaction_id ? `<a class="link" style="display:inline-block;margin-top:6px" href="${B()}/op/${c.transaction_id}?recu=1">Voir le reçu</a>` : ''}</div><span class="pill ${ST[c.status][0]}">${ST[c.status][1]}</span></div>`).join('')}</div></section>` : '';
     if (!opts.length) return `${head}<p class="note">${pendP.size ? 'Votre paiement est en attente : le trésorier doit vérifier qu’il a bien reçu l’argent.' : 'Vous êtes à jour. Merci !'}</p>${hist}`;
     return `${head}
       <form class="stack" data-form="claim" novalidate>
-        <div class="field"><label for="cl-p">Mois à payer</label><select id="cl-p" name="period">${opts.map(p => opt(p, `${pFR(p)} · ${money(fee - paidFor(me.id, p))}`)).join('')}</select></div>
-        <div class="big-amount"><label for="cl-a" class="muted" style="font-size:12.5px">Montant à envoyer (${esc(CUR_LABEL[S.ctx.assoc.currency] || 'FCFA')})</label><input id="cl-a" name="amount" type="number" inputmode="numeric" min="1" step="1"></div>
-        <div class="field"><span style="font-size:13px;font-weight:500;color:var(--muted)" id="cl-m-l">Payer avec</span><div class="radios" role="radiogroup" aria-labelledby="cl-m-l">${avail.map(([l], k) => `<label><input type="radio" name="method" value="${esc(l)}" ${k === 0 ? 'checked' : ''}>${esc(l)}</label>`).join('')}</div></div>
+        <div class="field"><label for="cl-p">Mois à payer</label><select id="cl-p" name="period">${opts.map(p => opt(p, `${pFR(p)} · ${money(feeOf(me, p) - paidFor(me.id, p))}`)).join('')}</select></div>
+        <div class="big-amount"><label for="cl-a" class="muted" style="font-size:14px">Montant à envoyer (${esc(CUR_LABEL[S.ctx.assoc.currency] || 'FCFA')})</label><input id="cl-a" name="amount" type="number" inputmode="numeric" min="1" step="1"></div>
+        <div class="field"><span style="font-size:14px;font-weight:500;color:var(--muted)" id="cl-m-l">Payer avec</span><div class="radios" role="radiogroup" aria-labelledby="cl-m-l">${avail.map(([l], k) => `<label><input type="radio" name="method" value="${esc(l)}" ${k === 0 ? 'checked' : ''}>${esc(l)}</label>`).join('')}</div></div>
         <section class="card stack" id="cl-dest"></section>
         <section class="card stack" id="cl-proof"><span class="eyebrow">Après avoir payé : la preuve</span>
           <p class="help" style="margin:0">Ajoutez la capture du reçu ou collez le SMS de confirmation : l’application remplit le montant et la référence, et vérifie que l’argent est parti au bon numéro.</p>
@@ -1000,14 +1029,14 @@
     const ps = $('#cl-p'), am = $('#cl-a'), box = $('#cl-dest');
     if (!ps) return;
     const me = S.ctx.me, fee = feeOf(me), pn = S.ctx.payNums;
-    const fill = () => { am.value = Math.max(fee - paidFor(me.id, ps.value), 0) || fee; dest(); };
+    const fill = () => { const f = feeOf(me, ps.value); am.value = Math.max(f - paidFor(me.id, ps.value), 0) || f; dest(); };
     const dest = () => {
       const m = (document.querySelector('input[name=method]:checked') || {}).value || '';
       const k = (MM.find(([l]) => l === m) || [])[1], num = k ? pn[k] : '';
       const amt = Number(am.value) || 0, wl = m === 'Wave' && /^https:\/\/pay\.wave\.com\/m\//.test(pn.wave_link || '') ? pn.wave_link.replace(/\/?$/, '/') + '?amount=' + amt : '';
       box.innerHTML = (wl ? `<a class="btn block wave-btn" href="${esc(wl)}" target="_blank" rel="noopener">Payer ${money(amt)} avec Wave</a><p class="help" style="margin:0">Wave s’ouvre avec le montant déjà rempli. Après le paiement, revenez ici et touchez « J’ai payé ».</p><span class="eyebrow" style="margin-top:4px">Ou à la main</span>` : `<span class="eyebrow">Envoyez avec votre application ${esc(m)}</span>`) + `
-        <div class="between" style="flex-wrap:wrap"><span><span class="muted" style="font-size:12.5px">Au numéro</span><br><b class="num" style="font-size:20px">${esc(num)}</b></span><button type="button" class="btn ghost sm" data-act="copy" data-v="${esc(num.replace(/\s/g, ''))}">Copier le numéro</button></div>
-        <div class="between" style="flex-wrap:wrap"><span><span class="muted" style="font-size:12.5px">Montant</span><br><b class="num" style="font-size:20px">${money(Number(am.value) || 0)}</b></span><button type="button" class="btn ghost sm" data-act="copy" data-v="${esc(String(Number(am.value) || 0))}">Copier le montant</button></div>
+        <div class="between" style="flex-wrap:wrap"><span><span class="muted" style="font-size:14px">Au numéro</span><br><b class="num" style="font-size:20px">${esc(num)}</b></span><button type="button" class="btn ghost sm" data-act="copy" data-v="${esc(num.replace(/\s/g, ''))}">Copier le numéro</button></div>
+        <div class="between" style="flex-wrap:wrap"><span><span class="muted" style="font-size:14px">Montant</span><br><b class="num" style="font-size:20px">${money(Number(am.value) || 0)}</b></span><button type="button" class="btn ghost sm" data-act="copy" data-v="${esc(String(Number(am.value) || 0))}">Copier le montant</button></div>
         <p class="note" style="margin:0">Avant de valider dans ${esc(m)}, vérifiez que le nom affiché est bien <b>${esc(pn.holder)}</b>. Sinon, n’envoyez rien et prévenez le bureau.</p>`;
     };
     ps.addEventListener('change', fill);
@@ -1022,7 +1051,7 @@
       if (r.method) { const rb = document.querySelector(`input[name=method][value="${r.method}"]`); if (rb && !rb.checked) rb.checked = true; }
       const meth = (document.querySelector('input[name=method]:checked') || {}).value || '';
       const k = (MM.find(([l]) => l === meth) || [])[1], num = k ? pn[k] : '';
-      const expected = Math.max(fee - paidFor(me.id, ps.value), 0) || fee, items = [];
+      const ef = feeOf(me, ps.value), expected = Math.max(ef - paidFor(me.id, ps.value), 0) || ef, items = [];
       if (r.amount) {
         am.value = r.amount;
         if (r.sent && r.sent !== r.amount) items.push(['warn', `Vous avez envoyé ${money(r.sent)}, l’association a reçu ${money(r.amount)}${r.fee ? ` (frais ${money(r.fee)} déduits)` : ''}. C’est ${money(r.amount)} qui sera compté.`]);
@@ -1082,7 +1111,7 @@
   function readAmount(fd) {
     const base = S.ctx.assoc.currency, c = val(fd, 'pay_cur') || base, raw = Number(val(fd, 'amount').replace(',', '.'));
     if (!(raw > 0)) fail('Saisissez un montant supérieur à 0.');
-    if (c === base) return { amount: Math.round(raw), fx: {} };
+    if (c === base) { if (!Number.isInteger(raw)) fail('Écrivez le montant en chiffres, sans point ni virgule : 1500, pas 1.500.'); return { amount: raw, fx: {} }; }
     const rate = r6(Number(val(fd, 'rate').replace(',', '.')));
     if (!(rate > 0)) fail(`Indiquez le taux : combien vaut 1 ${CUR_LABEL[c] || c} en ${CUR_LABEL[base] || base} ?`);
     const orig = Math.round(raw * 100) / 100, amount = Math.round(orig * rate);
@@ -1105,7 +1134,7 @@
     const link = (np) => `${B()}/finances?f=${f}&p=${np}`;
     return `
       <div class="row" style="flex-wrap:wrap">${can('collect') ? `<a class="btn primary sm" href="${B()}/operation?type=in">+ Recette</a>` : ''}${can('spend') ? `<a class="btn ghost sm" href="${B()}/operation?type=out">${S.ctx.assoc.expense_approval ? '+ Proposer une dépense' : '+ Dépense'}</a>` : ''}</div>
-      ${S.ctx.assoc.expense_approval || S.ctx.expPending ? `<a class="card between" href="${B()}/depenses"><span><b>Dépenses à valider</b><br><span class="muted" style="font-size:13px">${S.ctx.expPending ? S.ctx.expPending + ' en attente d’approbation' : 'Aucune en attente · voir l’historique'}</span></span>${S.ctx.expPending ? `<span class="pill p-late num">${S.ctx.expPending}</span>` : `<span class="chev">${I.chev}</span>`}</a>` : ''}
+      ${S.ctx.assoc.expense_approval || S.ctx.expPending ? `<a class="card between" href="${B()}/depenses"><span><b>Dépenses à valider</b><br><span class="muted" style="font-size:14px">${S.ctx.expPending ? S.ctx.expPending + ' en attente d’approbation' : 'Aucune en attente · voir l’historique'}</span></span>${S.ctx.expPending ? `<span class="pill p-late num">${S.ctx.expPending}</span>` : `<span class="chev">${I.chev}</span>`}</a>` : ''}
       <div class="chips" role="group" aria-label="Filtrer">${[['all', 'Tout'], ['hors', 'Hors cotisations'], ['in', 'Recettes'], ['out', 'Dépenses']].map(([k, l]) => `<a class="chip" style="text-decoration:none" href="${B()}/finances?f=${k}" aria-pressed="${f === k}">${l}</a>`).join('')}</div>
       <div class="list">${rows.map(t => txItem(t, rset)).join('') || '<div class="empty">Aucune opération.</div>'}</div>
       ${p || more ? `<div class="pager">${p ? `<a class="btn ghost sm" href="${link(p - 1)}">← Plus récentes</a>` : '<span></span>'}${more ? `<a class="btn ghost sm" href="${link(p + 1)}">Plus anciennes →</a>` : ''}</div>` : ''}`;
@@ -1169,18 +1198,18 @@
     const receipt = receiptText(t, m, author);
     return `${subHead(isReceipt ? 'Paiement enregistré' : 'Opération ' + txRef(t.id), m ? B() + '/m/' + m.id : B() + '/finances')}
       ${isReceipt ? `<div class="receipt stack num"><div class="between"><b>Reçu ${txRef(t.id)}</b><span class="pill p-ok">Payé</span></div><dl class="kv" style="margin:0"><dt>Membre</dt><dd>${esc(m.full_name)}</dd><dt>Objet</dt><dd>${esc(t.description)}</dd><dt>Montant</dt><dd>${money(t.amount)}${t.orig_currency ? ` (${origTag(t)})` : ''}</dd><dt>Mode</dt><dd>${esc(t.payment_method || '—')}</dd><dt>Date</dt><dd>${whenTx(t)}</dd></dl>
-        ${t.period && paidFor(m.id, t.period) < feeOf(m) ? `<span class="pill p-late">Reste ${money(feeOf(m) - paidFor(m.id, t.period))} pour ${pFR(t.period)}</span>` : ''}</div>
+        ${t.period && paidFor(m.id, t.period) < feeOf(m, t.period) ? `<span class="pill p-late">Reste ${money(feeOf(m, t.period) - paidFor(m.id, t.period))} pour ${pFR(t.period)}</span>` : ''}</div>
         <a class="btn wa block" target="_blank" rel="noopener" href="${waTo(m.phone, receipt)}">${I.wa} Envoyer le reçu sur WhatsApp</a>
         <a class="btn ghost block" href="${B()}/recu/${t.id}">Reçu en PDF</a>
         <a class="btn ghost block" href="${B()}/encaisser">Enregistrer un autre paiement</a>` : `
       <section class="card stack num"><div class="between"><span class="pill ${t.kind === 'in' ? 'p-ok' : 'p-red'}">${t.kind === 'in' ? 'Recette' : 'Dépense'} · ${esc(t.category)}</span><span class="amt ${effect(t) >= 0 ? 'in' : 'out'}" style="font-size:18px">${effect(t) >= 0 ? '+' : '−'}${money(Math.abs(t.amount))}</span></div>
         <dl class="kv" style="margin:0"><dt>Objet</dt><dd>${esc(t.description)}</dd>${t.orig_currency ? `<dt>Montant reçu</dt><dd>${origTag(t)}</dd><dt>Taux</dt><dd>1 ${esc(CUR_LABEL[t.orig_currency] || t.orig_currency)} = ${rateFmt(t.fx_rate)} ${esc(CUR_LABEL[S.ctx.assoc.currency] || S.ctx.assoc.currency)}</dd>` : ''}${m ? `<dt>Membre</dt><dd>${esc(m.full_name)}</dd>` : ''}${t.period ? `<dt>Mois</dt><dd>${pFR(t.period)}</dd>` : ''}${proj ? `<dt>Projet</dt><dd>${esc(proj.name)}</dd>` : ''}<dt>Date</dt><dd>${dFR(t.occurred_on)}</dd>${t.payment_method ? `<dt>Mode</dt><dd>${esc(t.payment_method)}</dd>` : ''}<dt>${t.approved_label ? 'Proposé par' : 'Saisi par'}</dt><dd>${esc(author ? author.full_name : t.requested_label || '—')}</dd>${t.approved_label ? `<dt>Approuvé par</dt><dd>${esc(t.approved_label)}</dd>` : ''}<dt>Saisi le</dt><dd>${dFR(t.created_at)} à ${hm(t.created_at)}</dd>${t.comment ? `<dt>${t.reversal_of ? 'Motif' : 'Commentaire'}</dt><dd>${esc(t.comment)}</dd>` : ''}</dl>
-        ${t.proof_path ? `<button class="btn ghost sm" data-act="proof" data-path="${esc(t.proof_path)}">Voir le justificatif</button><div id="proof-box"></div>` : '<span class="muted" style="font-size:13px">Aucun justificatif</span>'}</section>
+        ${t.proof_path ? `<button class="btn ghost sm" data-act="proof" data-path="${esc(t.proof_path)}">Voir le justificatif</button><div id="proof-box"></div>` : '<span class="muted" style="font-size:14px">Aucun justificatif</span>'}</section>
       ${rev ? `<p class="note">Opération annulée le ${dFR(rev.occurred_on)} par la contre-écriture <a class="link" href="${B()}/op/${rev.id}">${txRef(rev.id)}</a>. Motif : ${esc(rev.comment)}</p>` : ''}
       ${orig ? `<p class="note">Cette ligne annule <a class="link" href="${B()}/op/${orig.id}">${txRef(orig.id)}</a>. Les deux restent visibles dans l’historique.</p>` : ''}
       ${m && !t.reversal_of ? `<a class="btn wa block" target="_blank" rel="noopener" href="${waTo(m.phone, receipt)}">${I.wa} Envoyer le reçu</a>` : ''}
       ${t.kind === 'in' && !t.reversal_of && !rev ? `<a class="btn ghost block" href="${B()}/recu/${t.id}">Reçu en PDF</a>` : ''}
-      ${can('reverse') && !rev && !t.reversal_of ? `<form class="card stack" data-form="reverse" data-id="${t.id}" novalidate><h2>Corriger une erreur</h2><p class="muted" style="margin:0;font-size:13.5px">L’opération ne sera pas effacée. Une contre-écriture du même montant sera ajoutée, visible par tous les membres.</p><div class="field"><label for="rv-r">Motif de l’annulation</label><input id="rv-r" name="reason" placeholder="Ex. montant saisi deux fois"></div><p class="err" hidden></p><button class="btn danger block" type="submit">Annuler par contre-écriture</button></form>` : ''}`}`;
+      ${can('reverse') && !rev && !t.reversal_of ? `<form class="card stack" data-form="reverse" data-id="${t.id}" novalidate><h2>Corriger une erreur</h2><p class="muted" style="margin:0;font-size:14px">L’opération ne sera pas effacée. Une contre-écriture du même montant sera ajoutée, visible par tous les membres.</p><div class="field"><label for="rv-r">Motif de l’annulation</label><input id="rv-r" name="reason" placeholder="Ex. montant saisi deux fois"></div><p class="err" hidden></p><button class="btn danger block" type="submit">Annuler par contre-écriture</button></form>` : ''}`}`;
   };
   // Montant en toutes lettres (règles de 1990 : traits d'union partout).
   function enLettres(n) {
@@ -1315,12 +1344,12 @@
     return `
       ${mg ? (fullPlan() ? `<a class="btn primary block" href="${B()}/sections/nouvelle">${I.plus} Nouvelle section</a>` : upsell('Les sections : Dakar, Conakry, France… chacune avec son trésorier')) : ''}
       <p class="note">Une section regroupe les membres d’une même ville ou d’un même pays. Son trésorier encaisse les cotisations de sa section ; le bureau central voit toutes les sections.</p>
-      ${secs.map(x => { const ms = act.filter(m => m.section_id === x.id), tr = x.treasurer_member_id ? S.ctx.byId.get(x.treasurer_member_id) : null, paid = fee ? ms.filter(m => feeOf(m) > 0 && paidFor(m.id, cur) >= feeOf(m)).length : 0;
+      ${secs.map(x => { const ms = act.filter(m => m.section_id === x.id), tr = x.treasurer_member_id ? S.ctx.byId.get(x.treasurer_member_id) : null, paid = fee ? ms.filter(m => feeOf(m, cur) > 0 && paidFor(m.id, cur) >= feeOf(m, cur)).length : 0;
         return `<section class="card stack"><div class="between"><h2>${esc(x.name)}</h2>${mg ? `<a class="link" href="${B()}/sections/${x.id}/modifier">Modifier</a>` : ''}</div>
-          <span class="muted" style="font-size:13.5px">${esc([x.city, x.country].filter(Boolean).join(', ') || '—')}</span>
+          <span class="muted" style="font-size:14px">${esc([x.city, x.country].filter(Boolean).join(', ') || '—')}</span>
           <dl class="kv num" style="margin:0"><dt>Membres</dt><dd>${ms.length}</dd>${fee ? `<dt>À jour ce mois</dt><dd>${paid}/${ms.length}</dd><dt>En retard</dt><dd>${ms.filter(m => dues(m).isLate).length}</dd>` : ''}<dt>Trésorier</dt><dd>${tr ? esc(tr.full_name) : '<span class="muted">Aucun</span>'}</dd></dl>
           <a class="btn ghost sm" href="${B()}/membres?f=s:${x.id}">Voir les membres</a></section>`; }).join('') || '<div class="empty">Aucune section. Une seule association suffit souvent ; créez des sections si vos membres vivent dans plusieurs villes ou pays.</div>'}
-      ${secs.length ? `<p class="muted" style="font-size:13px">${act.filter(m => !m.section_id).length} membre(s) sans section.</p>` : ''}`;
+      ${secs.length ? `<p class="muted" style="font-size:14px">${act.filter(m => !m.section_id).length} membre(s) sans section.</p>` : ''}`;
   };
 
   /* Collectes de solidarité ----------------------------------------- */
@@ -1332,8 +1361,8 @@
   const colCard = (c, t, compact) => {
     const got = Number((t || {}).collected || 0), n = Number((t || {}).contributions || 0), pc = c.goal ? pct(got, c.goal) : 0;
     return `<a class="card stack col-card ${c.status === 'Ouverte' ? 'open' : ''}" href="${B()}/collecte/${c.id}"><div class="between"><span class="eyebrow">${I.heart} ${esc(c.kind)}</span><span class="pill ${c.status === 'Ouverte' ? 'p-late' : 'p-blue'}">${c.status === 'Ouverte' ? 'En cours' : 'Close'}</span></div>
-      <h2>${esc(c.title)}</h2>${c.beneficiary && !compact ? `<span class="muted" style="font-size:13.5px">Pour ${esc(c.beneficiary)}</span>` : ''}
-      <div class="between num"><b style="font-family:var(--f-display);font-size:20px">${money(got)}</b><span class="muted" style="font-size:13px">${n} contribution${n > 1 ? 's' : ''}${c.goal ? ' · objectif ' + money(c.goal) : ''}</span></div>
+      <h2>${esc(c.title)}</h2>${c.beneficiary && !compact ? `<span class="muted" style="font-size:14px">Pour ${esc(c.beneficiary)}</span>` : ''}
+      <div class="between num"><b style="font-family:var(--f-display);font-size:20px">${money(got)}</b><span class="muted" style="font-size:14px">${n} contribution${n > 1 ? 's' : ''}${c.goal ? ' · objectif ' + money(c.goal) : ''}</span></div>
       ${c.goal ? `<div class="bar"><i style="width:${pc}%"></i></div>` : ''}</a>`;
   };
   V.collectes = async (sub) => {
@@ -1375,7 +1404,7 @@
     const mine = S.ctx.me && ops.some(o => o.member_id === S.ctx.me.id && o.kind === 'in' && !o.reversal_of && !rset.has(o.id));
     return `${subHead('Collecte', B() + '/collectes')}
       <section class="card hero col-hero"><div class="eyebrow">${I.heart} ${esc(c.kind)}${open ? '' : ' · close'}</div><h2 style="color:inherit">${esc(c.title)}</h2>${c.beneficiary ? `<span style="opacity:.85">Pour ${esc(c.beneficiary)}</span>` : ''}
-        <div class="big num">${num(got)} <span class="cur">${esc(CUR_LABEL[S.ctx.assoc.currency] || '')}</span></div>
+        <div class="big num${fit(got)}">${num(got)} <span class="cur">${esc(CUR_LABEL[S.ctx.assoc.currency] || '')}</span></div>
         ${c.goal ? `<div class="bar"><i style="width:${pct(got, c.goal)}%"></i></div>` : ''}
         <div class="boxes num"><div><small>Contributions</small><b>${t.contributions}</b></div><div><small>Remis</small><b>${money(given)}</b></div></div></section>
       ${c.description ? `<p class="card" style="white-space:pre-line;margin:0">${esc(c.description)}</p>` : ''}
@@ -1411,9 +1440,9 @@
     return `${subHead('Proposition de dépense', B() + '/depenses')}
       <section class="card stack num"><div class="between"><span class="pill ${EXP_PILL[r.status]}">${esc(r.status)}</span><span class="amt out" style="font-size:18px">−${money(r.amount)}</span></div>
         <dl class="kv" style="margin:0"><dt>Objet</dt><dd>${esc(r.description)}</dd>${r.orig_currency ? `<dt>Montant payé</dt><dd>${origTag(r)} (1 ${esc(CUR_LABEL[r.orig_currency] || r.orig_currency)} = ${rateFmt(r.fx_rate)})</dd>` : ''}<dt>Catégorie</dt><dd>${esc(r.category)}</dd>${proj ? `<dt>Projet</dt><dd>${esc(proj.name)}</dd>` : ''}<dt>Date</dt><dd>${dFR(r.occurred_on)}</dd><dt>Proposé par</dt><dd>${esc(r.requested_label)}</dd><dt>Le</dt><dd>${dFR(r.created_at)} à ${hm(r.created_at)}</dd>${r.comment ? `<dt>Commentaire</dt><dd>${esc(r.comment)}</dd>` : ''}${r.decided_at ? `<dt>${r.status === 'Annulée' ? 'Retiré par' : r.status === 'Approuvée' ? 'Approuvé par' : 'Refusé par'}</dt><dd>${esc(r.decided_label)}, le ${dFR(r.decided_at)}</dd>` : ''}${r.decision_note ? `<dt>Motif</dt><dd>${esc(r.decision_note)}</dd>` : ''}</dl>
-        ${r.proof_path ? `<button class="btn ghost sm" data-act="proof" data-path="${esc(r.proof_path)}">Voir le justificatif</button><div id="proof-box"></div>` : '<span class="muted" style="font-size:13px">Aucun justificatif joint</span>'}</section>
+        ${r.proof_path ? `<button class="btn ghost sm" data-act="proof" data-path="${esc(r.proof_path)}">Voir le justificatif</button><div id="proof-box"></div>` : '<span class="muted" style="font-size:14px">Aucun justificatif joint</span>'}</section>
       ${r.tx_id ? `<a class="btn ghost block" href="${B()}/op/${r.tx_id}">Voir l’opération dans la caisse</a>` : ''}
-      ${pending && can('approve') && !mine ? `<section class="card stack"><h2>Votre décision</h2><p class="muted num" style="margin:0;font-size:13.5px">Solde actuel de la caisse : ${money(solde)}${r.amount > solde ? ' : <b style="color:var(--danger)">insuffisant pour cette dépense</b>' : ''}.</p>
+      ${pending && can('approve') && !mine ? `<section class="card stack"><h2>Votre décision</h2><p class="muted num" style="margin:0;font-size:14px">Solde actuel de la caisse : ${money(solde)}${r.amount > solde ? ' : <b style="color:var(--danger)">insuffisant pour cette dépense</b>' : ''}.</p>
         <button class="btn primary block" data-act="approveexp" data-id="${r.id}" ${r.amount > solde ? 'disabled' : ''}>Approuver la dépense</button></section>
         <form class="card stack" data-form="rejectexp" data-id="${r.id}" novalidate><h2>Refuser</h2><div class="field"><label for="rj-r">Motif du refus</label><input id="rj-r" name="reason" placeholder="Ex. demander un deuxième devis"></div><p class="err" hidden></p><button class="btn danger block" type="submit">Refuser la dépense</button></form>` : ''}
       ${pending && mine ? `<p class="note">En attente de l’approbation du président ou du vice-président. Prévenez-les sur WhatsApp.</p><button class="btn ghost block" data-act="cancelexp" data-id="${r.id}">Retirer ma proposition</button>` : ''}
@@ -1434,7 +1463,7 @@
     const bal = S.ctx.bal;
     const bars = (kind, total) => cats.filter(c => c.kind === kind && Number(c.total) > 0).sort((x, y) => y.total - x.total).map(c => `<div class="catbar ${kind}"><span>${esc(c.category)}</span><div class="bar"><i style="width:${Math.max(2, pct(c.total, total))}%"></i></div><span class="num" style="font-weight:600">${num(c.total)}</span></div>`).join('') || '<span class="muted">Rien pour le moment.</span>';
     return `
-      <section class="card hero"><div class="eyebrow">Solde disponible</div><div class="big num">${money(bal.in - bal.out)}</div><div class="split num"><span>Recettes <b>${money(bal.in)}</b></span><span>Dépenses <b>${money(bal.out)}</b></span></div></section>
+      <section class="card hero"><div class="eyebrow">Solde disponible</div><div class="big num${fit(bal.in - bal.out)}">${money(bal.in - bal.out)}</div><div class="split num"><span>Recettes <b>${money(bal.in)}</b></span><span>Dépenses <b>${money(bal.out)}</b></span></div></section>
       <section class="card stack"><div class="between"><h2>Recettes</h2><span class="muted num">${money(bal.in)}</span></div>${bars('in', bal.in)}</section>
       <section class="card stack"><div class="between"><h2>Dépenses</h2><span class="muted num">${money(bal.out)}</span></div>${bars('out', bal.out)}</section>
       ${projects.length ? `<section class="card stack"><h2>Projets</h2>${projects.map(p => { const t = tot.get(p.id) || { collected: 0, spent: 0 }; return `<a class="item" href="${B()}/p/${p.id}" style="padding:8px 0"><div class="body"><div class="t">${esc(p.name)}</div><div class="s wrap num">Collecté ${money(t.collected)} · dépensé ${money(t.spent)}</div></div><span class="pill ${p.status === 'Terminé' ? 'p-blue' : 'p-ok'}">${esc(p.status)}</span></a>`; }).join('')}</section>` : ''}
@@ -1456,8 +1485,8 @@
     const tot = new Map(totals.map(x => [x.project_id, x]));
     return `<div class="between"><h2>Projets du village</h2>${can('projects') ? `<a class="btn primary sm" href="${B()}/projets/nouveau">+ Projet</a>` : ''}</div>
       ${projects.map(p => { const t = tot.get(p.id) || { collected: 0 }; const pc = pct(t.collected, p.goal); return `<a class="card stack" href="${B()}/p/${p.id}"><div class="between"><span class="eyebrow">${esc(p.type)}</span><span class="pill ${p.status === 'Terminé' ? 'p-blue' : p.status === 'Suspendu' ? 'p-late' : 'p-ok'}">${esc(p.status)}</span></div><h2>${esc(p.name)}</h2>
-        <div class="between"><span class="pct num">${pc}${NB}%</span><span class="muted num" style="font-size:13px">${money(t.collected)} / ${money(p.goal)}</span></div><div class="bar"><i style="width:${pc}%"></i></div>
-        <span class="muted" style="font-size:13px">${p.lead_member_id ? 'Responsable : ' + esc(memberName(p.lead_member_id)) + ' · ' : ''}${p.end_on ? 'fin prévue ' + dFR(p.end_on) : 'début ' + dFR(p.start_on)}</span></a>`; }).join('') || `<div class="empty">Aucun projet pour le moment.${can('projects') ? '' : ' Le président ou le responsable des projets peut en créer un.'}</div>`}`;
+        <div class="between"><span class="pct num">${pc}${NB}%</span><span class="muted num" style="font-size:14px">${money(t.collected)} / ${money(p.goal)}</span></div><div class="bar"><i style="width:${pc}%"></i></div>
+        <span class="muted" style="font-size:14px">${p.lead_member_id ? 'Responsable : ' + esc(memberName(p.lead_member_id)) + ' · ' : ''}${p.end_on ? 'fin prévue ' + dFR(p.end_on) : 'début ' + dFR(p.start_on)}</span></a>`; }).join('') || `<div class="empty">Aucun projet pour le moment.${can('projects') ? '' : ' Le président ou le responsable des projets peut en créer un.'}</div>`}`;
   };
 
   function projectForm(p) {
@@ -1506,7 +1535,7 @@
     if (p.public_slug) {
       const url = pubUrl(p), share = `${p.name} — ${S.ctx.assoc.name}\nDéjà ${money(c)} collectés sur ${money(p.goal)} (${pc} %).\nSuivez le projet en toute transparence, et participez :\n${url}`;
       return `<section class="card stack pub-card"><div class="between"><h2>Page publique</h2><span class="pill p-ok">En ligne</span></div>
-        <p class="muted" style="margin:0;font-size:13.5px">Tout le monde peut voir ce projet avec ce lien, même sans compte : objectif, argent collecté, dépenses et nouvelles. Aucun nom ni numéro de membre n’y apparaît.</p>
+        <p class="muted" style="margin:0;font-size:14px">Tout le monde peut voir ce projet avec ce lien, même sans compte : objectif, argent collecté, dépenses et nouvelles. Aucun nom ni numéro de membre n’y apparaît.</p>
         <a class="link" style="word-break:break-all" target="_blank" rel="noopener" href="${esc(url)}">${esc(url)}</a>
         <a class="btn wa block" target="_blank" rel="noopener" href="${waShare(share)}">${I.wa} Partager la page sur WhatsApp</a>
         ${can('projects') ? `<form class="stack" data-form="ppublic" data-id="${p.id}" data-on="1" novalidate><div class="field"><label for="pp-c">Comment donner (affiché sur la page)</label><input id="pp-c" name="contact" maxlength="300" value="${esc(p.public_contact)}" placeholder="Ex. Wave ou Orange Money au +221 77 000 00 00 (trésorier)"></div><p class="err" hidden></p><button class="btn ghost sm" type="submit">Enregistrer</button></form>
@@ -1514,7 +1543,7 @@
     }
     if (!can('projects')) return '';
     return `<form class="card stack" data-form="ppublic" data-id="${p.id}" novalidate><h2>Faire connaître le projet</h2>
-      <p class="muted" style="margin:0;font-size:13.5px">Publiez une page ouverte à tous, à partager sur Facebook et WhatsApp : la diaspora et les amis du village voient l’avancement et peuvent donner. Aucune donnée de membre n’y apparaît.</p>
+      <p class="muted" style="margin:0;font-size:14px">Publiez une page ouverte à tous, à partager sur Facebook et WhatsApp : la diaspora et les amis du village voient l’avancement et peuvent donner. Aucune donnée de membre n’y apparaît.</p>
       <div class="field"><label for="pp-c">Comment donner</label><input id="pp-c" name="contact" maxlength="300" placeholder="Ex. Wave ou Orange Money au +221 77 000 00 00 (trésorier)"><p class="help">Ce texte sera visible par tout le monde. Mettez un numéro qui accepte d’être public.</p></div>
       <p class="err" hidden></p><button class="btn primary block" type="submit">Publier la page du projet</button></form>`;
   }
@@ -1532,7 +1561,7 @@
         <div class="field"><label for="an-b">Message</label><textarea id="an-b" name="body" rows="4" placeholder="Écrivez, ou enregistrez l’annonce en vocal"></textarea></div>
         ${voiceBox('ann')}
         <p class="err" hidden></p><button class="btn primary" type="submit">Publier</button><p class="help">Pensez à la partager dans le groupe WhatsApp après publication.</p></form>` : ''}
-      ${rows.map(x => `<section class="card stack"><div class="between"><span class="pill ${col[x.kind] || 'p-blue'}">${esc(x.kind)}</span><span class="muted" style="font-size:13px">${dFR(x.created_at)}</span></div><h2>${esc(x.title)}</h2>${x.audio_path && x.body === 'Annonce vocale' ? '' : `<p style="margin:0;white-space:pre-line">${esc(x.body)}</p>`}${voicePlay(x.audio_path, x.audio_seconds)}<div class="between"><span class="muted" style="font-size:13px">${esc(by(x.created_by))}</span><a class="link" target="_blank" rel="noopener" href="${waShare(x.kind + ' · ' + x.title + '\n\n' + x.body + '\n\n' + a.name)}">Partager sur WhatsApp</a></div></section>`).join('') || '<div class="empty">Aucune annonce pour le moment.</div>'}`;
+      ${rows.map(x => `<section class="card stack"><div class="between"><span class="pill ${col[x.kind] || 'p-blue'}">${esc(x.kind)}</span><span class="muted" style="font-size:14px">${dFR(x.created_at)}</span></div><h2>${esc(x.title)}</h2>${x.audio_path && x.body === 'Annonce vocale' ? '' : `<p style="margin:0;white-space:pre-line">${esc(x.body)}</p>`}${voicePlay(x.audio_path, x.audio_seconds)}<div class="between"><span class="muted" style="font-size:14px">${esc(by(x.created_by))}</span><a class="link" target="_blank" rel="noopener" href="${waShare(x.kind + ' · ' + x.title + '\n\n' + x.body + '\n\n' + a.name)}">Partager sur WhatsApp</a></div></section>`).join('') || '<div class="empty">Aucune annonce pour le moment.</div>'}`;
   };
 
   /* Réunions --------------------------------------------------------- */
@@ -1582,7 +1611,7 @@
     const crText = `Compte rendu · ${m.title}\n${dLong(m.starts_at)}${m.place ? ' · ' + m.place : ''}\nPrésents : ${pres.length}\n\n${m.minutes}\n\n${a.name}`;
     const mg = can('meetings');
     return `${subHead('Réunion', B() + '/reunions')}
-      <section class="card stack"><div class="between"><span class="pill ${MEET_PILL[m.status]}">${esc(m.status)}</span><span class="muted" style="font-size:13px">Convoquée par ${esc(String(m.created_label || '').replace(/\s*\(.*\)$/, '') || '—')}</span></div>
+      <section class="card stack"><div class="between"><span class="pill ${MEET_PILL[m.status]}">${esc(m.status)}</span><span class="muted" style="font-size:14px">Convoquée par ${esc(String(m.created_label || '').replace(/\s*\(.*\)$/, '') || '—')}</span></div>
         <h2 style="font-size:22px">${esc(m.title)}</h2>
         <dl class="kv" style="margin:0"><dt>Date</dt><dd>${esc(dLong(m.starts_at))}</dd>${m.place ? `<dt>Lieu</dt><dd>${esc(m.place)}</dd>` : ''}</dl>
         ${m.agenda ? `<div class="stack" style="gap:4px"><span class="eyebrow">Ordre du jour</span><p style="margin:0;white-space:pre-line">${esc(m.agenda)}</p></div>` : ''}</section>
@@ -1668,14 +1697,14 @@ Abstention</textarea><p class="help">Entre 2 et 10 choix.</p></div>
     const share = open ? `VOTE · ${a.name}\n\n${p.question}\nChoix : ${opts.map(o => o.label).join(' / ')}${p.closes_at ? '\nJusqu’au ' + dLong(p.closes_at) : ''}\n\nVotez dans l’application :\n${link}`
       : `RÉSULTAT DU VOTE · ${a.name}\n\n${p.question}\n${opts.map(o => `${o.label} : ${count.get(o.id) || 0}`).join('\n')}\n\n${total} votant${total > 1 ? 's' : ''}`;
     return `${subHead('Vote', B() + '/votes')}
-      <section class="card stack"><div class="between"><span class="pill ${open ? 'p-ok' : 'p-blue'}">${open ? 'Ouvert' : 'Clos'}</span><span class="muted" style="font-size:13px">${p.anonymous ? 'Vote secret' : 'Vote à main levée'}</span></div>
+      <section class="card stack"><div class="between"><span class="pill ${open ? 'p-ok' : 'p-blue'}">${open ? 'Ouvert' : 'Clos'}</span><span class="muted" style="font-size:14px">${p.anonymous ? 'Vote secret' : 'Vote à main levée'}</span></div>
         <h2 style="font-size:21px">${esc(p.question)}</h2>${p.description ? `<p style="margin:0;white-space:pre-line" class="muted">${esc(p.description)}</p>` : ''}
-        <span class="muted" style="font-size:13px">Lancé par ${esc(String(p.created_label || '').replace(/\s*\(.*\)$/, '') || '—')} · ${open ? (p.closes_at ? 'jusqu’au ' + esc(dLong(p.closes_at)) : 'sans date de fin') : 'clos le ' + esc(dFR(p.closed_at || p.closes_at))}</span></section>
+        <span class="muted" style="font-size:14px">Lancé par ${esc(String(p.created_label || '').replace(/\s*\(.*\)$/, '') || '—')} · ${open ? (p.closes_at ? 'jusqu’au ' + esc(dLong(p.closes_at)) : 'sans date de fin') : 'clos le ' + esc(dFR(p.closed_at || p.closes_at))}</span></section>
       ${canVote ? `<section class="stack"><h2>${mine ? 'Votre vote (vous pouvez changer)' : 'Votre vote'}</h2><div class="stack" style="gap:8px">${opts.map(o => `<button class="btn ghost block vote-opt" data-act="vote" data-poll="${p.id}" data-opt="${o.id}" aria-pressed="${mine && mine.option_id === o.id}">${esc(o.label)}</button>`).join('')}</div></section>` : ''}
       ${!canVote && open && !S.ctx.me.user_id ? '<p class="note">Il faut un compte sur l’application pour voter.</p>' : ''}
-      <section class="card stack"><div class="between"><h2>Résultats</h2><span class="muted num" style="font-size:13px">${total} votant${total > 1 ? 's' : ''} sur ${voters}</span></div>
+      <section class="card stack"><div class="between"><h2>Résultats</h2><span class="muted num" style="font-size:14px">${total} votant${total > 1 ? 's' : ''} sur ${voters}</span></div>
         ${showRes ? opts.map(o => { const n = count.get(o.id) || 0, pc = pct(n, total); const names = !p.anonymous ? ballots.filter(v => v.option_id === o.id).map(v => memberName(v.member_id)) : [];
-          return `<div class="stack" style="gap:4px"><div class="between"><b>${esc(o.label)}${!open && n === best && n > 0 ? ' ✓' : ''}</b><span class="num">${n} · ${pc}${NB}%</span></div><div class="bar"><i style="width:${pc}%"></i></div>${names.length ? `<span class="muted" style="font-size:12.5px">${names.map(esc).join(', ')}</span>` : ''}</div>`; }).join('')
+          return `<div class="stack" style="gap:4px"><div class="between"><b>${esc(o.label)}${!open && n === best && n > 0 ? ' ✓' : ''}</b><span class="num">${n} · ${pc}${NB}%</span></div><div class="bar"><i style="width:${pc}%"></i></div>${names.length ? `<span class="muted" style="font-size:14px">${names.map(esc).join(', ')}</span>` : ''}</div>`; }).join('')
           : '<span class="muted">Votez pour voir les résultats.</span>'}</section>
       <div class="row" style="flex-wrap:wrap"><a class="btn wa sm" target="_blank" rel="noopener" href="${waShare(share)}">${I.wa} ${open ? 'Partager le vote' : 'Partager le résultat'}</a>
         ${open && can('polls') ? `<button class="btn danger sm" data-act="closepoll" data-id="${p.id}">Clore le vote</button>` : ''}</div>`;
@@ -1782,9 +1811,9 @@ Abstention</textarea><p class="help">Entre 2 et 10 choix.</p></div>
       <div class="field no-print"><label for="ra-y">Année</label><select id="ra-y" data-nav="rapportannuel">${years.map(y => opt(y, String(y), Y)).join('')}</select></div>
       <div class="row no-print" style="flex-wrap:wrap"><button class="btn primary sm" data-act="print">Télécharger en PDF</button><a class="btn wa sm" target="_blank" rel="noopener" href="${waShare(wa)}">${I.wa} Partager le résumé</a></div>
       <article class="report stack">
-        <header class="report-head"><span class="eyebrow">${esc(a.name)}</span><h1>${esc(title)}</h1><span class="muted" style="font-size:13px">Établi le ${dFR(todayISO())} avec VillageLink</span></header>
+        <header class="report-head"><span class="eyebrow">${esc(a.name)}</span><h1>${esc(title)}</h1><span class="muted" style="font-size:14px">Établi le ${dFR(todayISO())} avec VillageLink</span></header>
         <section class="card stack"><h2>Caisse de l’année</h2><dl class="kv num" style="margin:0"><dt>Solde au 1er janvier</dt><dd>${money(open)}</dd><dt>Entrées</dt><dd style="color:var(--green)">${inY ? '+' : ''}${money(inY)}</dd><dt>Sorties</dt><dd style="color:var(--danger)">${outY ? '−' : ''}${money(outY)}</dd><dt><b>Solde en fin de période</b></dt><dd><b>${money(close)}</b></dd></dl></section>
-        <section class="card stack"><h2>Mois par mois</h2><table class="sheet num"><thead><tr><th>Mois</th><th>Entrées</th><th>Sorties</th><th>Solde</th></tr></thead><tbody>${rows.map(([p, i, o, r]) => `<tr><td>${esc(pFR(p).replace(/ \d{4}$/, ''))}</td><td>${i ? '+' : ''}${num(i)}</td><td>${o ? '−' : ''}${num(o)}</td><td>${num(r)}</td></tr>`).join('')}</tbody></table><span class="muted" style="font-size:13px">Montants en ${esc(CUR_LABEL[a.currency] || a.currency)}.</span></section>
+        <section class="card stack"><h2>Mois par mois</h2><div class="sheet-wrap"><table class="sheet num"><thead><tr><th>Mois</th><th>Entrées</th><th>Sorties</th><th>Solde</th></tr></thead><tbody>${rows.map(([p, i, o, r]) => `<tr><td>${esc(pFR(p).replace(/ \d{4}$/, ''))}</td><td>${i ? '+' : ''}${num(i)}</td><td>${o ? '−' : ''}${num(o)}</td><td>${num(r)}</td></tr>`).join('')}</tbody></table></div><span class="muted" style="font-size:14px">Montants en ${esc(CUR_LABEL[a.currency] || a.currency)}.</span></section>
         <section class="card stack"><h2>Entrées par catégorie</h2>${catList(byCat('in'))}</section>
         <section class="card stack"><h2>Dépenses par catégorie</h2>${catList(byCat('out'))}</section>
         <section class="card stack"><h2>Vie de l’association</h2><dl class="kv num" style="margin:0"><dt>Membres actifs</dt><dd>${activeMembers().length}</dd><dt>Réunions tenues</dt><dd>${held}</dd></dl></section>
@@ -1806,9 +1835,9 @@ Abstention</textarea><p class="help">Entre 2 et 10 choix.</p></div>
     const deM = x => { const l = pFR(x); return /^[aeiouâéèh]/i.test(l) ? 'd’' + l : 'de ' + l; };
     const fee = hasFees() ? 1 : 0;
     const dueNow = activeMembers().filter(m => dueIn(m, M));
-    const paidN = dueNow.filter(m => paidFor(m.id, M) >= feeOf(m)).length;
-    const collected = dueNow.reduce((x, m) => x + Math.min(paidFor(m.id, M), feeOf(m)), 0), expected = dueNow.reduce((x, m) => x + feeOf(m), 0);
-    const unpaid = fee ? dueNow.filter(m => paidFor(m.id, M) < feeOf(m)) : [];
+    const paidN = dueNow.filter(m => paidFor(m.id, M) >= feeOf(m, M)).length;
+    const collected = dueNow.reduce((x, m) => x + Math.min(paidFor(m.id, M), feeOf(m, M)), 0), expected = dueNow.reduce((x, m) => x + feeOf(m, M), 0);
+    const unpaid = fee ? dueNow.filter(m => paidFor(m.id, M) < feeOf(m, M)) : [];
     const [meets, polls, projects, ptot] = await Promise.all([
       sb.from('meetings').select('*').eq('association_id', a.id).gte('starts_at', new Date(start + 'T00:00:00').toISOString()).lt('starts_at', new Date(next + 'T00:00:00').toISOString()).order('starts_at').then(r => r.error ? [] : r.data, () => []),
       sb.from('polls').select('*').eq('association_id', a.id).eq('status', 'Clos').gte('closed_at', new Date(start + 'T00:00:00').toISOString()).lt('closed_at', new Date(next + 'T00:00:00').toISOString()).then(r => r.error ? [] : r.data, () => []),
@@ -1825,7 +1854,7 @@ Abstention</textarea><p class="help">Entre 2 et 10 choix.</p></div>
       <div class="field no-print"><label for="rp-m">Mois</label><select id="rp-m" data-nav="rapport">${months.map(x => opt(x, pFR(x).replace(/^./, c => c.toUpperCase()), M)).join('')}</select></div>
       <div class="row no-print" style="flex-wrap:wrap"><button class="btn primary sm" data-act="print">Télécharger en PDF</button><a class="btn wa sm" target="_blank" rel="noopener" href="${waShare(wa)}">${I.wa} Partager le résumé</a><a class="btn ghost sm" href="${B()}/rapportannuel">Rapport de l’année</a></div>
       <article class="report stack">
-        <header class="report-head"><span class="eyebrow">${esc(a.name)}</span><h1>${esc(title)}</h1><span class="muted" style="font-size:13px">Établi le ${dFR(todayISO())} avec VillageLink</span></header>
+        <header class="report-head"><span class="eyebrow">${esc(a.name)}</span><h1>${esc(title)}</h1><span class="muted" style="font-size:14px">Établi le ${dFR(todayISO())} avec VillageLink</span></header>
         <section class="card stack"><h2>Caisse</h2><dl class="kv num" style="margin:0"><dt>Solde au début du mois</dt><dd>${money(open)}</dd><dt>Entrées du mois</dt><dd style="color:var(--green)">${inM ? '+' : ''}${money(inM)}</dd><dt>Sorties du mois</dt><dd style="color:var(--danger)">${outM ? '−' : ''}${money(outM)}</dd><dt><b>Solde à la fin du mois</b></dt><dd><b>${money(close)}</b></dd></dl></section>
         ${fee ? `<section class="card stack"><div class="between"><h2>Cotisations ${esc(deM(M))}</h2><span class="pill p-blue num">${paidN}/${dueNow.length} à jour</span></div>
           <div class="bar"><i style="width:${pct(collected, expected)}%"></i></div><span class="muted num">${money(collected)} encaissés sur ${money(expected)} attendus</span>
@@ -1834,7 +1863,7 @@ Abstention</textarea><p class="help">Entre 2 et 10 choix.</p></div>
         <section class="card stack"><h2>Dépenses par catégorie</h2>${catList(byCat('out'))}</section>
         ${meets.length ? `<section class="card stack"><h2>Réunions</h2>${meets.map(m => `<div><b>${esc(m.title)}</b> · ${esc(dLong(m.starts_at))} · <span class="pill ${MEET_PILL[m.status]}">${esc(m.status)}</span>${m.minutes ? `<p class="muted" style="margin:4px 0 0;white-space:pre-line">${esc(m.minutes.slice(0, 600))}${m.minutes.length > 600 ? '…' : ''}</p>` : ''}</div>`).join('')}</section>` : ''}
         ${polls.length ? `<section class="card stack"><h2>Décisions votées</h2>${polls.map((p, i) => { const [opts, res] = pollRes[i]; const c = new Map(res.map(r => [r.option_id, Number(r.votes)])); return `<div><b>${esc(p.question)}</b><p class="muted" style="margin:2px 0 0">${opts.map(o => `${esc(o.label)} : ${c.get(o.id) || 0}`).join(' · ')}</p></div>`; }).join('')}</section>` : ''}
-        ${projects.length ? `<section class="card stack"><h2>Projets en cours</h2>${projects.map(p => { const t = tot.get(p.id) || { collected: 0 }; const pc = pct(t.collected, p.goal); return `<div class="stack" style="gap:4px"><div class="between"><b>${esc(p.name)}</b><span class="num">${pc}${NB}%</span></div><div class="bar thin"><i style="width:${pc}%"></i></div><span class="muted num" style="font-size:13px">${money(t.collected)} sur ${money(p.goal)}</span></div>`; }).join('')}</section>` : ''}
+        ${projects.length ? `<section class="card stack"><h2>Projets en cours</h2>${projects.map(p => { const t = tot.get(p.id) || { collected: 0 }; const pc = pct(t.collected, p.goal); return `<div class="stack" style="gap:4px"><div class="between"><b>${esc(p.name)}</b><span class="num">${pc}${NB}%</span></div><div class="bar thin"><i style="width:${pc}%"></i></div><span class="muted num" style="font-size:14px">${money(t.collected)} sur ${money(p.goal)}</span></div>`; }).join('')}</section>` : ''}
       </article>`;
   };
 
@@ -1907,7 +1936,7 @@ Abstention</textarea><p class="help">Entre 2 et 10 choix.</p></div>
       <section class="card stack"><h2>Verrou par code</h2>${pinGet() ? `<p class="muted" style="margin:0;font-size:15px">Le code est demandé à l’ouverture de l’application, et quand vous revenez après un moment.</p><button class="btn ghost sm" data-act="pinoff">Retirer le code</button>` : `<p class="muted" style="margin:0;font-size:15px">Un code à 4 chiffres protège l’application si quelqu’un prend votre téléphone.</p><form class="stack" data-form="pinset" novalidate><div class="field"><label for="pin-a">Nouveau code (4 chiffres)</label><input id="pin-a" name="pin" type="password" inputmode="numeric" maxlength="4" autocomplete="new-password"></div><div class="field"><label for="pin-b">Répétez le code</label><input id="pin-b" name="pin2" type="password" inputmode="numeric" maxlength="4" autocomplete="new-password"></div><p class="err" hidden></p><button class="btn primary block" type="submit">Activer le verrou</button></form>`}<p class="help">Ce verrou reste sur ce téléphone. Il ne remplace pas votre mot de passe.</p></section>
       <button class="btn danger block" data-act="signout">${I.out} Se déconnecter</button>
       ${delAcctBox()}
-      <p class="muted" style="font-size:13px;text-align:center">VillageLink · version 2.2 · <a class="link" href="confidentialite.html">Confidentialité</a> · <a class="link" href="conditions.html">Conditions</a></p>`;
+      <p class="muted" style="font-size:14px;text-align:center">VillageLink · version 2.2 · <a class="link" href="confidentialite.html">Confidentialité</a> · <a class="link" href="conditions.html">Conditions</a></p>`;
   };
 
   /* Notifications sur le téléphone ----------------------------------- */
@@ -1977,7 +2006,7 @@ Abstention</textarea><p class="help">Entre 2 et 10 choix.</p></div>
     const cats = S.ctx.cats || [], mg = can('categories'), cur = esc(CUR_LABEL[S.ctx.assoc.currency] || S.ctx.assoc.currency);
     const count = id => activeMembers().filter(m => m.category_id === id).length;
     return `<section class="card stack" id="categories"><h2>Catégories de membres</h2>
-      <p class="muted" style="margin:0;font-size:13.5px">Quand tous ne paient pas la même cotisation : par exemple « Gérant / propriétaire » et « Apprenti ». Un membre sans catégorie paie la cotisation générale ci-dessous. Mettez 0 pour une catégorie dispensée.</p>
+      <p class="muted" style="margin:0;font-size:14px">Quand tous ne paient pas la même cotisation : par exemple « Gérant / propriétaire » et « Apprenti ». Un membre sans catégorie paie la cotisation générale ci-dessous. Mettez 0 pour une catégorie dispensée.</p>
       ${cats.map(c => mg ? `<form class="cat-row" data-form="category" data-id="${c.id}" novalidate><input name="name" value="${esc(c.name)}" maxlength="60" aria-label="Nom de la catégorie"><input name="fee_amount" type="number" inputmode="numeric" min="0" step="1" value="${esc(c.fee_amount)}" aria-label="Cotisation par mois (${cur})"><button class="btn ghost sm" type="submit">OK</button><button class="iconbtn sm-del" type="button" data-act="delcat" data-id="${c.id}" aria-label="Supprimer la catégorie ${esc(c.name)}">✕</button><span class="muted cat-n">${count(c.id)} membre${count(c.id) > 1 ? 's' : ''} · ${Number(c.fee_amount) ? money(c.fee_amount) + ' par mois' : 'dispensés'}</span><p class="err" hidden></p></form>`
         : `<div class="between num"><span>${esc(c.name)} <span class="muted">(${count(c.id)})</span></span><b>${Number(c.fee_amount) ? money(c.fee_amount) : 'Dispensé'}</b></div>`).join('') || '<span class="muted">Aucune catégorie : tout le monde paie la même cotisation.</span>'}
       ${mg && !fullPlan() ? upsell('Les catégories de cotisation : gérant, apprenti…') : ''}${mg && fullPlan() ? `<form class="stack" data-form="category" novalidate><div class="row2"><div class="field"><label for="ct-n">Nouvelle catégorie</label><input id="ct-n" name="name" maxlength="60" placeholder="Ex. Apprenti"></div><div class="field"><label for="ct-f">Cotisation par mois (${cur})</label><input id="ct-f" name="fee_amount" type="number" inputmode="numeric" min="0" step="1" placeholder="Ex. 1000"></div></div><p class="err" hidden></p><button class="btn ghost block" type="submit">Ajouter la catégorie</button></form>
@@ -1987,7 +2016,7 @@ Abstention</textarea><p class="help">Entre 2 et 10 choix.</p></div>
   const mmCard = () => {
     const p = S.ctx.payNums || {}, ed = canSetPayNums(), ro = ed ? '' : 'disabled';
     return `<form class="card stack" id="mm" data-form="paynums" novalidate><h2>Recevoir les cotisations par mobile money</h2>
-      <p class="muted" style="margin:0;font-size:13.5px">Les membres envoient l’argent à ces numéros avec leur propre application, puis touchent « J’ai payé ». La cotisation compte quand le trésorier confirme l’avoir reçue. VillageLink ne touche jamais à l’argent.</p>
+      <p class="muted" style="margin:0;font-size:14px">Les membres envoient l’argent à ces numéros avec leur propre application, puis touchent « J’ai payé ». La cotisation compte quand le trésorier confirme l’avoir reçue. VillageLink ne touche jamais à l’argent.</p>
       ${ed ? '' : '<p class="help">Seuls le président et le trésorier changent ces numéros. Chaque changement est visible dans le journal.</p>'}
       <div class="field"><label for="mm-h">Nom affiché chez Wave / Orange Money</label><input id="mm-h" name="holder" value="${esc(p.holder || '')}" placeholder="Ex. Boubacar Baldé" ${ro}></div>
       <div class="field"><label for="mm-w">Numéro Wave</label><input id="mm-w" name="wave" type="tel" inputmode="tel" value="${esc(p.wave || '')}" placeholder="+221 77 000 00 00" ${ro}></div>
@@ -2003,12 +2032,12 @@ Abstention</textarea><p class="help">Entre 2 et 10 choix.</p></div>
     const ro = pres ? '' : 'disabled';
     const cvPrev = can('cover') ? await coverUrl(a) : '';
     return `${subHead('Association', B() + '/plus')}
-      <section class="card stack"><h2>Code d’invitation</h2><p class="muted" style="margin:0;font-size:13.5px">Les membres créent leur compte puis entrent ce code. Ceux que le trésorier a déjà inscrits retrouvent leur historique grâce à leur numéro de téléphone.</p>
+      <section class="card stack"><h2>Code d’invitation</h2><p class="muted" style="margin:0;font-size:14px">Les membres créent leur compte puis entrent ce code. Ceux que le trésorier a déjà inscrits retrouvent leur historique grâce à leur numéro de téléphone.</p>
         <div class="code">${esc(a.invite_code)}</div>
         <a class="btn wa block" target="_blank" rel="noopener" href="${waShare(invite)}">${I.wa} Envoyer l’invitation sur WhatsApp</a>
         ${pres ? '<button class="btn ghost sm" data-act="newcode">Changer le code</button>' : ''}</section>
-      ${can('members') ? `<section class="card stack"><h2>Exporter les données</h2><p class="muted" style="margin:0;font-size:13.5px">Téléchargez un fichier que vous ouvrez dans Excel : la liste des membres, ou toutes les opérations de la caisse.</p><div class="row" style="flex-wrap:wrap"><button class="btn ghost sm" data-act="exp" data-what="membres">Les membres</button><button class="btn ghost sm" data-act="exp" data-what="operations">Les opérations</button></div><p class="help">La liste des membres contient les numéros de téléphone : gardez le fichier pour vous.</p></section>` : ''}
-      ${can('cover') ? `<form class="card stack" data-form="cover" novalidate><h2>Photo de couverture</h2><p class="muted" style="margin:0;font-size:13.5px">Elle s’affiche en haut de l’accueil pour tous les membres. Choisissez une belle photo du village.</p>
+      ${can('members') ? `<section class="card stack"><h2>Exporter les données</h2><p class="muted" style="margin:0;font-size:14px">Téléchargez un fichier que vous ouvrez dans Excel : la liste des membres, ou toutes les opérations de la caisse.</p><div class="row" style="flex-wrap:wrap"><button class="btn ghost sm" data-act="exp" data-what="membres">Les membres</button><button class="btn ghost sm" data-act="exp" data-what="operations">Les opérations</button></div><p class="help">La liste des membres contient les numéros de téléphone : gardez le fichier pour vous.</p></section>` : ''}
+      ${can('cover') ? `<form class="card stack" data-form="cover" novalidate><h2>Photo de couverture</h2><p class="muted" style="margin:0;font-size:14px">Elle s’affiche en haut de l’accueil pour tous les membres. Choisissez une belle photo du village.</p>
         ${cvPrev ? `<div class="cover cover-sm"><img src="${esc(cvPrev)}" alt=""></div>` : ''}
         <div class="field"><label for="cv-f">${cvPrev ? 'Changer la photo' : 'Choisir une photo'}</label><input id="cv-f" name="file" type="file" accept="image/*"></div>
         <button class="btn primary block" type="submit">Enregistrer la photo</button>
@@ -2019,10 +2048,11 @@ Abstention</textarea><p class="help">Entre 2 et 10 choix.</p></div>
         ${pres ? '' : '<p class="note">Seul le président peut modifier ces informations.</p>'}
         <span class="eyebrow">Cotisation</span>
         <div class="row2"><div class="field"><label for="as-fee">${(S.ctx.cats || []).length ? 'Cotisation générale par mois' : 'Montant par mois'}</label><input id="as-fee" name="fee_amount" type="number" inputmode="numeric" min="0" step="1" value="${esc(a.fee_amount)}" ${ro}></div><div class="field"><label for="as-due">Jour d’échéance</label><input id="as-due" name="fee_due_day" type="number" inputmode="numeric" min="1" max="28" value="${esc(a.fee_due_day)}" ${ro}></div></div>
+        <p class="help" style="margin-top:-6px">Un nouveau montant compte à partir du mois en cours. Les mois passés gardent l’ancien montant.</p>
         <div class="field"><label for="as-start">Suivre les cotisations à partir de</label><input id="as-start" name="dues_start" type="month" value="${esc(ym(a.dues_start))}" ${ro}><p class="help">Les mois précédents ne comptent pas comme des retards.</p></div>
-        <div class="field"><label for="as-cur">Monnaie</label><select id="as-cur" name="currency" ${ro}>${CURRENCIES.map(([k, l]) => opt(k, l, a.currency)).join('')}</select></div>
+        <div class="field"><label for="as-cur">Monnaie</label><select id="as-cur" name="currency" ${ro || (S.ctx.bal.in || S.ctx.bal.out ? 'disabled' : '')}>${CURRENCIES.map(([k, l]) => opt(k, l, a.currency)).join('')}</select>${S.ctx.bal.in || S.ctx.bal.out ? '<p class="help">La monnaie ne peut plus changer : l’association a déjà des montants enregistrés.</p>' : ''}</div>
         <span class="eyebrow">Dépenses</span>
-        <div class="field"><label class="check" style="align-items:flex-start"><input type="checkbox" name="expense_approval" ${a.expense_approval ? 'checked' : ''} ${ro} style="margin-top:2px"> <span><b>Double validation des dépenses</b><br><span class="muted" style="font-size:13px;font-weight:400">Le trésorier propose, le président ou le vice-président approuve. Aucune sortie d’argent sans deux personnes.</span></span></label></div>
+        <div class="field"><label class="check" style="align-items:flex-start"><input type="checkbox" name="expense_approval" ${a.expense_approval ? 'checked' : ''} ${ro} style="margin-top:2px"> <span><b>Double validation des dépenses</b><br><span class="muted" style="font-size:14px;font-weight:400">Le trésorier propose, le président ou le vice-président approuve. Aucune sortie d’argent sans deux personnes.</span></span></label></div>
         <span class="eyebrow">Fiche de l’association</span>
         <div class="field"><label for="as-name">Nom</label><input id="as-name" name="name" value="${esc(a.name)}" ${ro}></div>
         <div class="row2"><div class="field"><label for="as-vil">Village d’origine</label><input id="as-vil" name="village" value="${esc(a.village)}" ${ro}></div><div class="field"><label for="as-oc">Pays d’origine</label><input id="as-oc" name="origin_country" value="${esc(a.origin_country)}" ${ro}></div></div>
@@ -2038,7 +2068,7 @@ Abstention</textarea><p class="help">Entre 2 et 10 choix.</p></div>
      Formulaires
   ------------------------------------------------------------------ */
   const val = (fd, k) => String(fd.get(k) ?? '').trim();
-  const intVal = (fd, k) => { const v = val(fd, k); return v === '' ? NaN : Math.round(Number(v)); };
+  const intVal = (fd, k) => { const v = val(fd, k); if (v === '') return NaN; const n = Number(v.replace(',', '.')); if (Number.isFinite(n) && !Number.isInteger(n)) fail('Écrivez le montant en chiffres, sans point ni virgule : 1500, pas 1.500.'); return Math.round(n); };
   const fail = m => { const e = new Error(m); e.user = true; throw e; };
 
   async function compress(file) {
@@ -2143,15 +2173,21 @@ Abstention</textarea><p class="help">Entre 2 et 10 choix.</p></div>
     async pay(fd) {
       const mid = val(fd, 'member_id'), period = val(fd, 'period');
       const m = S.ctx.byId.get(mid); if (!m) fail('Choisissez un membre.');
-      const fee = feeOf(m); if (!fee) fail('Ce membre est dispensé de cotisation.');
       if (!/^\d{4}-\d{2}$/.test(period)) fail('Choisissez le mois concerné.');
+      const fee = feeOf(m, period); if (!fee) fail('Ce membre est dispensé de cotisation.');
       const { amount, fx } = readAmount(fd);
       if (paidFor(mid, period) >= fee) fail(`${pFR(period)} est déjà réglé pour ce membre. Choisissez un autre mois.`);
-      const t = must(await sb.from('transactions').insert({
-        association_id: S.ctx.assoc.id, kind: 'in', category: 'Cotisations', amount, occurred_on: val(fd, 'occurred_on') || todayISO(),
-        description: 'Cotisation de ' + pFR(period), member_id: mid, period, payment_method: val(fd, 'payment_method'), comment: val(fd, 'comment'), ...fx
-      }).select('*').single());
-      await refresh(); toast('Paiement enregistré'); go(B() + '/op/' + t.id + '?recu=1');
+      const parts = fx.orig_currency ? [{ period, amount }] : spread(m, period, amount);
+      if (!parts) fail('Ce montant couvre plus de 24 mois. Vérifiez le montant.');
+      const base = { association_id: S.ctx.assoc.id, kind: 'in', category: 'Cotisations', occurred_on: val(fd, 'occurred_on') || todayISO(),
+        member_id: mid, payment_method: val(fd, 'payment_method') };
+      const note = val(fd, 'comment'), many = parts.length > 1;
+      // Une seule demande à la base : soit tous les mois sont enregistrés, soit aucun.
+      const rows = must(await sb.from('transactions').insert(parts.map(x => ({ ...base, amount: x.amount, period: x.period, description: 'Cotisation de ' + pFR(x.period),
+        comment: many ? [note, `Paiement de ${money(amount)} réparti sur ${parts.length} mois.`].filter(Boolean).join(' ') : note, ...(many ? {} : fx) }))).select('id'));
+      await refresh();
+      if (many) { toast(`Paiement réparti sur ${parts.length} mois`); return go(B() + '/m/' + mid); }
+      toast('Paiement enregistré'); go(B() + '/op/' + rows[0].id + '?recu=1');
     },
     async op(fd, form) {
       const kind = form.dataset.type === 'out' ? 'out' : 'in', colId = val(fd, 'collection_id') || null, mid = val(fd, 'member_id') || null;
@@ -2295,6 +2331,7 @@ Abstention</textarea><p class="help">Entre 2 et 10 choix.</p></div>
       if (!window.crypto || !crypto.subtle) fail('Ce téléphone ne permet pas le verrou. Mettez à jour votre navigateur.');
       const salt = [...crypto.getRandomValues(new Uint8Array(12))].map(x => x.toString(16).padStart(2, '0')).join('');
       localStorage.setItem(PINK, JSON.stringify({ v: 1, salt, hash: await pinHash(a, salt) }));
+      tryClear();
       toast('Verrou activé'); route();
     },
     async cover(fd) {
@@ -2372,7 +2409,7 @@ Abstention</textarea><p class="help">Entre 2 et 10 choix.</p></div>
       toast('Association bloquée'); renderAdmin();
     },
     async claim(fd) {
-      const me = S.ctx.me, period = val(fd, 'period'), amount = Math.round(Number(val(fd, 'amount')));
+      const me = S.ctx.me, period = val(fd, 'period'), amount = Number(val(fd, 'amount').replace(',', '.')); if (Number.isFinite(amount) && !Number.isInteger(amount)) fail('Écrivez le montant en chiffres, sans point ni virgule : 1500, pas 1.500.');
       if (!/^\d{4}-\d{2}$/.test(period)) fail('Choisissez le mois à payer.');
       if (!(amount > 0)) fail('Saisissez le montant envoyé.');
       const method = val(fd, 'method'); if (!method) fail('Choisissez Wave, Orange Money ou Free Money.');
@@ -2401,7 +2438,7 @@ Abstention</textarea><p class="help">Entre 2 et 10 choix.</p></div>
       if (isNaN(fee) || fee < 0) fail('Montant de cotisation invalide.');
       if (isNaN(due) || due < 1 || due > 28) fail('Le jour d’échéance doit être entre 1 et 28.');
       if (!/^\d{4}-\d{2}$/.test(start)) fail('Choisissez le mois de début du suivi.');
-      const row = { fee_amount: fee, fee_due_day: due, dues_start: start + '-01', currency: val(fd, 'currency'), founded_on: val(fd, 'founded_on') || null, expense_approval: fd.get('expense_approval') === 'on' };
+      const row = { fee_amount: fee, fee_due_day: due, dues_start: start + '-01', ...(val(fd, 'currency') ? { currency: val(fd, 'currency') } : {}), founded_on: val(fd, 'founded_on') || null, expense_approval: fd.get('expense_approval') === 'on' };
       ['name', 'village', 'origin_country', 'region', 'prefecture', 'residence_city', 'residence_country', 'description'].forEach(k => { row[k] = val(fd, k); });
       must(await sb.from('associations').update(row).eq('id', S.ctx.assoc.id).select('id').single());
       await refresh(); toast('Association enregistrée'); route();
@@ -2565,7 +2602,7 @@ Abstention</textarea><p class="help">Entre 2 et 10 choix.</p></div>
         const r = must(await sb.storage.from('proofs').createSignedUrl(b.dataset.path, 3600));
         box.innerHTML = /\.pdf$/i.test(b.dataset.path) ? `<a class="btn ghost sm" target="_blank" rel="noopener" href="${esc(r.signedUrl)}">Ouvrir le PDF</a>` : `<a href="${esc(r.signedUrl)}" target="_blank" rel="noopener"><img class="proof-img" src="${esc(r.signedUrl)}" alt="Justificatif"></a>`;
       } else if (act === 'pinoff') {
-        try { localStorage.removeItem(PINK); } catch (e) { /* rien */ }
+        try { localStorage.removeItem(PINK); localStorage.removeItem('vl:pin:try'); } catch (e) { /* rien */ }
         toast('Verrou retiré'); route();
       } else if (act === 'exp') {
         b.disabled = true; try { await exportData(b.dataset.what); } finally { b.disabled = false; }
@@ -2585,7 +2622,7 @@ Abstention</textarea><p class="help">Entre 2 et 10 choix.</p></div>
 
   /* Mode hors ligne : un service worker garde une copie de l'application et des dernières données lues. */
   function clearOfflineData() {
-    try { localStorage.removeItem('vl:pin'); } catch (e) { /* rien */ }
+    try { localStorage.removeItem('vl:pin'); localStorage.removeItem('vl:pin:try'); } catch (e) { /* rien */ }
     try { if (navigator.serviceWorker && navigator.serviceWorker.controller) navigator.serviceWorker.controller.postMessage('vl-clear'); } catch (e) { /* rien */ }
     try { if (window.caches) caches.delete('vl-data-v1'); } catch (e) { /* rien */ }
   }
@@ -2617,7 +2654,12 @@ Abstention</textarea><p class="help">Entre 2 et 10 choix.</p></div>
     const b = await crypto.subtle.deriveBits({ name: 'PBKDF2', hash: 'SHA-256', salt: new TextEncoder().encode(salt), iterations: 100000 }, k, 256);
     return [...new Uint8Array(b)].map(x => x.toString(16).padStart(2, '0')).join('');
   };
-  let lockP = null, hiddenAt = 0, badTries = 0, waitUntil = 0;
+  let lockP = null, hiddenAt = 0;
+  // Essais ratés gardés sur le téléphone : recharger la page ne remet pas le compteur à zéro.
+  const TRYK = 'vl:pin:try';
+  const tryGet = () => { try { const t = JSON.parse(store.get(TRYK) || '{}'); return { n: t.n | 0, until: Number(t.until) || 0, rounds: t.rounds | 0 }; } catch (e) { return { n: 0, until: 0, rounds: 0 }; } };
+  const trySet = t => store.set(TRYK, JSON.stringify(t));
+  const tryClear = () => { try { localStorage.removeItem(TRYK); } catch (e) { /* rien */ } };
   function showLock() {
     if (lockP) return lockP;
     lockP = new Promise(ok => {
@@ -2630,17 +2672,18 @@ Abstention</textarea><p class="help">Entre 2 et 10 choix.</p></div>
       f.addEventListener('submit', async ev => {
         ev.preventDefault();
         const st = pinGet(); if (!st) return done();
-        const left = Math.ceil((waitUntil - Date.now()) / 1000);
-        if (left > 0) { err.textContent = `Trop d’essais. Attendez ${left} secondes.`; err.hidden = false; return; }
+        const t = tryGet(), left = Math.ceil((t.until - Date.now()) / 1000);
+        if (left > 0) { err.textContent = left > 90 ? `Trop d’essais. Attendez ${Math.ceil(left / 60)} minutes.` : `Trop d’essais. Attendez ${left} secondes.`; err.hidden = false; return; }
         let good = false; try { good = (await pinHash(inp.value, st.salt)) === st.hash; } catch (x) { good = false; }
-        if (good) { badTries = 0; return done(); }
-        inp.value = ''; badTries++;
-        if (badTries >= 5) { badTries = 0; waitUntil = Date.now() + 30000; err.textContent = 'Trop d’essais. Attendez 30 secondes.'; }
+        if (good) { tryClear(); return done(); }
+        inp.value = ''; t.n++;
+        if (t.n >= 5) { t.rounds++; t.n = 0; const wait = Math.min(30 * 2 ** (t.rounds - 1), 3600); t.until = Date.now() + wait * 1000; err.textContent = wait > 90 ? `Trop d’essais. Attendez ${Math.ceil(wait / 60)} minutes.` : `Trop d’essais. Attendez ${wait} secondes.`; }
         else err.textContent = 'Code incorrect.';
+        trySet(t);
         err.hidden = false;
       });
       el.querySelector('[data-lock=out]').addEventListener('click', async () => {
-        try { localStorage.removeItem(PINK); } catch (x) { /* rien */ }
+        try { localStorage.removeItem(PINK); localStorage.removeItem('vl:pin:try'); } catch (x) { /* rien */ }
         done();
         try { await pushOff(true).catch(() => {}); clearOfflineData(); await sb.auth.signOut(); } catch (x) { console.error(x); }
         S.ctx = null; S.authMode = 'login'; S.authMsg = ''; S.session = null; S.user = null; location.hash = '#/'; renderAuth();

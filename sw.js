@@ -3,7 +3,7 @@
    - Données Supabase en lecture (/rest/v1/) : réseau d'abord ; sans connexion, la dernière réponse
      enregistrée sur ce téléphone est renvoyée. Les écritures ne sont jamais mises en cache.
    - À la déconnexion, l'application vide le cache des données (message « vl-clear »). */
-const SHELL = 'vl-shell-v4';
+const SHELL = 'vl-shell-v5';
 const DATA = 'vl-data-v1';
 
 self.addEventListener('install', e => {
@@ -42,7 +42,7 @@ async function networkFirst(req, cacheName, key) {
 self.addEventListener('fetch', e => {
   const req = e.request, url = new URL(req.url);
   const isRest = /\/rest\/v1\//.test(url.pathname);
-  const isRpcRead = isRest && req.method === 'POST' && /\/rest\/v1\/rpc\/(my_memberships|poll_results)$/.test(url.pathname);
+  const isRpcRead = isRest && req.method === 'POST' && /\/rest\/v1\/rpc\/(my_memberships|poll_results|member_contacts)$/.test(url.pathname);
   if (isRest && (req.method === 'GET' || isRpcRead)) {
     e.respondWith(dataKey(req).then(k => networkFirst(req, DATA, k)));
     return;
