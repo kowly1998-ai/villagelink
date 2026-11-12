@@ -57,7 +57,7 @@ const T = {
   member_categories: [{ id: KID, association_id: AID, name: 'Membres actifs résidant à l’étranger hors Afrique de l’Ouest', fee_amount: 150000, created_at: ago(40) }],
   member_exemptions: [], member_category_history: [], push_subscriptions: [], subscription_requests: [],
   fee_history: [{ id: 1, association_id: AID, category_id: null, from_period: '2026-01', fee_amount: 150000, created_at: ago(40) }],
-  pay_numbers: [{ association_id: AID, holder: 'Association des ressortissants de Kansaghel', wave: '', orange: '620000000', free: '', updated_by: UID, updated_at: ago(40), wave_link: '' }],
+  pay_numbers: [{ association_id: AID, holder: 'Association des ressortissants de Kansaghel', wave: '', orange: '620000000', free: '', updated_by: UID2, updated_at: ago(1), wave_link: '' }],
   activity_log: [{ id: 5, association_id: AID, actor_id: UID2, actor_label: LONG, message: 'a déclaré avoir payé 150 000 GNF par Orange Money pour novembre 2026.', created_at: ago(1) }]
 };
 const RPC = {
@@ -159,6 +159,15 @@ async function main() {
       if (/Chargement…/.test(txt) && txt.length < 200) pb.push('l’écran reste sur « Chargement… »');
       pb.push(...await page.evaluate(OVERFLOW));
       const name = (s || 'accueil').replace(/[^\w-]+/g, '_').slice(0, 40);
+      if (!s) {   // Alerte « numéros de paiement changés » (audit S9) : chez le président seulement
+        const n = await page.locator('.pay-alert').count();
+        if (who === 'président' && n !== 1) pb.push('l’alerte « Numéros de paiement changés » manque');
+        if (who === 'membre' && n !== 0) pb.push('l’alerte des numéros s’affiche chez un simple membre');
+        if (who === 'président' && n === 1 && theme === 'dark') {
+          await page.click('.pay-alert [data-act=paynum-ok]'); await page.waitForTimeout(1200);
+          if (await page.locator('.pay-alert').count() !== 0) pb.push('l’alerte des numéros ne disparaît pas après confirmation');
+        }
+      }
       if (pb.length || process.env.CAPTURES) await page.screenshot({ path: path.join(OUT, `${who}-${theme}-${name}.png`), fullPage: true });
       if (pb.length) ko(`${s || 'accueil'} : ${pb.join(' ; ')}`); else ok(s || 'accueil');
     }

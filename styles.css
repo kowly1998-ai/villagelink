@@ -502,3 +502,7 @@ summary{min-height:44px}
 .kv.num dt{overflow-wrap:normal;hyphens:auto}
 .card .between{flex-wrap:wrap;row-gap:4px}
 .timeline > div{min-width:0;overflow-wrap:anywhere}
+/* v2.2.6 : entrées / sorties du mois au milliard dans la carte de la caisse (se chevauchaient) */
+.hero .boxes b{white-space:normal}
+.hero .boxes b.sm{font-size:12px}
+.hero .boxes > div{min-width:0}
