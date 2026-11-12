@@ -1,7 +1,7 @@
 -- =====================================================================
 -- VillageLink — schéma de base de données (Supabase / PostgreSQL 15+)
--- Photo complète de la base en ligne, vérifiée le 01/11/2026 (version 2.0.2) :
---  tables, colonnes, règles d'accès et code des 83 fonctions identiques à la base.
+-- Photo complète de la base en ligne, vérifiée le 12/11/2026 (version 2.2.4) :
+--  27 tables, 5 vues, code des 90 fonctions identique à la base (seuls des commentaires diffèrent).
 --  À compléter à chaque nouvelle migration.
 -- À coller une seule fois dans Supabase > SQL Editor > New query > Run.
 --
@@ -3121,3 +3121,14 @@ create trigger zz_fee_history after insert or update of fee_amount on public.mem
 drop trigger if exists zz_category_history on public.members;
 create trigger zz_category_history after insert or update of category_id on public.members
   for each row execute function public.member_category_track();
+
+-- ---------------------------------------------------------------------
+-- Heure du serveur (version 2.2.4, audit B6) : les retards de cotisation sont calculés
+-- avec la date du serveur, même si le téléphone est mal réglé. Lecture seule.
+-- ---------------------------------------------------------------------
+create or replace function public.server_now() returns timestamptz
+language sql stable security invoker set search_path = public as $$
+  select now();
+$$;
+revoke all on function public.server_now() from public, anon;
+grant execute on function public.server_now() to authenticated;
