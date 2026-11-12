@@ -710,8 +710,10 @@
       act.length <= 1 && can('members') ? todo(`${B()}/membres/import`, I.list, 'Ajoutez la liste des membres', 'Collez-la depuis votre cahier, Excel ou WhatsApp.', false) : ''
     ].join('');
     const monthCard = fee && (pres || trea) && dueNow.length ? `<section class="card stack"><div class="between"><span class="eyebrow">${esc(monthName)}</span><b class="num">${paidCount} sur ${dueNow.length} ont payé</b></div><div class="bar"><i style="width:${pct(collected, expected)}%"></i></div><span class="muted num" style="font-size:14px">${money(collected)} sur ${money(expected)} collectés</span></section>` : '';
+    // Montant au milliard (francs guinéens) : chiffre plus petit, la monnaie passe à la ligne si besoin.
+    const boxSm = n => (String(Math.round(Math.abs(Number(n) || 0))).length >= 10 ? ' class="sm"' : '');
     const presCash = `<section class="card hero"><span class="eyebrow">Dans la caisse</span><div class="big num${fit(solde)}">${num(solde)} <span class="cur">${CURL}</span></div>
-      <div class="boxes num"><div><small>Entrées ce mois</small><b>+ ${money(inMonth)}</b></div><div><small>Sorties ce mois</small><b>− ${money(outMonth)}</b></div></div>
+      <div class="boxes num"><div><small>Entrées ce mois</small><b${boxSm(inMonth)}>+${NB}${moneyW(inMonth)}</b></div><div><small>Sorties ce mois</small><b${boxSm(outMonth)}>−${NB}${moneyW(outMonth)}</b></div></div>
       <div class="foot"><span>${act.length} membre${act.length > 1 ? 's' : ''} · vérifiable par tous</span><a href="${B()}/transparence">Où va l’argent</a></div></section>`;
     const cash = `<section class="card stack"><span class="eyebrow">Dans la caisse de l’association</span><div class="status-card"><div class="big num${fit(solde)}">${num(solde)}<small>${CURL}</small></div></div><a class="link" href="${B()}/transparence">Voir où va l’argent ${I.chev}</a></section>`;
     const outs = catTot.filter(c => c.kind === 'out' && Number(c.total) > 0).sort((x, y) => y.total - x.total).slice(0, 4), maxOut = outs[0] ? Number(outs[0].total) : 0;
@@ -724,8 +726,23 @@
     const pollCard = toVote.length && S.ctx.me.user_id ? `<a class="card poll-next" href="${B()}/vote/${toVote[0].id}"><span class="ico">${I.vote}</span><span class="body"><span class="eyebrow">Vote en cours${toVote.length > 1 ? ' · ' + toVote.length + ' votes' : ''}</span><b>${esc(toVote[0].question)}</b><span class="muted">Donnez votre avis</span></span><span class="chev">${I.chev}</span></a>` : '';
     const meetCard = nextMeet.length ? `<a class="card meet-next" href="${B()}/r/${nextMeet[0].id}">${dateBox(nextMeet[0].starts_at)}<span class="body"><span class="eyebrow">Prochaine réunion</span><b>${esc(nextMeet[0].title)}</b><span class="muted">${esc(hm(nextMeet[0].starts_at))}${nextMeet[0].place ? ' · ' + esc(nextMeet[0].place) : ''}</span></span><span class="chev">${I.chev}</span></a>` : '';
     const colCards = openCols.map(c => colCard(c, colTot.get(c.id), true)).join('');
+    // Audit S9 : les numéros Wave / Orange / Free changés par quelqu'un d'autre sont signalés au président
+    // et au vice-président, jusqu'à ce qu'ils confirment (par téléphone : vl:paynum:<asso>).
+    const pn = S.ctx.payNums, pnKey = 'vl:paynum:' + a.id;
+    const payAlert = pres && pn && pn.updated_by && pn.updated_by !== S.user.id && pn.updated_at
+      && Date.now() - Date.parse(pn.updated_at) < 60 * 864e5 && store.get(pnKey) !== pn.updated_at
+      ? (() => {
+        const who = (S.ctx.members.find(m => m.user_id === pn.updated_by) || {}).full_name || 'Un membre du bureau';
+        const rows = MM.map(([l, k]) => `<dt>${l}</dt><dd>${pn[k] ? esc(pn[k]) : '<span class="muted">aucun</span>'}</dd>`).join('')
+          + `<dt>Au nom de</dt><dd>${pn.holder ? esc(pn.holder) : '<span class="muted">—</span>'}</dd>`;
+        return `<section class="card stack pay-alert" role="alert"><div class="between"><h2>Numéros de paiement changés</h2><span class="pill p-late">À vérifier</span></div>
+          <p style="margin:0">${esc(who)} a changé les numéros où les membres envoient leurs cotisations, le ${dFR(pn.updated_at)} à ${hm(pn.updated_at)}.</p>
+          <dl class="kv num" style="margin:0">${rows}</dl>
+          <p class="muted" style="margin:0;font-size:15px">Vérifiez que ce sont bien les numéros de l’association. Sinon, corrigez-les dans les Paramètres et parlez-en au bureau.</p>
+          <div class="row" style="flex-wrap:wrap;gap:8px"><button class="btn primary" data-act="paynum-ok" data-at="${esc(pn.updated_at)}">Ce sont les bons numéros</button><a class="btn ghost" href="${B()}/parametres">Corriger</a></div></section>`;
+      })() : '';
     let L, R;
-    if (pres) { L = [greet, presCash, status, todos, where, monthCard]; R = [projCard, pollCard, meetCard, colCards, opsCard, actCard]; }
+    if (pres) { L = [greet, payAlert, presCash, status, todos, where, monthCard]; R = [projCard, pollCard, meetCard, colCards, opsCard, actCard]; }
     else if (trea) { L = [greet, status, todos, monthCard, shortcuts, pollCard, meetCard, colCards]; R = [cash, lateCard, opsCard, projCard, actCard]; }
     else { L = [greet, status, todos, cash, pollCard, meetCard, colCards, projCard]; R = [opsCard, actCard]; }
     return `${coverBanner}<div class="home-grid"><div class="home-l">${L.join('')}</div><div class="home-r">${R.join('')}</div></div>`;
@@ -2507,6 +2524,7 @@ Abstention</textarea><p class="help">Entre 2 et 10 choix.</p></div>
     const act = b.dataset.act;
     try {
       if (act === 'auth-mode') { S.authMode = b.dataset.mode; S.authMsg = ''; renderAuth(); }
+      else if (act === 'paynum-ok') { store.set('vl:paynum:' + S.ctx.assoc.id, b.dataset.at); toast('Merci, c’est noté'); route(); }
       else if (act === 'google') {
         b.disabled = true;
         try { if (/^#\/(r|v|rapport|a)\//.test(location.hash)) sessionStorage.setItem('vl:next', location.hash); } catch (e) { /* stockage indisponible */ }
