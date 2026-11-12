@@ -506,3 +506,11 @@ summary{min-height:44px}
 .hero .boxes b{white-space:normal}
 .hero .boxes b.sm{font-size:12px}
 .hero .boxes > div{min-width:0}
+/* v2.2.7 (audit A7) : onglets du bas en 16 px sur téléphone. Chaque onglet prend la largeur de son nom
+   (« Cotisations » ne tient pas dans un cinquième d'écran) ; même graisse pour l'onglet actif, pour que la barre ne bouge pas. */
+@media (max-width:899px){
+  .tabs-in{grid-template-columns:repeat(5,auto);justify-content:space-between;padding:6px 8px 8px}
+  .tab{font-size:16px;line-height:1.15}
+  .tab[aria-current="page"]{font-weight:600}
+}
+@media (max-width:359px){.tab .ic{width:46px} .tabs-in{padding:6px 2px 8px}}
