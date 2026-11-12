@@ -10,7 +10,7 @@ transparentes, projets, annonces, réunions et discussion.
   Claude écrit, vérifie et met en ligne le code.
 - Répondre en français simple, sans jargon. À la fin de chaque changement, dire précisément
   quoi tester sur le téléphone.
-- Version actuelle : **2.0** (nouvelle interface « design v2 »).
+- Version actuelle : **2.2** (design v2, suspension d'association, photo de couverture, nouvelle icône, export CSV, rapport annuel, feuille de présence, verrou par code).
 
 ## Stack
 
@@ -64,8 +64,8 @@ Accueil sans association → Cadre d'une association → Écrans → Formulaires
 - **Fonctions appelées par l'app** : `create_association`, `join_association`, `review_join`,
   `regenerate_invite_code`, `my_memberships`, `reverse_transaction`, `hide_message`,
   `create_poll`, `cast_vote`, `close_poll`, `poll_results` (votes : aucune écriture directe dans les tables).
-- **Stockage** : buckets privés `proofs` (justificatifs de paiement, 5 Mo maximum) et `docs`
-  (documents de l'association, 10 Mo maximum). Chemin : `<id association>/<fichier>`.
+- **Stockage** : buckets privés `proofs` (justificatifs de paiement, 5 Mo maximum), `docs`
+  (documents de l'association, 10 Mo maximum) et `covers` (photo de couverture, 2 Mo, réduite sur le téléphone avant l'envoi). Chemin : `<id association>/<fichier>`.
 - **Définition exacte** de chaque table, fonction et règle : `supabase/schema.sql`. Le lire avant
   de toucher à la base.
 
@@ -108,12 +108,13 @@ Rôles : `president`, `vice_president`, `secretaire`, `tresorier`, `projets`, `m
    `apply_migration` (même nom, même contenu, ex. `v1_5_...`). La base d'abord, le code ensuite.
    Ajouter aussi le même SQL à la fin de `supabase/schema.sql`, qui doit rester la photo complète de la base.
 2. **Cache** : augmenter le numéro `?v=` dans `index.html` pour chaque fichier modifié
-   (aujourd'hui `styles.css?v=36`, `config.js?v=2`, `i18n-ff.js?v=1`, `receipt.js?v=3`, `app.js?v=46`). Sinon les téléphones gardent
+   (aujourd'hui `styles.css?v=41`, `config.js?v=2`, `i18n-ff.js?v=1`, `receipt.js?v=3`, `app.js?v=59`). Sinon les téléphones gardent
    l'ancienne version.
-3. **Vérification** : `node tests/verification.cjs` (avec Playwright) contrôle l'écriture du code, les fichiers appelés et leur `?v=`, les empreintes SRI, le lecteur de reçus et l'ouverture des pages à 360 px. GitHub Actions (`.github/workflows/verification.yml`) la lance sur chaque demande de fusion et chaque envoi vers `main` : ne pas fusionner si elle est rouge. Ajouter un contrôle quand une nouvelle fonction le mérite.
+3. **Vérification** : `node tests/verification.cjs` (avec Playwright, préparé au démarrage de chaque session cloud par `.claude/hooks/session-start.sh`, qui met aussi la branche à jour depuis `main` ou prévient si elle a du travail non fusionné) contrôle l'écriture du code, les fichiers appelés et leur `?v=`, les empreintes SRI, le lecteur de reçus et l'ouverture des pages à 360 px. GitHub Actions (`.github/workflows/verification.yml`) la lance sur chaque demande de fusion et chaque envoi vers `main` : ne pas fusionner si elle est rouge. Ajouter un contrôle quand une nouvelle fonction le mérite.
 4. **Commit** sur `main`, en français : `Version X.Y : <ce qui change>`.
 5. **Push** : GitHub Pages met en ligne en quelques minutes.
 6. Dire à Alpha quoi tester sur son téléphone.
+7. **Site de test** : `test.villagelinkafrica.com` (dépôt `kowly1998-ai/villagelink-test`, base Supabase de test `phkiovzhlmozpdoiigpf`). Toute nouveauté y passe d'abord ; `tests/affichage.cjs` (GitHub Actions) l'ouvre à 360 px avec une fausse base.
 
 ## Conventions produit
 
@@ -142,6 +143,8 @@ Rôles : `president`, `vice_president`, `secretaire`, `tresorier`, `projets`, `m
 - v1.9 mode hors ligne (`sw.js`).
 - v1.10 bouton « Continuer avec Google » sur l'écran de connexion (masquable avec `google: false` dans `config.js`).
 - **Ensuite** : pilote réel avec Kansaghel, politique de confidentialité, page de présentation, Play Store.
+- v2.2 lot 2 : export CSV des membres et des opérations (Paramètres, `exportData`), rapport annuel (`V.rapportannuel`), feuille de présence à imprimer (`r/<id>/feuille`), verrou par code PIN sur le téléphone (`vl:pin`, PBKDF2, effacé à la déconnexion). Politique de sécurité : plus de `'unsafe-inline'` pour `style-src` (seulement `style-src-attr`). Aucune migration de base.
+- v2.2.3 (audit) : montants avec point/virgule refusés ; monnaie bloquée dès qu'il y a des montants (`associations_guard`) ; historique des cotisations (`fee_history`, `member_category_history`, `feeOf(m, période)`) ; paiement réparti sur plusieurs mois (`spread`) ; téléphone et e-mail des membres réservés au bureau (colonnes `phone`/`email` non lisibles, fonction `member_contacts`) : **toute nouvelle colonne de `members` doit être ajoutée au `grant select (...)`** ; on ne confirme pas son propre paiement déclaré ; `loadCtx` en parallèle ; verrou par code avec compteur d'essais gardé (`vl:pin:try`).
 - **Mis de côté** : paiement mobile directement dans l'app (agrégateurs type SasPay).
 - **Plus tard** : publication sur le Play Store.
 - La colonne `associations.plan` existe déjà pour de futures offres.

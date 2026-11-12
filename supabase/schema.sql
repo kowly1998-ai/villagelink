@@ -2763,3 +2763,361 @@ select cron.schedule('villagelink-rappels', '0 9 * * *', $c$
       'x-cron-secret', (select decrypted_secret from vault.decrypted_secrets where name = 'vl_cron_secret')),
     body := '{}'::jsonb, timeout_milliseconds := 60000);
 $c$);
+
+-- VillageLink 2.1 — Blocage d'une association par le propriétaire
+
+alter table public.associations add column if not exists blocked_at timestamptz;
+alter table public.associations add column if not exists blocked_reason text;
+
+-- Le blocage ne se change que par VillageLink (fonctions owner_block / owner_unblock).
+create or replace function public.associations_guard() returns trigger
+language plpgsql set search_path = public as $$
+begin
+  if new.invite_code <> old.invite_code and coalesce(current_setting('vl.system', true), '') <> 'on' then
+    raise exception 'Le code d''invitation se change avec la fonction prévue.';
+  end if;
+  if (new.plan <> old.plan or new.trial_ends is distinct from old.trial_ends or new.paid_until is distinct from old.paid_until
+      or new.blocked_at is distinct from old.blocked_at or new.blocked_reason is distinct from old.blocked_reason)
+     and coalesce(current_setting('vl.system', true), '') <> 'on' then
+    raise exception 'L''offre se change par VillageLink.';
+  end if;
+  return new;
+end $$;
+
+-- État : blocked | trial | active | grace | readonly
+create or replace function public.assoc_status(p_assoc uuid) returns text
+language sql stable security definer set search_path = public as $$
+  select case
+    when a.blocked_at is not null then 'blocked'
+    when a.paid_until is not null and a.paid_until >= current_date then 'active'
+    when a.paid_until is null and a.trial_ends >= current_date then 'trial'
+    when greatest(coalesce(a.paid_until, a.trial_ends), a.trial_ends) + 7 >= current_date then 'grace'
+    else 'readonly' end
+  from associations a where a.id = p_assoc;
+$$;
+
+create or replace function public.enforce_subscription() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare st text; why text;
+begin
+  if coalesce(current_setting('vl.system', true), '') = 'on' then return new; end if;
+  st := assoc_status(new.association_id);
+  if st = 'blocked' then
+    select blocked_reason into why from associations where id = new.association_id;
+    raise exception 'Association suspendue par VillageLink : %. Écrivez à contact@villagelinkafrica.com.', coalesce(why, 'contactez VillageLink') using errcode = '42501';
+  elsif st = 'readonly' then
+    raise exception 'L’essai gratuit de VillageLink est terminé : l’association est en lecture seule. Le président peut activer l’abonnement dans Plus → Abonnement.' using errcode = '42501';
+  end if;
+  return new;
+end $$;
+revoke execute on function public.enforce_subscription() from public, anon, authenticated;
+
+create or replace function public.owner_block(p_assoc uuid, p_reason text) returns void
+language plpgsql security definer set search_path = public as $$
+declare why text := trim(coalesce(p_reason, ''));
+begin
+  if not exists (select 1 from app_admins where user_id = auth.uid()) then raise exception 'Réservé au propriétaire de VillageLink.'; end if;
+  if length(why) < 3 then raise exception 'Indiquez le motif.'; end if;
+  if not exists (select 1 from associations where id = p_assoc) then raise exception 'Association introuvable.'; end if;
+  perform set_config('vl.system', 'on', true);
+  update associations set blocked_at = now(), blocked_reason = left(why, 200) where id = p_assoc;
+  insert into activity_log(association_id, actor_id, actor_label, message)
+  values (p_assoc, null, 'VillageLink', format('a suspendu l’association. Motif : %s', left(why, 200)));
+  perform set_config('vl.system', '', true);
+end $$;
+
+create or replace function public.owner_unblock(p_assoc uuid) returns void
+language plpgsql security definer set search_path = public as $$
+begin
+  if not exists (select 1 from app_admins where user_id = auth.uid()) then raise exception 'Réservé au propriétaire de VillageLink.'; end if;
+  perform set_config('vl.system', 'on', true);
+  update associations set blocked_at = null, blocked_reason = null where id = p_assoc and blocked_at is not null;
+  if found then
+    insert into activity_log(association_id, actor_id, actor_label, message)
+    values (p_assoc, null, 'VillageLink', 'a levé la suspension. L’association est de nouveau active.');
+  end if;
+  perform set_config('vl.system', '', true);
+end $$;
+
+create or replace function public.owner_subscriptions() returns jsonb
+language plpgsql stable security definer set search_path = public as $$
+begin
+  if not exists (select 1 from app_admins where user_id = auth.uid()) then raise exception 'Réservé au propriétaire de VillageLink.'; end if;
+  return jsonb_build_object(
+    'requests', coalesce((select jsonb_agg(row_to_json(x) order by x.id) from (
+        select r.*, a.name as assoc_name from subscription_requests r join associations a on a.id = r.association_id
+        where r.status = 'pending') x), '[]'::jsonb),
+    'assocs', coalesce((select jsonb_agg(jsonb_build_object('id', a.id, 'name', a.name, 'plan', a.plan,
+        'trial_ends', a.trial_ends, 'paid_until', a.paid_until, 'status', assoc_status(a.id),
+        'blocked_reason', a.blocked_reason,
+        'members', (select count(*) from members m where m.association_id = a.id and m.active and not m.pending))
+        order by coalesce(a.paid_until, a.trial_ends)) from associations a), '[]'::jsonb));
+end $$;
+
+revoke execute on function public.owner_block(uuid, text) from public, anon;
+revoke execute on function public.owner_unblock(uuid) from public, anon;
+grant execute on function public.owner_block(uuid, text) to authenticated;
+grant execute on function public.owner_unblock(uuid) to authenticated;
+
+-- VillageLink 2.2 — Photo de couverture de l'association
+-- Qui peut la changer : président, vice-président, secrétaire. Tout membre la voit.
+
+alter table public.associations add column if not exists cover_path text;
+
+create or replace function public.set_cover(p_assoc uuid, p_path text) returns void
+language plpgsql security definer set search_path = public as $$
+begin
+  if not has_role(p_assoc, array['president','vice_president','secretaire']) then
+    raise exception 'Réservé au président, au vice-président et au secrétaire.';
+  end if;
+  if assoc_status(p_assoc) in ('blocked','readonly') then
+    raise exception 'L''association est en lecture seule.';
+  end if;
+  if p_path is not null and left(p_path, length(p_assoc::text) + 1) <> p_assoc::text || '/' then
+    raise exception 'Chemin de photo invalide.';
+  end if;
+  update associations set cover_path = p_path where id = p_assoc;
+end $$;
+revoke execute on function public.set_cover(uuid, text) from public, anon;
+grant execute on function public.set_cover(uuid, text) to authenticated;
+
+-- Bucket privé « covers » (2 Mo maximum, images seulement)
+do $$
+begin
+  if exists (select 1 from pg_namespace where nspname = 'storage') then
+    insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+    values ('covers', 'covers', false, 2097152, array['image/jpeg','image/png','image/webp'])
+    on conflict (id) do nothing;
+    execute 'drop policy if exists covers_read on storage.objects';
+    execute $p$create policy covers_read on storage.objects for select to authenticated
+      using (bucket_id = 'covers' and public.is_member(((storage.foldername(name))[1])::uuid))$p$;
+    execute 'drop policy if exists covers_write on storage.objects';
+    execute $p$create policy covers_write on storage.objects for insert to authenticated
+      with check (bucket_id = 'covers'
+        and public.has_role(((storage.foldername(name))[1])::uuid, array['president','vice_president','secretaire']))$p$;
+    execute 'drop policy if exists covers_delete on storage.objects';
+    execute $p$create policy covers_delete on storage.objects for delete to authenticated
+      using (bucket_id = 'covers'
+        and public.has_role(((storage.foldername(name))[1])::uuid, array['president','vice_president','secretaire']))$p$;
+  end if;
+end $$;
+
+-- VillageLink 2.2 — Renforcements de sécurité
+-- 1. Limite d'essais du code d'invitation (8 essais ratés par 15 minutes et par compte).
+-- 2. assoc_status et is_exempt ne répondent qu'aux membres de l'association (ou au propriétaire,
+--    ou aux tâches du système : alertes automatiques, déclencheurs).
+
+create table if not exists public.join_attempts (
+  id      bigint generated always as identity primary key,
+  user_id uuid not null,
+  at      timestamptz not null default now()
+);
+alter table public.join_attempts enable row level security;
+revoke all on public.join_attempts from anon, authenticated;
+create index if not exists join_attempts_user_idx on public.join_attempts (user_id, at);
+
+create or replace function public.join_association(p_code text, p_full_name text, p_phone text)
+returns uuid
+language plpgsql security definer set search_path = public as $$
+declare a uuid; m uuid; digits text := regexp_replace(coalesce(p_phone,''), '\D', '', 'g');
+begin
+  if auth.uid() is null then raise exception 'Connexion requise.'; end if;
+  if length(trim(coalesce(p_full_name,''))) < 2 then raise exception 'Saisissez votre nom complet.'; end if;
+  delete from join_attempts where at < now() - interval '1 day';
+  if (select count(*) from join_attempts where user_id = auth.uid() and at > now() - interval '15 minutes') >= 8 then
+    raise exception 'Trop d’essais. Réessayez dans 15 minutes.';
+  end if;
+  select id into a from associations where invite_code = upper(trim(p_code));
+  if a is null then
+    insert into join_attempts(user_id) values (auth.uid());
+    return null;   -- code inconnu : l'essai est gardé, l'application affiche le message
+  end if;
+  if exists (select 1 from members where association_id = a and user_id = auth.uid()) then
+    return a;
+  end if;
+  perform set_config('vl.system', 'on', true);
+  if length(digits) >= 8 then
+    select id into m from members
+     where association_id = a and user_id is null and role = 'membre' and active
+       and right(regexp_replace(phone, '\D', '', 'g'), 9) = right(digits, 9)
+     limit 1;
+  end if;
+  if m is not null then
+    update members set user_id = auth.uid(), pending = true where id = m;
+  else
+    insert into members(association_id, user_id, full_name, phone, role, pending, created_by_join)
+    values (a, auth.uid(), left(trim(p_full_name), 120), left(trim(p_phone), 40), 'membre', true, true);
+  end if;
+  perform set_config('vl.system', 'off', true);
+  perform write_log(a, format('a demandé à rejoindre l''association (%s).', left(trim(p_full_name), 120)));
+  return a;
+end $$;
+
+create or replace function public.assoc_status(p_assoc uuid) returns text
+language sql stable security definer set search_path = public as $$
+  select case
+    when a.blocked_at is not null then 'blocked'
+    when a.paid_until is not null and a.paid_until >= current_date then 'active'
+    when a.paid_until is null and a.trial_ends >= current_date then 'trial'
+    when greatest(coalesce(a.paid_until, a.trial_ends), a.trial_ends) + 7 >= current_date then 'grace'
+    else 'readonly' end
+  from associations a
+  where a.id = p_assoc
+    and (auth.uid() is null or is_member(p_assoc) or am_owner()
+         or coalesce(current_setting('vl.system', true), '') = 'on');
+$$;
+
+create or replace function public.is_exempt(p_member uuid, p_period text) returns boolean
+language sql stable security definer set search_path = public as $$
+  select exists (select 1 from member_exemptions e where e.member_id = p_member
+                   and e.from_period <= p_period and (e.to_period is null or e.to_period >= p_period)
+                   and (auth.uid() is null or is_member(e.association_id) or am_owner()
+                        or coalesce(current_setting('vl.system', true), '') = 'on'));
+$$;
+
+-- v2.2.3 : monnaie verrouillée dès qu’il y a des montants
+create or replace function public.associations_guard() returns trigger
+language plpgsql set search_path = public as $$
+begin
+  if new.invite_code <> old.invite_code and coalesce(current_setting('vl.system', true), '') <> 'on' then
+    raise exception 'Le code d''invitation se change avec la fonction prévue.';
+  end if;
+  if (new.plan <> old.plan or new.trial_ends is distinct from old.trial_ends or new.paid_until is distinct from old.paid_until
+      or new.blocked_at is distinct from old.blocked_at or new.blocked_reason is distinct from old.blocked_reason)
+     and coalesce(current_setting('vl.system', true), '') <> 'on' then
+    raise exception 'L''offre se change par VillageLink.';
+  end if;
+  if new.currency <> old.currency and coalesce(current_setting('vl.system', true), '') <> 'on'
+     and (exists (select 1 from transactions where association_id = old.id)
+       or exists (select 1 from expense_requests where association_id = old.id)
+       or exists (select 1 from payment_claims where association_id = old.id)
+       or exists (select 1 from collections where association_id = old.id)
+       or exists (select 1 from projects where association_id = old.id)) then
+    raise exception 'La monnaie ne peut plus changer : l''association a déjà des montants enregistrés dans cette monnaie.';
+  end if;
+  return new;
+end $$;
+
+-- v2.2.3 : contacts_et_confirmation
+-- (1) Confirmation d'un paiement déclaré : jamais par la personne qui l'a déclaré
+create or replace function public.confirm_payment_claim(p_id bigint) returns bigint
+language plpgsql security definer set search_path = public as $$
+declare r payment_claims; tid bigint;
+begin
+  select * into r from payment_claims where id = p_id for update;
+  if r.id is null or not can_collect_member(r.member_id) then
+    raise exception 'Seuls le trésorier, le président, le vice-président ou le trésorier de section confirment un paiement.';
+  end if;
+  if r.status <> 'pending' then raise exception 'Cette déclaration a déjà été traitée.'; end if;
+  if r.created_by = auth.uid() or exists (select 1 from members m where m.id = r.member_id and m.user_id = auth.uid()) then
+    raise exception 'Vous ne pouvez pas confirmer votre propre paiement. Un autre membre du bureau doit le faire.';
+  end if;
+  insert into transactions(association_id, kind, category, amount, occurred_on, description, member_id, period, payment_method, comment)
+  values (r.association_id, 'in', 'Cotisations', r.amount, r.created_at::date, 'Cotisation de ' || pfr(r.period), r.member_id, r.period, r.method,
+          'Payé par ' || r.method || ' au ' || r.sent_to || case when r.reference <> '' then ', réf. ' || r.reference else '' end || '. Déclaré par le membre.')
+  returning id into tid;
+  update payment_claims set status = 'confirmed', decided_by = auth.uid(), decided_label = actor_label(r.association_id),
+         decided_at = now(), transaction_id = tid where id = p_id;
+  return tid;
+end $$;
+
+-- (2) Les colonnes phone et email ne se lisent plus directement.
+--     Attention : une nouvelle colonne de members doit être ajoutée à ce grant.
+revoke select on public.members from authenticated, anon;
+grant select (id, association_id, user_id, full_name, city, country, role, joined_on, active, created_at,
+              pending, created_by_join, section_id, category_id) on public.members to authenticated;
+
+-- Contacts : le bureau voit tout le monde ; un membre voit sa fiche et le bureau.
+create or replace function public.member_contacts(p_assoc uuid)
+returns table (id uuid, phone text, email text)
+language sql stable security definer set search_path = public as $$
+  select m.id, m.phone, m.email from members m
+  where m.association_id = p_assoc and is_member(p_assoc)
+    and (has_role(p_assoc, array['president','vice_president','secretaire','tresorier'])
+         or m.user_id = auth.uid()
+         or (m.role in ('president','vice_president','secretaire','tresorier') and m.active and not m.pending));
+$$;
+revoke all on function public.member_contacts(uuid) from public, anon;
+grant execute on function public.member_contacts(uuid) to authenticated;
+
+-- v2.2.3 : historique_cotisations
+
+create table if not exists public.fee_history (
+  id bigserial primary key,
+  association_id uuid not null references public.associations(id) on delete cascade,
+  category_id uuid references public.member_categories(id) on delete cascade,
+  from_period text not null check (from_period ~ '^\d{4}-(0[1-9]|1[0-2])$'),
+  fee_amount bigint not null check (fee_amount >= 0),
+  created_at timestamptz not null default now()
+);
+create unique index if not exists fee_history_one_per_month
+  on public.fee_history (association_id, coalesce(category_id, '00000000-0000-0000-0000-000000000000'::uuid), from_period);
+
+create table if not exists public.member_category_history (
+  id bigserial primary key,
+  association_id uuid not null references public.associations(id) on delete cascade,
+  member_id uuid not null references public.members(id) on delete cascade,
+  category_id uuid references public.member_categories(id) on delete set null,
+  from_period text not null check (from_period ~ '^\d{4}-(0[1-9]|1[0-2])$'),
+  created_at timestamptz not null default now(),
+  unique (member_id, from_period)
+);
+
+alter table public.fee_history enable row level security;
+alter table public.member_category_history enable row level security;
+drop policy if exists fee_history_select on public.fee_history;
+create policy fee_history_select on public.fee_history for select to authenticated using (is_member(association_id));
+drop policy if exists member_category_history_select on public.member_category_history;
+create policy member_category_history_select on public.member_category_history for select to authenticated using (is_member(association_id));
+revoke all on public.fee_history, public.member_category_history from anon, authenticated;
+grant select on public.fee_history, public.member_category_history to authenticated;
+
+-- Point de départ : les montants et catégories actuels valent pour tout le passé.
+insert into public.fee_history (association_id, category_id, from_period, fee_amount)
+  select id, null, '2000-01', fee_amount from public.associations
+  on conflict do nothing;
+insert into public.fee_history (association_id, category_id, from_period, fee_amount)
+  select association_id, id, '2000-01', fee_amount from public.member_categories
+  on conflict do nothing;
+insert into public.member_category_history (association_id, member_id, category_id, from_period)
+  select association_id, id, category_id, '2000-01' from public.members
+  on conflict do nothing;
+
+-- Enregistrement automatique, à partir du mois en cours.
+create or replace function public.fee_history_track() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare p text := to_char(now() at time zone 'utc', 'YYYY-MM'); a uuid; c uuid;
+begin
+  if tg_table_name = 'associations' then a := new.id; c := null;
+  else a := new.association_id; c := new.id; end if;
+  if tg_op = 'INSERT' then p := '2000-01';
+  elsif new.fee_amount is not distinct from old.fee_amount then return new; end if;
+  insert into fee_history (association_id, category_id, from_period, fee_amount) values (a, c, p, new.fee_amount)
+  on conflict (association_id, (coalesce(category_id, '00000000-0000-0000-0000-000000000000'::uuid)), from_period)
+  do update set fee_amount = excluded.fee_amount, created_at = now();
+  return new;
+end $$;
+
+create or replace function public.member_category_track() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare p text := to_char(now() at time zone 'utc', 'YYYY-MM');
+begin
+  if tg_op = 'INSERT' then p := '2000-01';
+  elsif new.category_id is not distinct from old.category_id then return new; end if;
+  insert into member_category_history (association_id, member_id, category_id, from_period)
+  values (new.association_id, new.id, new.category_id, p)
+  on conflict (member_id, from_period) do update set category_id = excluded.category_id, created_at = now();
+  return new;
+end $$;
+
+revoke execute on function public.fee_history_track(), public.member_category_track() from public, anon, authenticated;
+
+drop trigger if exists zz_fee_history on public.associations;
+create trigger zz_fee_history after insert or update of fee_amount on public.associations
+  for each row execute function public.fee_history_track();
+drop trigger if exists zz_fee_history on public.member_categories;
+create trigger zz_fee_history after insert or update of fee_amount on public.member_categories
+  for each row execute function public.fee_history_track();
+drop trigger if exists zz_category_history on public.members;
+create trigger zz_category_history after insert or update of category_id on public.members
+  for each row execute function public.member_category_track();

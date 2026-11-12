@@ -56,14 +56,14 @@
       "sizes": "1080x1920",
       "type": "image/jpeg",
       "form_factor": "narrow",
-      "label": "Un reçu WhatsApp pour chaque cotisation"
+      "label": "Un reçu pour chaque cotisation, à envoyer sur WhatsApp"
     },
     {
       "src": "screenshots/projet.jpg",
       "sizes": "1080x1920",
       "type": "image/jpeg",
       "form_factor": "narrow",
-      "label": "Les projets du village, suivis jusqu’au bout"
+      "label": "Chaque projet suivi franc par franc"
     }
   ],
   "prefer_related_applications": false
