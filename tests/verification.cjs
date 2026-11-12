@@ -40,6 +40,55 @@ function references() {
   }
 }
 
+// 2 bis. Numéros ?v= : un fichier modifié depuis main (ou, sur main, depuis la version d'avant)
+// doit avoir un nouveau numéro, sinon les téléphones gardent l'ancienne version en cache.
+const git = (...args) => execFileSync('git', args, { cwd: ROOT, stdio: ['ignore', 'pipe', 'ignore'] }).toString();
+function versions() {
+  console.log('2 bis. Numéros de version (cache des téléphones)');
+  let base = process.env.VERIF_BASE || '';
+  try {
+    if (!base) {
+      const head = git('rev-parse', 'HEAD').trim();
+      const mb = git('merge-base', 'HEAD', 'origin/main').trim();
+      // Sur main sans modification en cours (GitHub après une fusion) : comparer à la version d'avant.
+      const dirty = git('status', '--porcelain', '--untracked-files=no').trim() !== '';
+      base = mb !== head ? mb : dirty ? head : git('rev-parse', 'HEAD^1').trim();
+    }
+  } catch (e) { ok('contrôle sauté : historique git indisponible (fetch-depth: 0 dans GitHub Actions)'); return; }
+  const show = f => { try { return execFileSync('git', ['show', `${base}:${f}`], { cwd: ROOT, stdio: ['ignore', 'pipe', 'ignore'] }); } catch (e) { return null; } };
+  for (const page of ['index.html', 'projet.html']) {
+    const now = read(page), before = (show(page) || '').toString();
+    for (const [, file, v] of now.matchAll(/(?:src|href)="([\w./-]+\.(?:js|css))\?v=(\d+)"/g)) {
+      const old = show(file);
+      if (!old) { ok(`${page} → ${file} : nouveau fichier`); continue; }
+      const changed = !old.equals(fs.readFileSync(path.join(ROOT, file)));
+      const oldV = (before.match(new RegExp(`${file.replace(/[.]/g, '\\.')}\\?v=(\\d+)`)) || [])[1];
+      if (!changed) continue;
+      check(oldV !== v, `${page} → ${file} modifié${oldV === v ? ` mais toujours ?v=${v} : passer à ?v=${Number(v) + 1}` : ` : ?v=${oldV} → ?v=${v}`}`);
+    }
+  }
+}
+
+// 2 ter. Aucune clé secrète dans le dépôt public (seule la clé « anon » de Supabase est permise).
+function secrets() {
+  console.log('2 ter. Aucune clé secrète dans le dépôt');
+  let files = [];
+  try { files = git('ls-files').split('\n').filter(Boolean); } catch (e) { files = fs.readdirSync(ROOT).filter(f => /\.(js|html|json|md|sql|ts|yml)$/.test(f)); }
+  const found = [];
+  for (const f of files) {
+    if (/\.(png|jpe?g|webp|ico|woff2?)$/i.test(f)) continue;
+    let s; try { s = fs.readFileSync(path.join(ROOT, f), 'utf8'); } catch (e) { continue; }
+    for (const [jwt] of s.matchAll(/eyJ[\w-]{10,}\.(eyJ[\w-]{10,})\.[\w-]{10,}/g)) {
+      let role = ''; try { role = JSON.parse(Buffer.from(jwt.split('.')[1], 'base64url').toString()).role || ''; } catch (e) { /* pas un vrai jeton */ }
+      if (role && role !== 'anon') found.push(`${f} : jeton Supabase « ${role} »`);
+    }
+    if (/sb_secret_[\w-]{10,}/.test(s)) found.push(`${f} : clé secrète Supabase (sb_secret_…)`);
+    if (/-----BEGIN [A-Z ]*PRIVATE KEY-----/.test(s)) found.push(`${f} : clé privée`);
+    if (/\b(ghp_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{30,})/.test(s)) found.push(`${f} : jeton GitHub`);
+  }
+  check(!found.length, found.length ? `clé secrète trouvée, à retirer et à changer dans Supabase : ${found.join(' ; ')}` : `${files.length} fichiers relus, aucune clé secrète`);
+}
+
 // 3. Empreintes de sécurité (SRI) des scripts venus de jsDelivr : elles correspondent au vrai fichier.
 async function sri() {
   console.log('3. Empreintes des scripts externes');
@@ -133,6 +182,8 @@ async function browser() {
 (async () => {
   syntax();
   references();
+  versions();
+  secrets();
   await sri();
   receipts();
   await browser();
