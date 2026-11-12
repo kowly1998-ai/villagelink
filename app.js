@@ -42,7 +42,10 @@
   const moneyD = (n, cur) => nf2.format(Number(n) || 0).replace(/[\u202f\u00a0 ]/g, NB) + NB + (CUR_LABEL[cur] || cur);
   const rateFmt = r => new Intl.NumberFormat('fr-FR', { maximumFractionDigits: 6 }).format(Number(r)).replace(/[\u202f\u00a0 ]/g, NB);
   const origTag = t => (t && t.orig_currency ? moneyD(Math.abs(t.orig_amount), t.orig_currency) : '');
-  const todayISO = () => { const d = new Date(); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`; };
+  // Écart entre l'horloge du téléphone et celle du serveur (audit B6) : un téléphone mal réglé
+  // ne doit pas afficher de faux retards. Mis à jour par loadCtx, gardé tel quel hors connexion.
+  let clockSkew = 0;
+  const todayISO = () => { const d = new Date(Date.now() + clockSkew); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`; };
   const curYM = () => todayISO().slice(0, 7);
   const ym = d => String(d || '').slice(0, 7);
   const dFR = d => { if (!d) return ''; const s = String(d); if (s.length > 10) { const x = new Date(s); return `${x.getDate()}${NB}${MOIS[x.getMonth()]} ${x.getFullYear()}`; } const [y, m, da] = s.split('-').map(Number); return `${da}${NB}${MOIS[m - 1]} ${y}`; };
@@ -199,6 +202,7 @@
     const soft = q => q.then(r => (r.error ? null : r.data), () => null);
     const MCOLS = 'id,association_id,user_id,full_name,city,country,role,joined_on,active,created_at,pending,created_by_join,section_id,category_id';
     const seenKey = 'vl:notif:' + id, seen = Number(store.get(seenKey) || 0);
+    const t0 = Date.now(), clockP = sb.rpc('server_now').then(r => (r.error ? null : r.data), () => null);
     const [a, members, paid, bal, contacts, msg, log, newLog, sectionsR, catsR, exemptsR, payNumsR, claimsR, expR, feeH, catH] = await Promise.all([
       sb.from('associations').select('*').eq('id', id).maybeSingle().then(must),
       fetchAll(() => sb.from('members').select(MCOLS).eq('association_id', id).order('full_name').order('id')),
@@ -218,6 +222,8 @@
       soft(sb.from('member_category_history').select('member_id,category_id,from_period').eq('association_id', id).order('from_period').limit(5000))
     ]);
     if (!a) { S.ctx = null; return null; }
+    const srv = Date.parse(await clockP || '');
+    if (srv) { const skew = srv - (t0 + Date.now()) / 2; clockSkew = Math.abs(skew) > 120000 ? skew : 0; }
     // Téléphone et e-mail : seulement ceux que la base autorise (bureau : tous ; membre : sa fiche et le bureau).
     const cmap = new Map((contacts || []).map(c => [c.id, c]));
     members.forEach(m => { const c = cmap.get(m.id); m.phone = c ? c.phone || '' : ''; m.email = c ? c.email || '' : ''; });

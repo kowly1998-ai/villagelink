@@ -495,3 +495,10 @@ table.sheet.num td:not(:first-child),table.sheet.num th:not(:first-child){text-a
 .pay-member select{min-height:48px}
 summary{min-height:44px}
 .item .pill{font-size:13px}
+
+/* v2.2.4 (audit B8) : défauts trouvés par tests/ecrans.cjs avec de longs textes et des montants au milliard */
+.kv.num{grid-template-columns:fit-content(45%) minmax(0,1fr)}
+.kv.num dd{overflow-wrap:anywhere}
+.kv.num dt{overflow-wrap:normal;hyphens:auto}
+.card .between{flex-wrap:wrap;row-gap:4px}
+.timeline > div{min-width:0;overflow-wrap:anywhere}

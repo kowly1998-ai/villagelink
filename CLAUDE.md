@@ -27,12 +27,12 @@ transparentes, projets, annonces, réunions et discussion.
 |---|---|
 | `index.html` | Coquille de la page, politique de sécurité (CSP), chargement des scripts avec `?v=N` |
 | `config.js` | URL et clé publique (anon) Supabase. Jamais la clé `service_role` |
-| `app.js` | Toute l'application (environ 2 400 lignes) |
+| `app.js` | Toute l'application (environ 2 750 lignes) |
 | `styles.css` | Styles du design v2 : jetons (`--color-primary`…), composants, version ordinateur. **Une seule couleur de marque (#1B3A8C), aucun dégradé, aucun flou.** Les anciens noms de variables (`--accent`, `--muted`…) restent comme alias |
 | `manifest.webmanifest`, `icon*` | Installation sur l'écran d'accueil |
 | `sw.js` | Service worker du mode hors ligne (réseau d'abord, copie de secours) |
 | `confidentialite.html`, `conditions.html`, `legal.css` | Politique de confidentialité et conditions d'utilisation (exigées par Google et le Play Store) |
-| `supabase/schema.sql` | Structure complète de la base, à jour (vérifiée à la 2.0.2) : référence et secours |
+| `supabase/schema.sql` | Structure complète de la base, à jour (vérifiée le 12/11/2026, version 2.2.4 : 27 tables, 5 vues, 90 fonctions identiques à la base) : référence et secours |
 
 ## Organisation de `app.js`
 
@@ -56,16 +56,25 @@ Accueil sans association → Cadre d'une association → Écrans → Formulaires
 
 ## Données (Supabase, schéma `public`)
 
-- **Tables** : `associations`, `members`, `transactions`, `projects`, `project_updates`,
-  `announcements`, `meetings`, `meeting_attendance`, `polls`, `poll_options`, `poll_votes`,
-  `documents`, `messages`, `activity_log`.
+- **27 tables** (au 12/11/2026), par thème :
+  - association et membres : `associations`, `members`, `sections`, `member_categories`,
+    `member_category_history`, `member_exemptions`, `join_attempts` (essais de code d'invitation) ;
+  - argent : `transactions`, `fee_history` (montant de cotisation par mois de départ), `pay_numbers`
+    (numéros Wave / Orange / Free), `payment_claims` (paiements déclarés par les membres),
+    `expense_requests` (dépenses à valider), `collections` (solidarité, collectes) ;
+  - projets : `projects`, `project_updates` ;
+  - vie de l'association : `announcements`, `meetings`, `meeting_attendance`, `polls`, `poll_options`,
+    `poll_votes`, `documents`, `messages` ;
+  - système : `activity_log`, `push_subscriptions`, `subscription_requests`, `app_admins`.
 - **Vues** (toutes en `security_invoker = true`) : `v_balances`, `v_member_paid`,
-  `v_project_totals`, `v_category_totals`.
-- **Fonctions appelées par l'app** : `create_association`, `join_association`, `review_join`,
-  `regenerate_invite_code`, `my_memberships`, `reverse_transaction`, `hide_message`,
-  `create_poll`, `cast_vote`, `close_poll`, `poll_results` (votes : aucune écriture directe dans les tables).
+  `v_project_totals`, `v_category_totals`, `v_collection_totals`.
+- **Fonctions** : 90 au 12/11/2026, liste complète dans `supabase/schema.sql`. Les plus utilisées par l'app :
+  `create_association`, `join_association`, `review_join`, `regenerate_invite_code`, `my_memberships`,
+  `member_contacts`, `reverse_transaction`, `declare_payment`, `confirm_payment_claim`, `hide_message`,
+  `create_poll`, `cast_vote`, `close_poll`, `poll_results`, `server_now` (heure du serveur pour les retards)
+  (votes : aucune écriture directe dans les tables).
 - **Stockage** : buckets privés `proofs` (justificatifs de paiement, 5 Mo maximum), `docs`
-  (documents de l'association, 10 Mo maximum) et `covers` (photo de couverture, 2 Mo, réduite sur le téléphone avant l'envoi). Chemin : `<id association>/<fichier>`.
+  (documents de l'association, 10 Mo maximum), `voice` (messages vocaux, 3 Mo) et `covers` (photo de couverture, 2 Mo, réduite sur le téléphone avant l'envoi). Chemin : `<id association>/<fichier>`.
 - **Définition exacte** de chaque table, fonction et règle : `supabase/schema.sql`. Le lire avant
   de toucher à la base.
 
@@ -108,13 +117,13 @@ Rôles : `president`, `vice_president`, `secretaire`, `tresorier`, `projets`, `m
    `apply_migration` (même nom, même contenu, ex. `v1_5_...`). La base d'abord, le code ensuite.
    Ajouter aussi le même SQL à la fin de `supabase/schema.sql`, qui doit rester la photo complète de la base.
 2. **Cache** : augmenter le numéro `?v=` dans `index.html` pour chaque fichier modifié
-   (aujourd'hui `styles.css?v=41`, `config.js?v=2`, `i18n-ff.js?v=1`, `receipt.js?v=3`, `app.js?v=59`). Sinon les téléphones gardent
+   (aujourd'hui `styles.css?v=42`, `config.js?v=2`, `i18n-ff.js?v=1`, `receipt.js?v=3`, `app.js?v=60`). Sinon les téléphones gardent
    l'ancienne version.
 3. **Vérification** : `node tests/verification.cjs` (avec Playwright, préparé au démarrage de chaque session cloud par `.claude/hooks/session-start.sh`, qui met aussi la branche à jour depuis `main` ou prévient si elle a du travail non fusionné) contrôle l'écriture du code, les fichiers appelés et leur `?v=` (rouge si un fichier a changé depuis `main` sans nouveau numéro), l'absence de clé secrète dans le dépôt, les empreintes SRI, le lecteur de reçus et l'ouverture des pages à 360 px. GitHub Actions (`.github/workflows/verification.yml`) la lance sur chaque demande de fusion et chaque envoi vers `main` : ne pas fusionner si elle est rouge. Ajouter un contrôle quand une nouvelle fonction le mérite.
 4. **Commit** sur `main`, en français : `Version X.Y : <ce qui change>`.
 5. **Push** : GitHub Pages met en ligne en quelques minutes.
 6. Dire à Alpha quoi tester sur son téléphone.
-7. **Site de test** : `test.villagelinkafrica.com` (dépôt `kowly1998-ai/villagelink-test`, base Supabase de test `phkiovzhlmozpdoiigpf`). Toute nouveauté y passe d'abord ; `tests/affichage.cjs` (GitHub Actions) l'ouvre à 360 px avec une fausse base.
+7. **Site de test** : `test.villagelinkafrica.com` (dépôt `kowly1998-ai/villagelink-test`, base Supabase de test `phkiovzhlmozpdoiigpf`). Toute nouveauté y passe d'abord ; `tests/affichage.cjs` (GitHub Actions) l'ouvre à 360 px avec une fausse base, et `tests/ecrans.cjs` ouvre les 39 écrans (président en clair et en sombre, membre) avec de longs noms et des montants au milliard : rouge si une erreur apparaît ou si un texte dépasse de l'écran ou de sa carte (`CAPTURES=1` garde une capture de chaque écran). Ajouter à sa liste `PRES` tout nouvel écran.
 
 ## Conventions produit
 
@@ -145,6 +154,7 @@ Rôles : `president`, `vice_president`, `secretaire`, `tresorier`, `projets`, `m
 - **Ensuite** : pilote réel avec Kansaghel, politique de confidentialité, page de présentation, Play Store.
 - v2.2 lot 2 : export CSV des membres et des opérations (Paramètres, `exportData`), rapport annuel (`V.rapportannuel`), feuille de présence à imprimer (`r/<id>/feuille`), verrou par code PIN sur le téléphone (`vl:pin`, PBKDF2, effacé à la déconnexion). Politique de sécurité : plus de `'unsafe-inline'` pour `style-src` (seulement `style-src-attr`). Aucune migration de base.
 - v2.2.3 (audit) : montants avec point/virgule refusés ; monnaie bloquée dès qu'il y a des montants (`associations_guard`) ; historique des cotisations (`fee_history`, `member_category_history`, `feeOf(m, période)`) ; paiement réparti sur plusieurs mois (`spread`) ; téléphone et e-mail des membres réservés au bureau (colonnes `phone`/`email` non lisibles, fonction `member_contacts`) : **toute nouvelle colonne de `members` doit être ajoutée au `grant select (...)`** ; on ne confirme pas son propre paiement déclaré ; `loadCtx` en parallèle ; verrou par code avec compteur d'essais gardé (`vl:pin:try`).
+- v2.2.4 (suite de l'audit) : B6, les retards de cotisation utilisent la date du serveur (`server_now`, écart gardé dans `clockSkew` si plus de 2 minutes) ; B9, documentation remise à jour ; B8, test d'affichage étendu.
 - **Mis de côté** : paiement mobile directement dans l'app (agrégateurs type SasPay).
 - **Plus tard** : publication sur le Play Store.
 - La colonne `associations.plan` existe déjà pour de futures offres.
