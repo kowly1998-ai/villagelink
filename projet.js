@@ -34,7 +34,7 @@
       ${p.description ? `<section class="card"><h2>Le projet</h2><p class="desc">${esc(p.description)}</p></section>` : ''}
       ${p.contact ? `<section class="card give"><h2>Comment donner</h2><span class="contact">${esc(p.contact)}</span><span class="muted">Chaque don est enregistré par le trésorier et apparaît ici.</span></section>` : ''}
       <section class="card"><h2>Où va l’argent</h2><span class="muted">Dépensé à ce jour : <b>${money(spent)}</b> · reste en caisse pour le projet : <b>${money(Math.max(0, got - spent))}</b></span>
-        ${(d.expenses || []).map(e => `<div class="row"><span>${esc(e.description)}<br><span class="muted">${dFR(e.on)}</span></span><b>−${money(e.amount)}</b></div>`).join('') || '<span class="muted">Aucune dépense pour le moment.</span>'}</section>
+        ${(d.expenses || []).map(e => `<div class="row"><span>${esc(e.category || 'Dépense')}<br><span class="muted">${dFR(e.on)}</span></span><b>−${money(e.amount)}</b></div>`).join('') || '<span class="muted">Aucune dépense pour le moment.</span>'}</section>
       <section class="card"><h2>Nouvelles du chantier</h2>
         ${(d.updates || []).map(u => `<div class="upd"><span class="muted">${dFR(u.at)}</span><p>${esc(u.body)}</p></div>`).join('') || '<span class="muted">Pas encore de nouvelles.</span>'}</section>
       <a class="btn" target="_blank" rel="noopener" href="https://wa.me/?text=${encodeURIComponent(share)}">Partager sur WhatsApp</a>

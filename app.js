@@ -1582,7 +1582,7 @@
     if (p.public_slug) {
       const url = pubUrl(p), share = `${p.name} — ${S.ctx.assoc.name}\nDéjà ${money(c)} collectés sur ${money(p.goal)} (${pc} %).\nSuivez le projet en toute transparence, et participez :\n${url}`;
       return `<section class="card stack pub-card"><div class="between"><h2>Page publique</h2><span class="pill p-ok">En ligne</span></div>
-        <p class="muted" style="margin:0;font-size:14px">Tout le monde peut voir ce projet avec ce lien, même sans compte : objectif, argent collecté, dépenses et nouvelles. Aucun nom ni numéro de membre n’y apparaît.</p>
+        <p class="muted" style="margin:0;font-size:14px">Tout le monde peut voir ce projet avec ce lien, même sans compte : objectif, argent collecté, dépenses (catégorie, date et montant seulement) et nouvelles. Aucun nom ni numéro de membre n’y apparaît. N’écrivez pas de nom de personne dans les nouvelles : elles sont publiques.</p>
         <a class="link" style="word-break:break-all" target="_blank" rel="noopener" href="${esc(url)}">${esc(url)}</a>
         <a class="btn wa block" target="_blank" rel="noopener" href="${waShare(share)}">${I.wa} Partager la page sur WhatsApp</a>
         ${can('projects') ? `<form class="stack" data-form="ppublic" data-id="${p.id}" data-on="1" novalidate><div class="field"><label for="pp-c">Comment donner (affiché sur la page)</label><input id="pp-c" name="contact" maxlength="300" value="${esc(p.public_contact)}" placeholder="Ex. Wave ou Orange Money au +221 77 000 00 00 (trésorier)"></div><p class="err" hidden></p><button class="btn ghost sm" type="submit">Enregistrer</button></form>
