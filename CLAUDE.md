@@ -164,6 +164,12 @@ Rôles : `president`, `vice_president`, `secretaire`, `tresorier`, `projets`, `m
 - **Plus tard** : publication sur le Play Store.
 - La colonne `associations.plan` existe déjà pour de futures offres.
 
+## Agents « ux-researcher » et « legal-advisor »
+
+- `.claude/agents/ux-researcher.md` et `.claude/agents/legal-advisor.md` (davila7/claude-code-templates, licence MIT, copiés tels quels le 14/11/2026). Ils lisent, cherchent sur le web et rédigent ; ils ne touchent ni au code ni à la base.
+- **ux-researcher** : pilote avec Kansaghel (guides d'entretien, questionnaires courts à envoyer par WhatsApp, analyse des retours). Utilisateurs francophones, souvent peu à l'aise avec le numérique, sur téléphone d'entrée de gamme. Noms et numéros anonymisés dans les rapports.
+- **legal-advisor** : `confidentialite.html`, `conditions.html`, exigences du Play Store. Partir d'abord de la **loi sénégalaise n° 2008-12 sur les données personnelles (CDP)**, puis des pays où vivent les membres (Guinée, France/UE pour le RGPD…). Toujours un brouillon à faire relire, jamais un avis d'avocat.
+
 ## Agent « database-architect »
 
 - `.claude/agents/database-architect.md` (davila7/claude-code-templates, licence MIT, copié tel quel le 14/11/2026) : à utiliser pour tout changement ou relecture de la base.
