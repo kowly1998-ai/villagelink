@@ -10,7 +10,7 @@ transparentes, projets, annonces, réunions et discussion.
   Claude écrit, vérifie et met en ligne le code.
 - Répondre en français simple, sans jargon. À la fin de chaque changement, dire précisément
   quoi tester sur le téléphone.
-- Version actuelle : **2.2.11** (design v2, suspension d'association, photo de couverture, nouvelle icône, export CSV, rapport annuel, feuille de présence, verrou par code).
+- Version actuelle : **2.2.12** (design v2, suspension d'association, photo de couverture, nouvelle icône, export CSV, rapport annuel, feuille de présence, verrou par code).
 
 ## Stack
 
@@ -19,7 +19,7 @@ transparentes, projets, annonces, réunions et discussion.
   RLS, stockage de fichiers.
 - `supabase-js` **2.45.4** chargé depuis jsDelivr (version figée).
 - Hébergement : **GitHub Pages** depuis la branche `main`. Un push sur `main` = mise en ligne.
-- Police **Inter** (Google Fonts). Thème **clair par défaut**, sombre ou automatique au choix dans « Mon profil » (`data-theme` sur `<html>`, réglage `vl:theme`).
+- Police **Inter** hébergée dans `fonts/` (depuis v2.2.12, plus de Google Fonts ; licence OFL dans `fonts/OFL.txt`). Thème **clair par défaut**, sombre ou automatique au choix dans « Mon profil » (`data-theme` sur `<html>`, réglage `vl:theme`).
 
 ## Fichiers
 
@@ -117,7 +117,7 @@ Rôles : `president`, `vice_president`, `secretaire`, `tresorier`, `projets`, `m
    `apply_migration` (même nom, même contenu, ex. `v1_5_...`). La base d'abord, le code ensuite.
    Ajouter aussi le même SQL à la fin de `supabase/schema.sql`, qui doit rester la photo complète de la base.
 2. **Cache** : augmenter le numéro `?v=` dans `index.html` pour chaque fichier modifié
-   (aujourd'hui `styles.css?v=44`, `config.js?v=2`, `i18n-ff.js?v=1`, `receipt.js?v=3`, `app.js?v=64`, `projet.js?v=2` dans `projet.html`). Sinon les téléphones gardent
+   (aujourd'hui `styles.css?v=44`, `config.js?v=2`, `i18n-ff.js?v=1`, `receipt.js?v=3`, `app.js?v=65`, `fonts/inter.css?v=1`, `projet.js?v=2` dans `projet.html`). Sinon les téléphones gardent
    l'ancienne version.
 3. **Vérification** : `node tests/verification.cjs` (avec Playwright, préparé au démarrage de chaque session cloud par `.claude/hooks/session-start.sh`, qui met aussi la branche à jour depuis `main` ou prévient si elle a du travail non fusionné) contrôle l'écriture du code, les fichiers appelés et leur `?v=` (rouge si un fichier a changé depuis `main` sans nouveau numéro), l'absence de clé secrète dans le dépôt, les empreintes SRI, le lecteur de reçus et l'ouverture des pages à 360 px. GitHub Actions (`.github/workflows/verification.yml`) la lance sur chaque demande de fusion et chaque envoi vers `main` : ne pas fusionner si elle est rouge. Ajouter un contrôle quand une nouvelle fonction le mérite.
 4. **Commit** sur `main`, en français : `Version X.Y : <ce qui change>`.
@@ -162,6 +162,7 @@ Rôles : `president`, `vice_president`, `secretaire`, `tresorier`, `projets`, `m
 - v2.2.9 (test de résistance du 14/11/2026) : un mois déjà payé ne peut plus être encaissé une 2e fois, quelle que soit la voie (trigger `tx_month_paid_check`, cotisation calculée par `fee_of(membre, mois)` = même calcul que `feeOf`) ; `declare_payment` refuse un mois déjà payé ; la carte d'une déclaration prévient si le mois est déjà payé. Limite de 50 membres de la formule Village aussi à la réintégration et à l'acceptation d'une demande (`members_plan_cap`). **Si `feeOf` change dans app.js, changer `fee_of` dans la base.** Association de démo sur la base de test : « Association de démo — Village de Sintiou » (comptes `<rôle>@demo.villagelink.test`).
 - v2.2.10 (bug 4, lenteur) : les 24 règles de lecture utilisent `my_assoc_ids()` (associations où l'on est membre actif et validé, calculée une fois par requête) au lieu de `is_member()` ligne par ligne, et 8 index ajoutés (dont `tx_dues_idx` pour `v_member_paid`). Testé sur la base de test : droits identiques (319 vérifications, 11 comptes × 29 tables et vues), 38 pages de `v_member_paid` en 0,8 s au lieu de 36 s pour 10 ans d'historique. `is_member` et `has_role` restent pour les écritures, les fonctions et le stockage. Retour arrière : remettre `using (is_member(association_id))` sur chaque règle. Préparé par l'agent database-architect.
 - v2.2.11 (relecture de l'agent database-architect) : une catégorie de cotisation déjà utilisée ne se supprime plus (`a_member_categories_in_use`, elle changerait les mois passés) ; **la caisse ne passe jamais sous zéro** (`tx_balance_check` sur toute sortie, verrou par association ; les contre-écritures restent permises) ; `cover_path` et `created_by` ne changent que par les fonctions prévues (`set_cover` passe en `vl.system`) et une association suspendue ne se modifie plus (`associations_guard`) ; association suspendue ou en lecture seule : plus de messages, présences, sections, catégories, votes ni numéros de paiement (`zz_subscription`, `assert_writable`) ; limite de 50 membres sous verrou et comptée pareil partout (actifs et validés) ; contraintes `NOT VALID` validées. Rappel : une association ne peut pas être supprimée (journal et opérations définitifs).
+- v2.2.12 (audit juridique) : suppression de compte anonymisée (`delete_my_account` : fiches → « Ancien membre », contacts effacés, fiche retirée, messages supprimés ; l'app efface d'abord les fichiers vocaux, règle de stockage `voice_delete_own`) ; police Inter hébergée sur VillageLink (CSP sans Google Fonts) ; politique de confidentialité, conditions et page de suppression réécrites (responsabilités association / VillageLink, téléphone et email réservés au bureau, transferts, durées, âge minimum **15 ans**, pages publiques, suspension et fermeture). **Toute nouvelle donnée personnelle doit être ajoutée à la politique et à la suppression de compte.** Reste à faire par Alpha : déclaration à la CDP, statut juridique, relecture par un juriste.
 - **Mis de côté** : paiement mobile directement dans l'app (agrégateurs type SasPay).
 - **Plus tard** : publication sur le Play Store.
 - La colonne `associations.plan` existe déjà pour de futures offres.
