@@ -2441,6 +2441,12 @@ Abstention</textarea><p class="help">Entre 2 et 10 choix.</p></div>
     },
     async delacct(fd) {
       if (val(fd, 'confirm').trim().toUpperCase() !== 'SUPPRIMER') fail('Tapez SUPPRIMER pour confirmer.');
+      // v2.2.12 : d'abord les fichiers de ses messages vocaux (la base efface ensuite les messages).
+      try {
+        const v = await sb.from('messages').select('audio_path').eq('author_id', S.user.id).neq('audio_path', '');
+        const paths = (v.data || []).map(x => x.audio_path).filter(Boolean);
+        for (let i = 0; i < paths.length; i += 100) await sb.storage.from('voice').remove(paths.slice(i, i + 100));
+      } catch (e) { /* sans connexion : la base efface quand même les messages */ }
       must(await sb.rpc('delete_my_account', { p_confirm: 'SUPPRIMER' }));
       await pushOff(true).catch(() => {}); clearOfflineData();
       await sb.auth.signOut().catch(() => {});
