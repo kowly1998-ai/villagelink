@@ -164,6 +164,12 @@ Rôles : `president`, `vice_president`, `secretaire`, `tresorier`, `projets`, `m
 - **Plus tard** : publication sur le Play Store.
 - La colonne `associations.plan` existe déjà pour de futures offres.
 
+## Compétence « supabase-postgres-best-practices »
+
+- `.claude/skills/supabase-postgres-best-practices/` (guide officiel Supabase, licence MIT, via davila7/claude-code-templates, copié tel quel le 14/11/2026) : 32 règles (index, RLS, blocages, connexions). À lire avant tout changement de base, avec l'agent database-architect.
+- Utile pour le **bug 4** (lenteur avec des années d'historique, mis de côté) : règle `security-rls-performance` (fonction appelée une fois au lieu de pour chaque ligne).
+- **Les règles de ce fichier passent avant les siennes** : on garde `set search_path = public` (règle de sécurité 3), les identifiants uuid, et pas de `FORCE ROW LEVEL SECURITY` sans test sur la base de test (les fonctions `security definer` en dépendent).
+
 ## Agents « ux-researcher » et « legal-advisor »
 
 - `.claude/agents/ux-researcher.md` et `.claude/agents/legal-advisor.md` (davila7/claude-code-templates, licence MIT, copiés tels quels le 14/11/2026). Ils lisent, cherchent sur le web et rédigent ; ils ne touchent ni au code ni à la base.
