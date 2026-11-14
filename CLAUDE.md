@@ -179,6 +179,12 @@ Rôles : `president`, `vice_president`, `secretaire`, `tresorier`, `projets`, `m
 - **ux-researcher** : pilote avec Kansaghel (guides d'entretien, questionnaires courts à envoyer par WhatsApp, analyse des retours). Utilisateurs francophones, souvent peu à l'aise avec le numérique, sur téléphone d'entrée de gamme. Noms et numéros anonymisés dans les rapports.
 - **legal-advisor** : `confidentialite.html`, `conditions.html`, exigences du Play Store. Partir d'abord de la **loi sénégalaise n° 2008-12 sur les données personnelles (CDP)**, puis des pays où vivent les membres (Guinée, France/UE pour le RGPD…). Toujours un brouillon à faire relire, jamais un avis d'avocat.
 
+## Agents « product-strategist » et « customer-support »
+
+- `.claude/agents/product-strategist.md` et `.claude/agents/customer-support.md` (davila7/claude-code-templates, licence MIT, copiés tels quels le 14/11/2026). Ils lisent et rédigent (le premier cherche aussi sur le web) ; ils ne touchent ni au code ni à la base.
+- **product-strategist** : positionnement de VillageLink, offres et prix (formule Village limitée à 50 membres, formule Diaspora), plan de lancement après le pilote Kansaghel. Cibles : bureaux d'associations de ressortissants (Sénégal, Guinée, diaspora), décision souvent prise en assemblée, paiement par Wave / Orange Money. **Aucun chiffre de marché ou de prix inventé** : écrire « à sourcer » ou demander à Alpha.
+- **customer-support** : FAQ, guides de dépannage et réponses toutes prêtes à copier dans WhatsApp, en français très simple, pour des membres et trésoriers peu à l'aise avec le numérique. Vérifier dans `app.js` et ce fichier comment l'app marche avant d'écrire une réponse ; ne jamais promettre une fonction ou un délai. Suppression de compte, erreur d'argent, accès perdu ou soupçon de fraude : renvoyer vers Alpha (contact@villagelinkafrica.com). Aucun nom ni numéro de membre dans la FAQ.
+
 ## Agent « database-architect »
 
 - `.claude/agents/database-architect.md` (davila7/claude-code-templates, licence MIT, copié tel quel le 14/11/2026) : à utiliser pour tout changement ou relecture de la base.
