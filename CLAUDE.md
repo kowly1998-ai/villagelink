@@ -164,6 +164,12 @@ Rôles : `president`, `vice_president`, `secretaire`, `tresorier`, `projets`, `m
 - **Plus tard** : publication sur le Play Store.
 - La colonne `associations.plan` existe déjà pour de futures offres.
 
+## Agent « database-architect »
+
+- `.claude/agents/database-architect.md` (davila7/claude-code-templates, licence MIT, copié tel quel le 14/11/2026) : à utiliser pour tout changement ou relecture de la base.
+- **Les règles de ce fichier passent avant les siennes** (identifiants uuid, triggers `*_check` pour l'appartenance à l'association, nommage des migrations, ajout à `schema.sql`).
+- Ses tests (« Prove it ») se font sur la **base de test** `phkiovzhlmozpdoiigpf`, jamais sur la vraie base `ncghmfwfnzgdddnqgnnl`. Il ne fait que proposer et tester ; la mise en ligne suit « Mettre en ligne un changement ».
+
 ## Points d'attention connus
 
 - **Espaces parasites dans la base** : le code des fonctions stocké dans Supabase commence par des
