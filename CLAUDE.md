@@ -10,7 +10,7 @@ transparentes, projets, annonces, réunions et discussion.
   Claude écrit, vérifie et met en ligne le code.
 - Répondre en français simple, sans jargon. À la fin de chaque changement, dire précisément
   quoi tester sur le téléphone.
-- Version actuelle : **2.2.9** (design v2, suspension d'association, photo de couverture, nouvelle icône, export CSV, rapport annuel, feuille de présence, verrou par code).
+- Version actuelle : **2.2.10** (design v2, suspension d'association, photo de couverture, nouvelle icône, export CSV, rapport annuel, feuille de présence, verrou par code).
 
 ## Stack
 
@@ -98,7 +98,7 @@ Rôles : `president`, `vice_president`, `secretaire`, `tresorier`, `projets`, `m
    `can()` dans `app.js` ne fait que cacher des boutons. Un changement de droit se fait dans la
    base **d'abord**, puis dans `CAN`.
 2. Toute nouvelle table : RLS activée et politiques limitées aux membres de l'association
-   (`is_member`, `has_role`).
+   (`has_role` pour écrire ; pour lire, `association_id = any ((select public.my_assoc_ids())::uuid[])`, calculé une fois par requête, depuis v2.2.10).
 3. Fonctions `security definer` : toujours `set search_path = public`, et vérifier l'appartenance
    ou le rôle à l'intérieur de la fonction.
 4. Toute nouvelle vue : `with (security_invoker = true)`.
@@ -160,6 +160,7 @@ Rôles : `president`, `vice_president`, `secretaire`, `tresorier`, `projets`, `m
 - v2.2.7 (audit A7) : onglets du bas en 16 px sur téléphone, chaque onglet prend la largeur de son nom (`grid-template-columns:repeat(5,auto)`), même graisse pour l'onglet actif ; sur moins de 360 px, pastille d'icône à 46 px et marges réduites. Vérifié à 320 et 360 px.
 - v2.2.8 : la page publique d'un projet (`public_project`, `projet.js`) n'affiche plus le texte libre des dépenses, seulement catégorie (liste fixe), date et montant ; retiré côté base, pas seulement à l'écran. Les « nouvelles du chantier » restent publiques (le bureau est prévenu de ne pas y mettre de nom). **Tout nouveau champ ajouté à `public_project` devient visible par tout le monde.**
 - v2.2.9 (test de résistance du 14/11/2026) : un mois déjà payé ne peut plus être encaissé une 2e fois, quelle que soit la voie (trigger `tx_month_paid_check`, cotisation calculée par `fee_of(membre, mois)` = même calcul que `feeOf`) ; `declare_payment` refuse un mois déjà payé ; la carte d'une déclaration prévient si le mois est déjà payé. Limite de 50 membres de la formule Village aussi à la réintégration et à l'acceptation d'une demande (`members_plan_cap`). **Si `feeOf` change dans app.js, changer `fee_of` dans la base.** Association de démo sur la base de test : « Association de démo — Village de Sintiou » (comptes `<rôle>@demo.villagelink.test`).
+- v2.2.10 (bug 4, lenteur) : les 24 règles de lecture utilisent `my_assoc_ids()` (associations où l'on est membre actif et validé, calculée une fois par requête) au lieu de `is_member()` ligne par ligne, et 8 index ajoutés (dont `tx_dues_idx` pour `v_member_paid`). Testé sur la base de test : droits identiques (319 vérifications, 11 comptes × 29 tables et vues), 38 pages de `v_member_paid` en 0,8 s au lieu de 36 s pour 10 ans d'historique. `is_member` et `has_role` restent pour les écritures, les fonctions et le stockage. Retour arrière : remettre `using (is_member(association_id))` sur chaque règle. Préparé par l'agent database-architect.
 - **Mis de côté** : paiement mobile directement dans l'app (agrégateurs type SasPay).
 - **Plus tard** : publication sur le Play Store.
 - La colonne `associations.plan` existe déjà pour de futures offres.
@@ -167,7 +168,7 @@ Rôles : `president`, `vice_president`, `secretaire`, `tresorier`, `projets`, `m
 ## Compétence « supabase-postgres-best-practices »
 
 - `.claude/skills/supabase-postgres-best-practices/` (guide officiel Supabase, licence MIT, via davila7/claude-code-templates, copié tel quel le 14/11/2026) : 32 règles (index, RLS, blocages, connexions). À lire avant tout changement de base, avec l'agent database-architect.
-- Utile pour le **bug 4** (lenteur avec des années d'historique, mis de côté) : règle `security-rls-performance` (fonction appelée une fois au lieu de pour chaque ligne).
+- A servi pour le **bug 4** (v2.2.10) : règle `security-rls-performance` (fonction appelée une fois au lieu de pour chaque ligne).
 - **Les règles de ce fichier passent avant les siennes** : on garde `set search_path = public` (règle de sécurité 3), les identifiants uuid, et pas de `FORCE ROW LEVEL SECURITY` sans test sur la base de test (les fonctions `security definer` en dépendent).
 
 ## Agents « ux-researcher » et « legal-advisor »
