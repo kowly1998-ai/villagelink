@@ -66,6 +66,19 @@ const RPC = {
   poll_results: () => [{ option_id: O1, votes: 12 }, { option_id: O2, votes: 3 }],
   server_now: () => new Date().toISOString(),
   assoc_status: () => 'trial', am_owner: () => false, exemption_reasons: () => [],
+  // Tableau de bord du propriétaire (#/admin), avec de longs noms et des montants au milliard
+  owner_stats: () => ({ generated_at: now.toISOString(), associations: 1234, associations_30d: 56, members: 98765, members_on_app: 54321, accounts: 77777, accounts_30d: 999, active_users_7d: 4321, active_users_30d: 8765, tx_30d: 123456, push_devices: 42,
+    volume: [{ currency: 'GNF', total_in: BIG * 9 }], weekly: [0, 1, 2].map(i => ({ week: ago(7 * (2 - i)).slice(0, 10), actions: 10 * i, users: 3 * i + 1 })),
+    list: [{ id: AID, name: ASSOC.name, village: ASSOC.village, residence_city: ASSOC.residence_city, currency: 'GNF', plan: 'grande', created_at: ago(40), members: 307, on_app: 7, pending: 2, last_activity: ago(20), actions_30d: 12345, tx: 9, balance: BIG * 8 }] }),
+  owner_subscriptions: () => ({ requests: [], assocs: [{ id: AID, name: ASSOC.name, plan: 'grande', trial_ends: TODAY, paid_until: null, status: 'trial', blocked_reason: null, founder: false, founder_used: false, members: 307, tier: 'devis' }] }),
+  owner_insights: () => ({ generated_at: now.toISOString(),
+    money: { month: BIG, year: BIG * 12, total: BIG * 30, mrr: BIG, monthly: Array.from({ length: 12 }, (_, i) => ({ month: `2026-${String(i + 1).padStart(2, '0')}`, amount: BIG * (i % 4) })), status: { trial: 12, active: 1234, grace: 3, readonly: 2, blocked: 1 },
+      trials_ending: [{ id: AID, name: ASSOC.name, trial_ends: TODAY, days: 0, members: 307, president: LONG, phone: '+224 620 00 00 00' }, { id: id(11), name: ASSOC.name, trial_ends: TODAY, days: 3, members: 12, president: null, phone: null }], trials_done: 40, converted: 13 },
+    usage: { features: [{ k: 'Cotisations et opérations', rows: 123456, assocs: 1234 }, { k: 'Documents', rows: 0, assocs: 0 }], dormant: [{ id: AID, name: ASSOC.name, members: 307, last: ago(20), days: 20 }, { id: id(11), name: ASSOC.name, members: 1, last: null, days: null }],
+      never_total: 98765, never: [{ id: AID, name: ASSOC.name, never: 300, members: 307 }], signups: Array.from({ length: 12 }, (_, i) => ({ week: ago(7 * (11 - i)).slice(0, 10), assocs: i % 3, accounts: i * 7 })) },
+    alerts: { no_treasurer: [{ id: AID, name: ASSOC.name, members: 307 }], stuck_expenses: [{ assoc: ASSOC.name, amount: BIG, currency: 'GNF', category: 'Projets', days: 12 }], near_tier: [{ id: AID, name: ASSOC.name, members: 29, tier: 'petite', limit: 30 }], unpaid: [{ id: AID, name: ASSOC.name, status: 'grace', members: 307 }, { id: id(11), name: ASSOC.name, status: 'readonly', members: 3 }] },
+    where: { origin: [{ k: 'Guinée', n: 1200 }, { k: 'Non renseigné', n: 34 }], residence: [{ k: 'Sénégal', n: 900 }], city: [{ k: 'Dakar-Pikine-Guédiawaye', n: 800 }], currency: [{ k: 'GNF', n: 1000 }, { k: 'XOF', n: 234 }] },
+    health: { db_bytes: 450 * 1048576, db_limit: 500 * 1048576, files_bytes: 12345678, files_limit: 1073741824, files: [{ bucket: 'proofs', bytes: 12000000, n: 345 }, { bucket: 'voice', bytes: 345678, n: 1 }], last_backup: ago(12), backups_30d: 2 } }),
   sub_quote: () => ({ plan: 'moyenne', amount: 25000, months: 12, members: 60, discounted: true })
 };
 
@@ -118,7 +131,7 @@ const OVERFLOW = () => {
   return out;
 };
 
-const PRES = ['', 'vie', 'caisse', 'membres', 'membres?f=late', `m/${M2}`, 'cotisations', 'cotisations?f=late', 'cotisations?f=claims', 'encaisser', `encaisser?m=${M2}`, 'abonnement', 'payer', 'finances', 'op/1', 'op/1?recu=1', 'op/2', 'sections', 'collectes', `collecte/${CID}`, 'depenses', 'depense/1', 'transparence', 'projets', `p/${PID}`, 'annonces', 'reunions', `r/${RID}`, `r/${RID}/feuille`, 'votes', `vote/${VID}`, 'documents', `rapport?m=${YM}`, 'rapportannuel', 'notifications', 'discussion', 'journal', 'plus', 'parametres'];
+const PRES = ['', 'vie', 'caisse', 'membres', 'membres?f=late', `m/${M2}`, 'cotisations', 'cotisations?f=late', 'cotisations?f=claims', 'encaisser', `encaisser?m=${M2}`, 'abonnement', 'payer', 'finances', 'op/1', 'op/1?recu=1', 'op/2', 'sections', 'collectes', `collecte/${CID}`, 'depenses', 'depense/1', 'transparence', 'projets', `p/${PID}`, 'annonces', 'reunions', `r/${RID}`, `r/${RID}/feuille`, 'votes', `vote/${VID}`, 'documents', `rapport?m=${YM}`, 'rapportannuel', 'notifications', 'discussion', 'journal', 'plus', 'parametres', '#/admin'];
 const MEMB = ['', 'cotisations', 'payer', 'finances', 'plus'];
 
 async function main() {
@@ -150,7 +163,7 @@ async function main() {
     page.on('console', m => { if (m.type() === 'error' && !/Failed to load resource|ERR_|net::|fonts\.g/i.test(m.text())) errors.push(m.text().slice(0, 160)); });
     for (const s of screens) {
       errors = [];
-      await page.goto(base + `#/a/${AID}/${s}`, { waitUntil: 'domcontentloaded' });
+      await page.goto(base + (s.startsWith('#') ? s : `#/a/${AID}/${s}`), { waitUntil: 'domcontentloaded' });
       await page.waitForTimeout(700);
       try { await page.waitForFunction(() => !document.querySelector('.loading'), null, { timeout: 8000 }); } catch (e) { /* vérifié plus bas */ }
       await page.waitForTimeout(250);
