@@ -141,6 +141,14 @@
      Rôles et droits (la base les vérifie aussi)
   ------------------------------------------------------------------ */
   const ROLES = { president: 'Président', vice_president: 'Vice-président', secretaire: 'Secrétaire général', tresorier: 'Trésorier', projets: 'Responsable des projets', membre: 'Membre' };
+  const ROLE_HELP = {
+    president: 'Tous les droits : membres, rôles, paramètres, argent, projets, annonces, réunions, votes. Valide les dépenses.',
+    vice_president: 'Presque comme le président : encaisse, valide les dépenses, gère projets, annonces, réunions et votes. Ne change pas les rôles ni les paramètres.',
+    secretaire: 'Gère les membres, les annonces, les réunions, les votes et les documents. Ne touche pas à l’argent.',
+    tresorier: 'Encaisse les cotisations, enregistre les dépenses et annule une opération. Vous pouvez nommer plusieurs trésoriers : ils ont les mêmes droits.',
+    projets: 'Gère les projets et leurs nouvelles du chantier. Rien d’autre.',
+    membre: 'Voit la situation de l’association, vote et participe à la discussion. Déclare ses propres paiements.'
+  };
   const CAN = {
     members: ['president', 'vice_president', 'secretaire', 'tresorier'],
     roles: ['president'],
@@ -475,7 +483,7 @@
       </section>
       <section class="card stack"><h2>Alertes${nAl ? ` <span class="pill p-red">${N(nAl)}</span>` : ''}</h2>
         ${nAl ? '' : '<span class="muted">Rien à signaler.</span>'}
-        ${(al.no_treasurer || []).length ? `<h3>Sans trésorier</h3>${rowsOf(al.no_treasurer, a => line(esc(a.name), pl(a.members, 'membre') + ' · personne ne peut enregistrer les dépenses', ''))}` : ''}
+        ${(al.no_treasurer || []).length ? `<h3>Sans trésorier</h3>${rowsOf(al.no_treasurer, a => line(esc(a.name), pl(a.members, 'membre') + ' · personne ne peut enregistrer les dépenses. Le président peut nommer un ou plusieurs trésoriers', ''))}` : ''}
         ${(al.stuck_expenses || []).length ? `<h3>Dépenses bloquées depuis plus de 7 jours</h3>${rowsOf(al.stuck_expenses, e => line(esc(e.assoc), money(e.amount, e.currency) + ' · ' + esc(e.category || '') + ' · en attente depuis ' + N(e.days) + ' jours', ''))}` : ''}
         ${(al.unpaid || []).length ? `<h3>Essai fini sans paiement</h3>${rowsOf(al.unpaid, a => line(esc(a.name), pl(a.members, 'membre'), `<span class="pill ${a.status === 'grace' ? 'p-late' : 'p-red'}">${a.status === 'grace' ? 'En retard' : 'Lecture seule'}</span>`))}` : ''}
         ${(al.near_tier || []).length ? `<h3>Proche de la taille supérieure</h3>${rowsOf(al.near_tier, a => line(esc(a.name), N(a.members) + ' membres sur ' + N(a.limit) + ' · taille ' + (TIER[a.tier] || a.tier), ''))}` : ''}
@@ -952,7 +960,7 @@
         ${(S.ctx.sections || []).length ? `<div class="field"><label for="mb-sec">Section</label><select id="mb-sec" name="section_id"><option value="">Aucune section</option>${S.ctx.sections.map(x => opt(x.id, x.name, m ? m.section_id : '')).join('')}</select></div>` : ''}
         <div class="field"><label for="mb-email">Email (facultatif)</label><input id="mb-email" name="email" type="email" value="${esc(m && m.email)}"></div>
         <div class="field"><label for="mb-joined">Date d’adhésion</label><input id="mb-joined" name="joined_on" type="date" value="${esc(m ? m.joined_on : todayISO())}"><p class="help">Les cotisations sont dues à partir de ce mois.</p></div>
-        ${can('roles') ? `<div class="field"><label for="mb-role">Fonction dans l’association</label><select id="mb-role" name="role">${Object.entries(ROLES).map(([k, l]) => opt(k, l, r)).join('')}</select></div>` : ''}
+        ${can('roles') ? `<div class="field"><label for="mb-role">Fonction dans l’association</label><select id="mb-role" name="role">${Object.entries(ROLES).map(([k, l]) => opt(k, l, r)).join('')}</select><p class="help" id="mb-role-help" data-roles='${esc(JSON.stringify(ROLE_HELP))}'>${esc(ROLE_HELP[r] || '')}</p></div>` : ''}
         ${!isNew ? `<div class="field"><label class="check"><input type="checkbox" name="active" ${m.active ? 'checked' : ''}> Membre actif</label><p class="help">Décocher revient à retirer le membre de l’association : il perd l’accès et n’a plus de cotisation due. Son historique est conservé.</p></div>` : ''}
         <p class="err" hidden></p><button class="btn primary block" type="submit">${isNew ? 'Ajouter' : 'Enregistrer'}</button></form>`;
   }
@@ -1125,8 +1133,8 @@
       : pend ? `<p class="note" style="margin:0">Votre paiement de ${money(pend.amount, 'XOF')} est en attente : VillageLink l’active dès qu’il l’a reçu, en général dans la journée.</p>`
       : `<form class="stack" data-form="subreq" id="sub-form" hidden novalidate>
         <input type="hidden" name="plan" value="${q12 ? q12.plan : ''}">
-        <div class="radios" role="radiogroup" aria-label="Durée"><label><input type="radio" name="months" value="12" data-amt="${q12 ? q12.amount : 0}" checked>1 an${q12 && q12.discounted ? ' (tarif fondatrice)' : ''}</label><label><input type="radio" name="months" value="1" data-amt="${q1 ? q1.amount : 0}">1 mois</label></div>
-        <section class="card stack"><div class="between"><span class="muted">Montant à payer</span><b class="num" id="sub-amt" style="font-size:22px"></b></div>
+        <div class="radios" role="radiogroup" aria-label="Durée" hidden><label><input type="radio" name="months" value="12" data-amt="${q12 ? q12.amount : 0}" checked>1 an${q12 && q12.discounted ? ' (tarif fondatrice)' : ''}</label><label><input type="radio" name="months" value="1" data-amt="${q1 ? q1.amount : 0}">1 mois</label></div>
+        <section class="card stack"><div class="between"><span class="muted" id="sub-dur">Montant à payer</span><b class="num" id="sub-amt" style="font-size:22px"></b></div>
           <a class="btn block wave-btn" id="sub-wave" target="_blank" rel="noopener" href="#">Payer avec Wave</a>
           <p class="help" style="margin:0">Wave s’ouvre avec le montant déjà rempli, au nom de VillageLink. Revenez ensuite ici.</p></section>
         <div class="field"><label for="sub-r">Référence du paiement Wave (ID de transaction)</label><input id="sub-r" name="reference" maxlength="60" autocapitalize="characters" placeholder="T_…"></div>
@@ -1139,7 +1147,7 @@
     const f = document.querySelector('form[data-form=subreq]'); if (!f) return;
     const upd = () => {
       const amt = Number((f.querySelector('input[name=months]:checked') || {}).dataset.amt || 0);
-      $('#sub-amt').textContent = money(amt, 'XOF'); $('#sub-wave').href = VL_WAVE + '?amount=' + amt; $('#sub-wave').textContent = 'Payer ' + money(amt, 'XOF') + ' avec Wave';
+      const mo = (f.querySelector('input[name=months]:checked') || {}).value; $('#sub-dur').textContent = 'Montant à payer · ' + (mo === '1' ? '1 mois' : '1 an'); $('#sub-amt').textContent = money(amt, 'XOF'); $('#sub-wave').href = VL_WAVE + '?amount=' + amt; $('#sub-wave').textContent = 'Payer ' + money(amt, 'XOF') + ' avec Wave';
     };
     f.addEventListener('change', upd); upd();
   };
@@ -2816,6 +2824,7 @@ Abstention</textarea><p class="help">Entre 2 et 10 choix.</p></div>
   }
   const setOnline = () => $('#offline').classList.toggle('hidden', navigator.onLine);
   window.addEventListener('online', setOnline); window.addEventListener('offline', setOnline); setOnline();
+  document.addEventListener('change', e => { const t = e.target; if (t && t.id === 'mb-role') { const h = document.getElementById('mb-role-help'); if (h) { try { h.textContent = JSON.parse(h.dataset.roles)[t.value] || ''; } catch (_) { /* aide facultative */ } } } });
   document.addEventListener('change', e => { const el = e.target; if (el && el.dataset && el.dataset.nav === 'rapport' && /^\d{4}-\d{2}$/.test(el.value)) go(B() + '/rapport?m=' + el.value); if (el && el.dataset && el.dataset.nav === 'rapportannuel' && /^\d{4}$/.test(el.value)) go(B() + '/rapportannuel?a=' + el.value); });
   const onScroll = () => document.body.classList.toggle('scrolled', window.scrollY > 8);
   window.addEventListener('scroll', onScroll, { passive: true }); window.addEventListener('hashchange', () => setTimeout(onScroll, 50));
