@@ -160,6 +160,9 @@
     cover: ['president', 'vice_president', 'secretaire']
   };
   /* Essai gratuit et abonnement --------------------------------------- */
+  // v2.3.1 : plus de limite. Le prix suit le nombre de membres (même grille que la base : tier_for / plan_price).
+  const TIERS = [{ k: 'petite', label: 'Petite', max: 30, month: 2000, year: 20000 }, { k: 'moyenne', label: 'Moyenne', max: 100, month: 5000, year: 50000 }, { k: 'grande', label: 'Grande', max: 300, month: 10000, year: 100000 }];
+  const tierFor = n => TIERS.find(t => n <= t.max) || null;
   const PLANS = { association: { label: 'Village', max: 50, month: 5000, year: 50000 }, federation: { label: 'Diaspora', max: 200, month: 10000, year: 100000 } };
   const VL_WAVE = 'https://pay.wave.com/m/M_Ec4ZLH3AZsSi/c/sn/'; // lien Wave de VillageLink pour les abonnements
   const IS_TWA = (() => { try { if (document.referrer.startsWith('android-app://')) sessionStorage.setItem('vl:twa', '1'); return sessionStorage.getItem('vl:twa') === '1'; } catch (e) { return false; } })();
@@ -175,7 +178,8 @@
     return plusDays(end, 7) >= t ? 'grace' : 'readonly';
   };
   // Formule Village : sans sections, catégories ni plusieurs monnaies, 50 membres au plus. Essai et Diaspora : tout.
-  const fullPlan = () => !S.ctx || S.ctx.assoc.plan !== 'association';
+  // v2.3.1 : toutes les fonctions pour tout le monde (plus de limite selon la formule).
+  const fullPlan = () => true;
   const upsell = what => canManageSub() && !IS_TWA ? `<a class="card stack upsell" href="${B()}/abonnement" style="text-decoration:none"><span class="eyebrow">Formule Diaspora</span><b>${what}</b><span class="muted" style="font-size:14px">Disponible avec la formule Diaspora : toutes les fonctionnalités, jusqu’à 200 membres.</span></a>` : `<p class="note">${what} : disponible avec la formule Diaspora. Parlez-en au président.</p>`;
   const isRO = () => !!(S.ctx && ['readonly', 'blocked'].includes(subStatus(S.ctx.assoc)));
   const canManageSub = () => !!(S.ctx && S.ctx.me && ['president', 'vice_president', 'tresorier'].includes(S.ctx.me.role));
@@ -592,12 +596,23 @@
   }
 
   const B = () => '#/a/' + S.ctx.assoc.id;
+  // Bandeau d'information (jamais bloquant) : le nombre de membres dépasse la formule payée. Visible du bureau seulement.
+  function overflowBanner(a, st) {
+    if (!canManageSub() || st !== 'active') return '';
+    const cur = TIERS.find(t => t.k === a.plan); if (!cur) return '';
+    const n = activeMembers().length; if (n <= cur.max) return '';
+    const nt = tierFor(n);
+    const txt = nt ? `Au prochain renouvellement, la formule ${nt.label} s’appliquera (${money(nt.year, 'XOF')} par an). Rien n’est bloqué d’ici là.` : 'Au-delà de 300 membres, le tarif est sur devis : écrivez à contact@villagelinkafrica.com. Rien n’est bloqué.';
+    return `<section class="card stack sub-banner sub-info"><b>${num(n)} membres : plus que les ${cur.max} de votre formule ${cur.label}.</b><span>${txt}</span></section>`;
+  }
   function subBanner() {
     const a = S.ctx.assoc, st = subStatus(a), go = canManageSub() && !IS_TWA ? `<a class="btn primary sm" href="${B()}/abonnement">${st === 'active' ? 'Renouveler' : 'Activer l’abonnement'}</a>` : '';
     const end = [a.paid_until, a.trial_ends].filter(Boolean).sort().pop();
     if (st === 'blocked') return `<section class="card stack sub-banner sub-bad"><b>Association suspendue par VillageLink.</b><span>Motif : ${esc(a.blocked_reason || 'non précisé')}. Tout reste consultable, mais on ne peut plus rien enregistrer. Écrivez à contact@villagelinkafrica.com.</span></section>`;
     if (st === 'readonly') return `<section class="card stack sub-banner sub-bad"><b>L’essai gratuit est terminé : l’association est en lecture seule.</b><span>Tout reste consultable (caisse, historique, membres), mais on ne peut plus rien enregistrer.${canManageSub() ? '' : ' Prévenez le président.'}</span>${go}</section>`;
     if (st === 'grace') return `<section class="card stack sub-banner sub-warn"><b>${a.paid_until ? 'L’abonnement' : 'L’essai gratuit'} s’est terminé le ${dFR(end)}.</b><span>Plus que ${Math.max(daysUntil(plusDays(end, 7)), 0)} jour(s) avant le passage en lecture seule.</span>${go}</section>`;
+    const over = overflowBanner(a, st);
+    if (over && !['blocked', 'readonly', 'grace'].includes(st)) return over;
     if (st === 'trial' && canManageSub() && a.trial_ends && daysUntil(a.trial_ends) <= 15) return `<section class="card stack sub-banner sub-info"><b>Essai gratuit : plus que ${daysUntil(a.trial_ends)} jour(s).</b><span>Il se termine le ${dFR(a.trial_ends)}. Choisissez une formule pour continuer sans interruption.</span>${go}</section>`;
     if (st === 'active' && canManageSub() && daysUntil(a.paid_until) <= 10) return `<section class="card stack sub-banner sub-warn"><b>L’abonnement se termine le ${dFR(a.paid_until)}.</b>${go}</section>`;
     return '';
@@ -2186,7 +2201,6 @@ Abstention</textarea><p class="help">Entre 2 et 10 choix.</p></div>
     async member(fd, form) {
       const id = form.dataset.id, name = val(fd, 'full_name');
       if (name.length < 2) fail('Saisissez le nom complet.');
-      if (!id && !fullPlan() && activeMembers().length >= PLANS.association.max) fail('La formule Village est limitée à 50 membres. Passez à la formule Diaspora (Plus → Abonnement).');
       const email = val(fd, 'email');
       if (email && !/^\S+@\S+\.\S+$/.test(email)) fail('Adresse email invalide.');
       const row = { full_name: name, phone: val(fd, 'phone'), city: val(fd, 'city'), country: val(fd, 'country'), email, joined_on: val(fd, 'joined_on') || todayISO() };
@@ -2206,7 +2220,6 @@ Abstention</textarea><p class="help">Entre 2 et 10 choix.</p></div>
       await refresh(); toast(id ? 'Fiche enregistrée' : 'Membre ajouté'); go(B() + '/m/' + mid);
     },
     async import(fd) {
-      if (!fullPlan() && activeMembers().length >= PLANS.association.max) fail('La formule Village est limitée à 50 membres. Passez à la formule Diaspora (Plus → Abonnement).');
       const rows = parseImport(fd.get('text'));
       if (!rows.length) fail('Aucun membre reconnu. Mettez un membre par ligne.');
       if (rows.length > 2000) fail('2 000 membres maximum par import.');
