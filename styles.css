@@ -514,3 +514,19 @@ summary{min-height:44px}
   .tab[aria-current="page"]{font-weight:600}
 }
 @media (max-width:359px){.tab .ic{width:46px} .tabs-in{padding:6px 2px 8px}}
+/* v2.3.2 : tableau de bord du propriétaire */
+.admin h3{font-size:16px;font-weight:700;margin:6px 0 0}
+/* v2.3.3 : liste des retardataires du rapport mensuel */
+.names{list-style:none;margin:0;padding:0;display:grid;gap:2px}
+.names li{padding:6px 0;border-bottom:1px solid var(--color-border);overflow-wrap:anywhere}
+.names li:last-child{border-bottom:0}
+.print-only{display:none}
+@media print{.print-only{display:block}.names.cols{display:block;columns:3;column-gap:16px;font-size:11px}.names.cols li{padding:1px 0;border:0;break-inside:avoid}}
+
+/* Abonnement : une carte par formule */
+.pcards{display:grid;grid-template-columns:minmax(0,1fr);gap:12px}
+.pcard{min-width:0;display:flex;flex-direction:column;gap:8px;padding:16px;border-radius:var(--radius-lg);background:var(--color-surface);border:1.5px solid var(--color-border-strong)}
+.pcard.own{border:2px solid var(--color-primary);background:var(--color-primary-soft)}
+.pcard .pname{font-size:20px}.pcard .pprice{font-size:26px;font-weight:700;line-height:1.2}.pcard .pprice .muted{font-size:16px;font-weight:400}
+.pcard .row2{margin-top:4px}.pcard .btn[disabled]{cursor:not-allowed;opacity:.6}
+@media (min-width:900px){.pcards{grid-template-columns:repeat(3,minmax(0,1fr))}}

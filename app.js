@@ -160,7 +160,11 @@
     cover: ['president', 'vice_president', 'secretaire']
   };
   /* Essai gratuit et abonnement --------------------------------------- */
+  // v2.3.1 : plus de limite. Le prix suit le nombre de membres (même grille que la base : tier_for / plan_price).
+  const TIERS = [{ k: 'petite', label: 'Petite', max: 30, month: 2000, year: 20000 }, { k: 'moyenne', label: 'Moyenne', max: 100, month: 5000, year: 50000 }, { k: 'grande', label: 'Grande', max: 300, month: 10000, year: 100000 }];
+  const tierFor = n => TIERS.find(t => n <= t.max) || null;
   const PLANS = { association: { label: 'Village', max: 50, month: 5000, year: 50000 }, federation: { label: 'Diaspora', max: 200, month: 10000, year: 100000 } };
+  TIERS.forEach(t => { PLANS[t.k] = { label: t.label, max: t.max, month: t.month, year: t.year }; });
   const VL_WAVE = 'https://pay.wave.com/m/M_Ec4ZLH3AZsSi/c/sn/'; // lien Wave de VillageLink pour les abonnements
   const IS_TWA = (() => { try { if (document.referrer.startsWith('android-app://')) sessionStorage.setItem('vl:twa', '1'); return sessionStorage.getItem('vl:twa') === '1'; } catch (e) { return false; } })();
   const plusDays = (iso, n) => { const d = new Date(iso + 'T12:00:00Z'); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };
@@ -175,7 +179,8 @@
     return plusDays(end, 7) >= t ? 'grace' : 'readonly';
   };
   // Formule Village : sans sections, catégories ni plusieurs monnaies, 50 membres au plus. Essai et Diaspora : tout.
-  const fullPlan = () => !S.ctx || S.ctx.assoc.plan !== 'association';
+  // v2.3.1 : toutes les fonctions pour tout le monde (plus de limite selon la formule).
+  const fullPlan = () => true;
   const upsell = what => canManageSub() && !IS_TWA ? `<a class="card stack upsell" href="${B()}/abonnement" style="text-decoration:none"><span class="eyebrow">Formule Diaspora</span><b>${what}</b><span class="muted" style="font-size:14px">Disponible avec la formule Diaspora : toutes les fonctionnalités, jusqu’à 200 membres.</span></a>` : `<p class="note">${what} : disponible avec la formule Diaspora. Parlez-en au président.</p>`;
   const isRO = () => !!(S.ctx && ['readonly', 'blocked'].includes(subStatus(S.ctx.assoc)));
   const canManageSub = () => !!(S.ctx && S.ctx.me && ['president', 'vice_president', 'tresorier'].includes(S.ctx.me.role));
@@ -429,7 +434,9 @@
     const r = await sb.rpc('owner_stats');
     if (r.error) { root.innerHTML = `<div class="auth"><section class="card stack"><h2>Accès réservé</h2><p class="muted" style="margin:0">Ce tableau de bord est réservé au propriétaire de VillageLink.</p><a class="btn primary" href="#/bienvenue">Mes associations</a></section></div>`; return; }
     const d = r.data, N = n => num(n), pc = (a, b) => (b ? Math.round(a / b * 100) : 0);
-    const subs = await sb.rpc('owner_subscriptions').then(x => x.error ? null : x.data, () => null);
+    const [subs, ins] = await Promise.all([
+      sb.rpc('owner_subscriptions').then(x => x.error ? null : x.data, () => null),
+      sb.rpc('owner_insights').then(x => x.error ? null : x.data, () => null)]);
     const SUBST = { trial: ['p-blue', 'Essai'], active: ['p-ok', 'Abonnée'], grace: ['p-late', 'Grâce'], readonly: ['p-red', 'Lecture seule'], blocked: ['p-red', 'Bloquée'] };
     const untilFor = q => { const base = [(subs.assocs.find(x => x.id === q.association_id) || {}).paid_until, todayISO()].filter(Boolean).sort().pop(); const dd = new Date(base + 'T12:00:00Z'); dd.setUTCMonth(dd.getUTCMonth() + q.months); return dd.toISOString().slice(0, 10); };
     const subsHtml = sd => `<section class="card stack"><h2>Abonnements</h2>
@@ -437,6 +444,70 @@
           <div class="row" style="flex-wrap:wrap"><button class="btn primary sm" data-act="own-act" data-id="${q.id}" data-until="${untilFor(q)}">Activer jusqu’au ${dFR(untilFor(q))}</button><button class="btn ghost sm" data-act="own-rej" data-id="${q.id}">Refuser</button></div>
           <form class="stack" data-form="ownreject" data-id="${q.id}" id="orj-${q.id}" hidden novalidate><input name="note" placeholder="Motif (ex. rien reçu sur Wave)"><p class="err" hidden></p><button class="btn danger sm" type="submit">Refuser ce paiement</button></form></div>`).join('') : '<span class="muted">Aucun paiement à valider.</span>'}
         <div class="list">${sd.assocs.map(x => { const [c, l] = SUBST[x.status] || ['p-blue', x.status]; return `<div class="item"><div class="body"><div class="t">${esc(x.name)}</div><div class="s wrap num">${N(x.members)} membre${x.members > 1 ? 's' : ''} · ${x.paid_until ? 'payé jusqu’au ' + dFR(x.paid_until) : 'essai jusqu’au ' + dFR(x.trial_ends)}</div><button class="btn ghost sm" style="margin-top:6px" data-act="own-trial" data-id="${x.id}" data-te="${x.trial_ends}" data-pu="${x.paid_until || ''}">+30 jours d’essai</button> ${x.status === 'blocked' ? `<button class="btn primary sm" style="margin-top:6px" data-act="own-unblock" data-id="${x.id}">Débloquer</button><div class="s wrap">Motif : ${esc(x.blocked_reason || '')}</div>` : `<button class="btn ghost sm" style="margin-top:6px" data-act="own-block" data-id="${x.id}">Bloquer</button><form class="stack" data-form="ownblock" data-id="${x.id}" id="obk-${x.id}" hidden novalidate><input name="note" placeholder="Motif (ex. abonnement non payé)"><p class="err" hidden></p><button class="btn danger sm" type="submit">Bloquer cette association</button></form>`}</div><span class="pill ${c}">${l}</span></div>`; }).join('')}</div></section>`;
+    const insightsHtml = x => {
+      const m = x.money || {}, u = x.usage || {}, al = x.alerts || {}, wh = x.where || {}, h = x.health || {};
+      const st = m.status || {}, fcfa = v => money(v || 0, 'XOF');
+      // 12 barres : une étiquette sur trois (et la dernière) pour que tout tienne sur un petit écran
+      const bars = (rows, val, lab, aria, showN) => { const mx = Math.max(1, ...rows.map(val)); return `<div class="wkbars" role="img" aria-label="${aria}">${rows.map((r, i) => `<div class="wk"><span class="n num">${showN && val(r) ? N(val(r)) : ''}</span><i style="height:${Math.max(4, Math.round(val(r) / mx * 100))}%"></i><small>${i % 3 === 0 || i === rows.length - 1 ? lab(r) : NB}</small></div>`).join('')}</div>`; };
+      const mo = k => MOIS[Number(k.slice(5, 7)) - 1].replace('.', ''), wd = w => { const t = new Date(w + 'T12:00:00'); return t.getDate() + '/' + (t.getMonth() + 1); };
+      const mb = b => (b / 1048576).toLocaleString('fr-FR', { maximumFractionDigits: 1 }) + NB + 'Mo';
+      const gauge = (used, lim, lab) => { const p = Math.min(100, Math.round(used / lim * 100)); return `<div class="stack" style="gap:4px"><div class="between num"><span>${lab}</span><b>${mb(used)} sur ${mb(lim)} (${p}${NB}%)</b></div><div class="bar"><i style="width:${Math.max(1, p)}%"></i></div>${p >= 80 ? '<p class="err" style="margin:0">Bientôt plein : passez à l’offre payante de Supabase.</p>' : ''}</div>`; };
+      const TIER = { petite: 'petite (1 à 30)', moyenne: 'moyenne (31 à 100)', grande: 'grande (101 à 300)' };
+      const rowsOf = (list, f) => list.length ? `<div class="list">${list.map(f).join('')}</div>` : '';
+      const line = (t, s2, pill) => `<div class="item"><div class="body"><div class="t">${t}</div>${s2 ? `<div class="s wrap num">${s2}</div>` : ''}</div>${pill || ''}</div>`;
+      const nAl = (al.no_treasurer || []).length + (al.stuck_expenses || []).length + (al.near_tier || []).length + (al.unpaid || []).length;
+      const relance = t => `Bonjour ${t.president || ''}, c’est Alpha de VillageLink. L’essai gratuit de « ${t.name} » se termine le ${dFR(t.trial_ends)}. Pour continuer sans rien perdre, choisissez votre formule dans Mon profil → Abonnement. Je reste disponible si vous avez une question.`;
+      const kv = (list) => (list || []).map(r => `<div class="between num"><span>${esc(CUR_LABEL[r.k] && CUR_LABEL[r.k] !== r.k ? r.k + ' (' + CUR_LABEL[r.k] + ')' : r.k)}</span><b>${N(r.n)}</b></div>`).join('');
+      const pl = (n, w) => N(n) + NB + w + (n > 1 ? 's' : '');
+      const best = (m.monthly || []).reduce((t, r) => (r.amount > t.amount ? r : t), { amount: 0 });
+      return `<section class="card stack"><h2>L’argent qui vous revient</h2>
+        <div class="stack" style="gap:8px">
+          <div class="between num wrap"><span>Encaissé ce mois-ci</span><b>${fcfa(m.month)}</b></div>
+          <div class="between num wrap"><span>Revenu régulier par mois</span><b>${fcfa(m.mrr)}</b></div>
+          <div class="between num wrap"><span>Sur 12 mois</span><b>${fcfa(m.year)}</b></div>
+          <div class="between num wrap"><span>Depuis le début</span><b>${fcfa(m.total)}</b></div>
+          <div class="between num wrap"><span>Essais devenus payants</span><b>${m.trials_done ? pc(m.converted, m.trials_done) + NB + '% (' + N(m.converted) + ' sur ' + N(m.trials_done) + ')' : 'aucun essai terminé'}</b></div>
+        </div>
+        <div class="row" style="flex-wrap:wrap;gap:8px">${[['active', 'p-ok', 'Abonnées'], ['trial', 'p-blue', 'En essai'], ['grace', 'p-late', 'En retard'], ['readonly', 'p-red', 'Lecture seule'], ['blocked', 'p-red', 'Bloquées']].map(([k, c, l]) => `<span class="pill ${c}">${l} : ${N(st[k] || 0)}</span>`).join('')}</div>
+        ${(m.monthly || []).some(r => r.amount) ? bars(m.monthly, r => r.amount, r => mo(r.month), 'Revenus des abonnements par mois sur 12 mois') + `<p class="help num" style="margin:0">Meilleur mois : ${mo(best.month)} ${best.month.slice(0, 4)}, ${fcfa(best.amount)}.</p>` : '<p class="help" style="margin:0">Aucun abonnement payé pour l’instant : le graphique des revenus apparaîtra au premier paiement.</p>'}
+        <h3>Essais qui finissent dans 7 jours</h3>
+        ${rowsOf(m.trials_ending || [], t => `<div class="item"><div class="body"><div class="t">${esc(t.name)}</div><div class="s wrap num">${t.days ? 'dans ' + pl(t.days, 'jour') : 'aujourd’hui'} · ${dFR(t.trial_ends)} · ${pl(t.members, 'membre')}${t.president ? ' · président : ' + esc(t.president) : ''}</div>${t.phone ? `<a class="btn primary sm" style="margin-top:6px" target="_blank" rel="noopener" href="${esc(waTo(t.phone, relance(t)))}">Relancer sur WhatsApp</a>` : '<div class="s">Numéro du président non renseigné</div>'}</div></div>`) || '<span class="muted">Aucun essai ne finit cette semaine.</span>'}
+      </section>
+      <section class="card stack"><h2>Alertes${nAl ? ` <span class="pill p-red">${N(nAl)}</span>` : ''}</h2>
+        ${nAl ? '' : '<span class="muted">Rien à signaler.</span>'}
+        ${(al.no_treasurer || []).length ? `<h3>Sans trésorier</h3>${rowsOf(al.no_treasurer, a => line(esc(a.name), pl(a.members, 'membre') + ' · personne ne peut enregistrer les dépenses', ''))}` : ''}
+        ${(al.stuck_expenses || []).length ? `<h3>Dépenses bloquées depuis plus de 7 jours</h3>${rowsOf(al.stuck_expenses, e => line(esc(e.assoc), money(e.amount, e.currency) + ' · ' + esc(e.category || '') + ' · en attente depuis ' + N(e.days) + ' jours', ''))}` : ''}
+        ${(al.unpaid || []).length ? `<h3>Essai fini sans paiement</h3>${rowsOf(al.unpaid, a => line(esc(a.name), pl(a.members, 'membre'), `<span class="pill ${a.status === 'grace' ? 'p-late' : 'p-red'}">${a.status === 'grace' ? 'En retard' : 'Lecture seule'}</span>`))}` : ''}
+        ${(al.near_tier || []).length ? `<h3>Proche de la taille supérieure</h3>${rowsOf(al.near_tier, a => line(esc(a.name), N(a.members) + ' membres sur ' + N(a.limit) + ' · taille ' + (TIER[a.tier] || a.tier), ''))}` : ''}
+      </section>
+      <section class="card stack"><h2>L’usage réel</h2>
+        <h3>Fonctions utilisées en 30 jours</h3>
+        <div class="list">${(u.features || []).slice().sort((p, q) => q.rows - p.rows).map(f => line(esc(f.k), N(f.rows) + ' fois · ' + N(f.assocs) + ' association' + (f.assocs > 1 ? 's' : ''), f.rows ? '' : '<span class="pill p-late">Jamais utilisé</span>')).join('')}</div>
+        <h3>Associations endormies (rien depuis 14 jours)</h3>
+        ${rowsOf(u.dormant || [], a => line(esc(a.name), pl(a.members, 'membre') + ' · ' + (a.last ? 'dernière action il y a ' + pl(a.days, 'jour') : 'aucune action'), '')) || '<span class="muted">Aucune : toutes ont bougé ces 14 derniers jours.</span>'}
+        <h3>Membres jamais connectés : ${N(u.never_total || 0)}</h3>
+        ${rowsOf(u.never || [], a => line(esc(a.name), N(a.never) + ' sur ' + N(a.members) + ' membres n’ont pas encore ouvert l’application', '')) || '<span class="muted">Tous les membres ont un compte.</span>'}
+        <p class="help" style="margin:0">Ce sont des membres inscrits par le bureau, sans compte. Le trésorier encaisse pour eux, mais ils ne voient pas la caisse.</p>
+        <h3>Nouveaux comptes par semaine</h3>
+        ${bars(u.signups || [], r => r.accounts, r => wd(r.week), 'Nouveaux comptes par semaine sur 12 semaines', true)}
+        <p class="help" style="margin:0">Nouvelles associations sur 12 semaines : <b>${N((u.signups || []).reduce((t, r) => t + r.assocs, 0))}</b>.</p>
+      </section>
+      <section class="card stack"><h2>Où sont vos clients</h2>
+        <h3>Pays d’origine</h3>${kv(wh.origin)}
+        <h3>Pays où vit l’association</h3>${kv(wh.residence)}
+        <h3>Villes</h3>${kv(wh.city)}
+        <h3>Monnaies</h3>${kv(wh.currency)}
+      </section>
+      <section class="card stack"><h2>Santé du service</h2>
+        ${gauge(h.db_bytes || 0, h.db_limit || 1, 'Base de données')}
+        ${gauge(h.files_bytes || 0, h.files_limit || 1, 'Fichiers (photos, reçus, vocaux)')}
+        ${(h.files || []).length ? (h.files || []).map(f => `<div class="between num"><span>${esc({ proofs: 'Reçus', docs: 'Documents', voice: 'Messages vocaux', covers: 'Photos de couverture' }[f.bucket] || f.bucket)}</span><span>${N(f.n)} fichier${f.n > 1 ? 's' : ''} · ${mb(f.bytes)}</span></div>`).join('') : ''}
+        <p class="help" style="margin:0">Limites de l’offre gratuite de Supabase : 500 Mo pour la base et 1 Go pour les fichiers.</p>
+        <div class="between num"><span>Dernière sauvegarde</span>${h.last_backup ? `<b>${dFR(h.last_backup)} à ${hm(h.last_backup)}</b>` : '<span class="pill p-late">Aucune enregistrée</span>'}</div>
+        ${h.last_backup && (Date.now() - new Date(h.last_backup)) > 9 * 864e5 ? '<p class="err" style="margin:0">Plus de 9 jours sans sauvegarde : vérifiez GitHub.</p>' : ''}
+        <span class="muted" style="font-size:14px">${N(h.backups_30d || 0)} sauvegarde${h.backups_30d > 1 ? 's' : ''} en 30 jours (une par semaine prévue).</span>
+      </section>`;
+    };
     const wk = d.weekly || [], maxA = Math.max(1, ...wk.map(w => w.users));
     const ago = ts => { if (!ts) return 'jamais'; const h = (Date.now() - new Date(ts)) / 3600e3; return h < 1 ? 'il y a moins d’1 h' : h < 24 ? `il y a ${Math.round(h)} h` : `il y a ${Math.round(h / 24)} j`; };
     const health = a => { const h = a.last_activity ? (Date.now() - new Date(a.last_activity)) / 864e5 : 999; return h <= 7 ? ['p-ok', 'Active'] : h <= 30 ? ['p-late', 'Ralentit'] : ['p-red', 'Endormie']; };
@@ -456,6 +527,7 @@
       <section class="card stack"><h2>Personnes actives par semaine</h2>
         ${wk.length ? `<div class="wkbars" role="img" aria-label="Personnes actives par semaine sur 12 semaines">${wk.map(w => `<div class="wk"><span class="n num">${w.users}</span><i style="height:${Math.max(4, Math.round(w.users / maxA * 100))}%"></i><small>${new Date(w.week + 'T12:00:00').getDate()}/${new Date(w.week + 'T12:00:00').getMonth() + 1}</small></div>`).join('')}</div>` : '<span class="muted">Pas encore d’activité.</span>'}
         <p class="help">Une personne est active quand elle fait une action (paiement, message, vote…) dans la semaine.</p></section>
+      ${ins ? insightsHtml(ins) : ''}
       ${subs ? subsHtml(subs) : ''}
       <h2>Associations</h2>
       <div class="list">${(d.list || []).map(a => { const [cl, lb] = health(a); return `<div class="item"><div class="body"><div class="t">${esc(a.name)}</div><div class="s wrap num">${N(a.members)} membre${a.members > 1 ? 's' : ''} · ${N(a.on_app)} sur l’app${a.pending ? ' · ' + N(a.pending) + ' en attente' : ''} · ${N(a.actions_30d)} actions en 30 j · dernière ${ago(a.last_activity)}</div><div class="s wrap num">${esc([a.village, a.residence_city].filter(Boolean).join(' · '))} · créée le ${dFR(a.created_at)} · solde ${money(a.balance, a.currency)}</div></div><span class="pill ${cl}">${lb}</span></div>`; }).join('') || '<div class="empty">Aucune association.</div>'}</div>
@@ -592,12 +664,23 @@
   }
 
   const B = () => '#/a/' + S.ctx.assoc.id;
+  // Bandeau d'information (jamais bloquant) : le nombre de membres dépasse la formule payée. Visible du bureau seulement.
+  function overflowBanner(a, st) {
+    if (!canManageSub() || st !== 'active') return '';
+    const cur = TIERS.find(t => t.k === a.plan); if (!cur) return '';
+    const n = activeMembers().length; if (n <= cur.max) return '';
+    const nt = tierFor(n);
+    const txt = nt ? `Au prochain renouvellement, la formule ${nt.label} s’appliquera (${money(nt.year, 'XOF')} par an). Rien n’est bloqué d’ici là.` : 'Au-delà de 300 membres, le tarif est sur devis : écrivez à contact@villagelinkafrica.com. Rien n’est bloqué.';
+    return `<section class="card stack sub-banner sub-info"><b>${num(n)} membres : plus que les ${cur.max} de votre formule ${cur.label}.</b><span>${txt}</span></section>`;
+  }
   function subBanner() {
     const a = S.ctx.assoc, st = subStatus(a), go = canManageSub() && !IS_TWA ? `<a class="btn primary sm" href="${B()}/abonnement">${st === 'active' ? 'Renouveler' : 'Activer l’abonnement'}</a>` : '';
     const end = [a.paid_until, a.trial_ends].filter(Boolean).sort().pop();
     if (st === 'blocked') return `<section class="card stack sub-banner sub-bad"><b>Association suspendue par VillageLink.</b><span>Motif : ${esc(a.blocked_reason || 'non précisé')}. Tout reste consultable, mais on ne peut plus rien enregistrer. Écrivez à contact@villagelinkafrica.com.</span></section>`;
     if (st === 'readonly') return `<section class="card stack sub-banner sub-bad"><b>L’essai gratuit est terminé : l’association est en lecture seule.</b><span>Tout reste consultable (caisse, historique, membres), mais on ne peut plus rien enregistrer.${canManageSub() ? '' : ' Prévenez le président.'}</span>${go}</section>`;
     if (st === 'grace') return `<section class="card stack sub-banner sub-warn"><b>${a.paid_until ? 'L’abonnement' : 'L’essai gratuit'} s’est terminé le ${dFR(end)}.</b><span>Plus que ${Math.max(daysUntil(plusDays(end, 7)), 0)} jour(s) avant le passage en lecture seule.</span>${go}</section>`;
+    const over = overflowBanner(a, st);
+    if (over && !['blocked', 'readonly', 'grace'].includes(st)) return over;
     if (st === 'trial' && canManageSub() && a.trial_ends && daysUntil(a.trial_ends) <= 15) return `<section class="card stack sub-banner sub-info"><b>Essai gratuit : plus que ${daysUntil(a.trial_ends)} jour(s).</b><span>Il se termine le ${dFR(a.trial_ends)}. Choisissez une formule pour continuer sans interruption.</span>${go}</section>`;
     if (st === 'active' && canManageSub() && daysUntil(a.paid_until) <= 10) return `<section class="card stack sub-banner sub-warn"><b>L’abonnement se termine le ${dFR(a.paid_until)}.</b>${go}</section>`;
     return '';
@@ -1008,35 +1091,54 @@
     const a = S.ctx.assoc, st = subStatus(a), head = subHead('Abonnement', B() + '/plus');
     const reqs = await sb.from('subscription_requests').select('*').eq('association_id', a.id).order('id', { ascending: false }).limit(10).then(r => r.error ? [] : r.data);
     const pend = reqs.find(r => r.status === 'pending');
-    const n = activeMembers().length, rec = n > PLANS.association.max ? 'federation' : 'association';
+    const n = activeMembers().length;
+    // Le serveur calcule la formule et le prix d'après le nombre de membres (sub_quote) : le bureau ne choisit plus.
+    const [q12, q1] = await Promise.all([12, 1].map(m => sb.rpc('sub_quote', { p_assoc: a.id, p_months: m }).then(r => r.error || !r.data || !r.data.plan ? null : r.data)));
     const state = st === 'active' ? `<span class="pill p-ok">Abonnement actif</span><h2>Formule ${esc((PLANS[a.plan] || {}).label || '')}</h2><span class="muted">Jusqu’au ${dFR(a.paid_until)}</span>`
       : st === 'trial' ? `<span class="pill p-blue">Essai gratuit</span><h2>${a.trial_ends ? 'Jusqu’au ' + dFR(a.trial_ends) : 'En cours'}</h2>${a.trial_ends ? `<span class="muted">Plus que ${daysUntil(a.trial_ends)} jour(s). Toutes les fonctions sont incluses.</span>` : ''}`
       : st === 'blocked' ? `<span class="pill p-red">Suspendue</span><h2>Association suspendue par VillageLink</h2><span class="muted">Motif : ${esc(a.blocked_reason || 'non précisé')}. Tout reste consultable. Écrivez à contact@villagelinkafrica.com pour la rouvrir.</span>`
       : st === 'grace' ? '<span class="pill p-late">Essai terminé</span><h2>Quelques jours de grâce</h2><span class="muted">Activez l’abonnement pour éviter la lecture seule.</span>'
       : '<span class="pill p-red">Lecture seule</span><h2>L’essai est terminé</h2><span class="muted">Tout reste consultable. L’abonnement rouvre l’enregistrement des paiements, membres, réunions…</span>';
-    const ST = { pending: ['p-late', 'En attente de VillageLink'], activated: ['p-ok', 'Activé'], rejected: ['p-red', 'Refusé'] };
-    const hist = reqs.length ? `<section class="stack"><h2>Paiements d’abonnement</h2><div class="list">${reqs.map(r => `<div class="item" style="align-items:flex-start"><div class="body"><div class="t num" style="white-space:normal">${money(r.amount, 'XOF')} · formule ${esc(PLANS[r.plan].label)} · ${r.months === 12 ? '1 an' : '1 mois'}</div><div class="s wrap">${dFR(localDay(r.created_at))} · ${esc(r.created_label)}${r.reference ? ' · réf. ' + esc(r.reference) : ''}${r.note ? '<br>Motif : ' + esc(r.note) : ''}</div></div><span class="pill ${ST[r.status][0]}">${ST[r.status][1]}</span></div>`).join('')}</div></section>` : '';
-    const plans = Object.entries(PLANS).map(([k, p]) => `<label class="plan${k === rec ? ' rec' : ''}"><input type="radio" name="plan" value="${k}" ${k === rec ? 'checked' : ''}><span class="plan-in"><b>${p.label}</b>${k === rec ? '<span class="pill p-ok">Conseillée</span>' : ''}<span class="muted">Jusqu’à ${p.max} membres${k === 'federation' ? ' · toutes les fonctionnalités' : ' · sans sections, catégories ni plusieurs monnaies'}</span><span class="num"><b>${money(p.month, 'XOF')}</b> / mois</span><span class="num muted">ou ${money(p.year, 'XOF')} / an (2 mois offerts)</span></span></label>`).join('');
+    const ST = { pending: ['p-late', 'En attente de VillageLink'], verifying: ['p-late', 'VillageLink vérifie'], confirmed: ['p-ok', 'Confirmé : activation en cours'], activated: ['p-ok', 'Activé'], rejected: ['p-red', 'Refusé'] };
+    const hist = reqs.length ? `<section class="stack"><h2>Paiements d’abonnement</h2><div class="list">${reqs.map(r => `<div class="item" style="align-items:flex-start"><div class="body"><div class="t num" style="white-space:normal">${money(r.amount, 'XOF')} · formule ${esc((PLANS[r.plan] || {}).label || r.plan)} · ${r.months === 12 ? '1 an' : '1 mois'}</div><div class="s wrap">${dFR(localDay(r.created_at))} · ${esc(r.created_label)}${r.reference ? ' · réf. ' + esc(r.reference) : ''}${r.note ? '<br>Motif : ' + esc(r.note) : ''}</div></div><span class="pill ${ST[r.status][0]}">${ST[r.status][1]}</span></div>`).join('')}</div></section>` : '';
+    // Une carte par formule, chacune avec ses boutons. Seule celle que le serveur applique est active : les autres sont grisées avec la raison.
+    const canPay = st !== 'blocked' && !IS_TWA && !pend && q12 && q12.plan !== 'devis';
+    const tierCard = (t, i) => {
+      const own = !!q12 && q12.plan === t.k, from = i === 0 ? 1 : TIERS[i - 1].max + 1;
+      const y = own ? q12.amount : t.year, mo = own && q1 ? q1.amount : t.month;
+      const why = own ? '' : `<span class="muted" style="font-size:14px">Pas pour vous : avec ${num(n)} membre${n > 1 ? 's' : ''}, c’est la formule ${esc(((PLANS[(q12 || {}).plan]) || {}).label || 'sur devis')} qui s’applique.</span>`;
+      const dis = own && canPay ? '' : ' disabled';
+      return `<section class="pcard${own ? ' own' : ''}"><div class="between"><b class="pname">${t.label}</b>${own ? '<span class="pill p-ok">Votre formule</span>' : ''}</div>
+        <span class="muted">${from} à ${t.max} membres</span>
+        <div class="pprice"><span class="num">${money(y, 'XOF')}</span><span class="muted"> / an</span></div>
+        ${own && q12.discounted ? `<span class="pill p-ok" style="align-self:flex-start">Tarif fondatrice −50 %</span><span class="muted" style="font-size:14px">Au lieu de ${money(t.year, 'XOF')} par an</span>` : ''}
+        <span class="muted">ou ${money(mo, 'XOF')} par mois · 2 mois offerts à l’année</span>
+        ${own ? '' : why}
+        <div class="row2"><button type="button" class="btn ${own ? 'primary' : 'ghost'}" data-act="sub-pick" data-m="12"${dis}>Payer 1 an</button><button type="button" class="btn ghost" data-act="sub-pick" data-m="1"${dis}>Payer 1 mois</button></div></section>`;
+    };
+    const grid = `${q12 ? `<p class="help" style="margin:0">Votre association compte <b>${num(n)} membre${n > 1 ? 's' : ''} actif${n > 1 ? 's' : ''}</b>. La formule suit ce nombre au moment du renouvellement.</p>` : ''}<div class="pcards">${TIERS.map(tierCard).join('')}</div><p class="help" style="margin:0">Plus de 300 membres : sur devis. Toutes les fonctions sont incluses, quelle que soit la formule.</p>`;
+    const mine = '';
     const pay = st === 'blocked' ? '<p class="note" style="margin:0">L’abonnement ne peut pas être payé tant que l’association est suspendue. Contactez VillageLink : contact@villagelinkafrica.com</p>'
       : IS_TWA ? '<p class="note" style="margin:0">L’abonnement se gère depuis le site de VillageLink. Contactez-nous : contact@villagelinkafrica.com</p>'
+      : !q12 ? '<p class="note" style="margin:0">Impossible de calculer le prix pour le moment. Réessayez dans un instant.</p>'
+      : q12.plan === 'devis' ? `<p class="note" style="margin:0">Avec ${num(n)} membres, le tarif est sur devis. Écrivez à contact@villagelinkafrica.com : rien n’est bloqué en attendant.</p>`
       : pend ? `<p class="note" style="margin:0">Votre paiement de ${money(pend.amount, 'XOF')} est en attente : VillageLink l’active dès qu’il l’a reçu, en général dans la journée.</p>`
-      : `<form class="stack" data-form="subreq" novalidate>
-        <div class="plans">${plans}</div>
-        <div class="radios" role="radiogroup" aria-label="Durée"><label><input type="radio" name="months" value="12" checked>1 an</label><label><input type="radio" name="months" value="1">1 mois</label></div>
+      : `<form class="stack" data-form="subreq" id="sub-form" hidden novalidate>
+        <input type="hidden" name="plan" value="${q12 ? q12.plan : ''}">
+        <div class="radios" role="radiogroup" aria-label="Durée"><label><input type="radio" name="months" value="12" data-amt="${q12 ? q12.amount : 0}" checked>1 an${q12 && q12.discounted ? ' (tarif fondatrice)' : ''}</label><label><input type="radio" name="months" value="1" data-amt="${q1 ? q1.amount : 0}">1 mois</label></div>
         <section class="card stack"><div class="between"><span class="muted">Montant à payer</span><b class="num" id="sub-amt" style="font-size:22px"></b></div>
           <a class="btn block wave-btn" id="sub-wave" target="_blank" rel="noopener" href="#">Payer avec Wave</a>
           <p class="help" style="margin:0">Wave s’ouvre avec le montant déjà rempli, au nom de VillageLink. Revenez ensuite ici.</p></section>
         <div class="field"><label for="sub-r">Référence du paiement Wave (ID de transaction)</label><input id="sub-r" name="reference" maxlength="60" autocapitalize="characters" placeholder="T_…"></div>
         <p class="err" hidden></p><button class="btn primary block" type="submit">J’ai payé</button>
         <p class="help">VillageLink vérifie le paiement et active l’abonnement, en général dans la journée. Rien n’est supprimé pendant ce temps.</p></form>`;
-    return `${head}<section class="card stack">${state}</section>${pay}
-      <p class="help">${n} membre${n > 1 ? 's' : ''} actif${n > 1 ? 's' : ''}. Questions : contact@villagelinkafrica.com</p>${hist}`;
+    return `${head}<section class="card stack">${state}</section>${grid}${pay}
+      <p class="help">Questions : contact@villagelinkafrica.com</p>${hist}`;
   };
   AFTER.abonnement = () => {
     const f = document.querySelector('form[data-form=subreq]'); if (!f) return;
     const upd = () => {
-      const p = PLANS[(f.querySelector('input[name=plan]:checked') || {}).value], m = Number((f.querySelector('input[name=months]:checked') || {}).value);
-      const amt = m === 12 ? p.year : p.month;
+      const amt = Number((f.querySelector('input[name=months]:checked') || {}).dataset.amt || 0);
       $('#sub-amt').textContent = money(amt, 'XOF'); $('#sub-wave').href = VL_WAVE + '?amount=' + amt; $('#sub-wave').textContent = 'Payer ' + money(amt, 'XOF') + ' avec Wave';
     };
     f.addEventListener('change', upd); upd();
@@ -1897,7 +1999,15 @@ Abstention</textarea><p class="help">Entre 2 et 10 choix.</p></div>
     const tot = new Map(ptot.map(x => [x.project_id, x]));
     const months = []; for (let k = 0; k < 12; k++) months.push(addMonthYM(cur, -k));
     const title = `Rapport ${deM(M)}`;
-    const wa = `${title.toUpperCase()} · ${a.name}\n\nSolde au début du mois : ${money(open)}\nEntrées : +${money(inM)}\nSorties : −${money(outM)}\nSolde à la fin du mois : ${money(close)}${fee ? `\n\nCotisations : ${paidN} membre${paidN > 1 ? 's' : ''} sur ${dueNow.length} à jour (${money(collected)} sur ${money(expected)})` : ''}${meets.length ? `\nRéunions : ${meets.length}` : ''}${polls.length ? `\nVotes clos : ${polls.length}` : ''}\n\nDétails dans l’application :\n${shortLink('rapport', a.id, 'm=' + M)}`;
+    const wa = `${title.toUpperCase()} · ${a.name}\n\nSolde au début du mois : ${money(open)}\nEntrées : +${money(inM)}\nSorties : −${money(outM)}\nSolde à la fin du mois : ${money(close)}${fee ? `\n\nCotisations : ${paidN} membre${paidN > 1 ? 's' : ''} sur ${dueNow.length} à jour (${money(collected)} sur ${money(expected)})${unpaid.length ? `\nPas encore payé : ${unpaid.length} membre${unpaid.length > 1 ? 's' : ''}` : ''}` : ''}${meets.length ? `\nRéunions : ${meets.length}` : ''}${polls.length ? `\nVotes clos : ${polls.length}` : ''}\n\nDétails dans l’application :\n${shortLink('rapport', a.id, 'm=' + M)}`;
+    // Retardataires : le nombre, 10 noms, puis la liste complète à la demande (un nom par ligne) ; toute la liste en colonnes dans le PDF
+    const unpaidBlock = list => {
+      const names = list.map(m => m.full_name).sort((x, y) => x.localeCompare(y, 'fr')), li = n => `<li>${esc(n)}</li>`, k = names.length;
+      return `<span class="eyebrow">Pas encore payé : ${k} membre${k > 1 ? 's' : ''}</span>
+        <div class="no-print stack" style="gap:4px"><ul class="names">${names.slice(0, 10).map(li).join('')}</ul>
+        ${k > 10 ? `<details class="more"><summary>Voir les ${k - 10} autres</summary><ul class="names">${names.slice(10).map(li).join('')}</ul></details>` : ''}</div>
+        <ul class="names cols print-only">${names.map(li).join('')}</ul>`;
+    };
     const catList = rows => rows.length ? `<dl class="kv num" style="margin:0">${rows.map(([c, v]) => `<dt>${esc(c)}</dt><dd>${money(v)}</dd>`).join('')}</dl>` : '<span class="muted">Aucune.</span>';
     return `<div class="no-print">${subHead('Rapport mensuel', B() + '/transparence')}</div>
       <div class="field no-print"><label for="rp-m">Mois</label><select id="rp-m" data-nav="rapport">${months.map(x => opt(x, pFR(x).replace(/^./, c => c.toUpperCase()), M)).join('')}</select></div>
@@ -1907,7 +2017,7 @@ Abstention</textarea><p class="help">Entre 2 et 10 choix.</p></div>
         <section class="card stack"><h2>Caisse</h2><dl class="kv num" style="margin:0"><dt>Solde au début du mois</dt><dd>${money(open)}</dd><dt>Entrées du mois</dt><dd style="color:var(--green)">${inM ? '+' : ''}${money(inM)}</dd><dt>Sorties du mois</dt><dd style="color:var(--danger)">${outM ? '−' : ''}${money(outM)}</dd><dt><b>Solde à la fin du mois</b></dt><dd><b>${money(close)}</b></dd></dl></section>
         ${fee ? `<section class="card stack"><div class="between"><h2>Cotisations ${esc(deM(M))}</h2><span class="pill p-blue num">${paidN}/${dueNow.length} à jour</span></div>
           <div class="bar"><i style="width:${pct(collected, expected)}%"></i></div><span class="muted num">${money(collected)} encaissés sur ${money(expected)} attendus</span>
-          ${unpaid.length ? `<span class="eyebrow">Pas encore payé (${unpaid.length})</span><p style="margin:0">${unpaid.map(m => esc(m.full_name)).join(', ')}</p>` : '<span class="ok-msg">Tout le monde a payé ce mois-ci.</span>'}</section>` : ''}
+          ${unpaid.length ? unpaidBlock(unpaid) : '<span class="ok-msg">Tout le monde a payé ce mois-ci.</span>'}</section>` : ''}
         <section class="card stack"><h2>Entrées par catégorie</h2>${catList(byCat('in'))}</section>
         <section class="card stack"><h2>Dépenses par catégorie</h2>${catList(byCat('out'))}</section>
         ${meets.length ? `<section class="card stack"><h2>Réunions</h2>${meets.map(m => `<div><b>${esc(m.title)}</b> · ${esc(dLong(m.starts_at))} · <span class="pill ${MEET_PILL[m.status]}">${esc(m.status)}</span>${m.minutes ? `<p class="muted" style="margin:4px 0 0;white-space:pre-line">${esc(m.minutes.slice(0, 600))}${m.minutes.length > 600 ? '…' : ''}</p>` : ''}</div>`).join('')}</section>` : ''}
@@ -2186,7 +2296,6 @@ Abstention</textarea><p class="help">Entre 2 et 10 choix.</p></div>
     async member(fd, form) {
       const id = form.dataset.id, name = val(fd, 'full_name');
       if (name.length < 2) fail('Saisissez le nom complet.');
-      if (!id && !fullPlan() && activeMembers().length >= PLANS.association.max) fail('La formule Village est limitée à 50 membres. Passez à la formule Diaspora (Plus → Abonnement).');
       const email = val(fd, 'email');
       if (email && !/^\S+@\S+\.\S+$/.test(email)) fail('Adresse email invalide.');
       const row = { full_name: name, phone: val(fd, 'phone'), city: val(fd, 'city'), country: val(fd, 'country'), email, joined_on: val(fd, 'joined_on') || todayISO() };
@@ -2206,7 +2315,6 @@ Abstention</textarea><p class="help">Entre 2 et 10 choix.</p></div>
       await refresh(); toast(id ? 'Fiche enregistrée' : 'Membre ajouté'); go(B() + '/m/' + mid);
     },
     async import(fd) {
-      if (!fullPlan() && activeMembers().length >= PLANS.association.max) fail('La formule Village est limitée à 50 membres. Passez à la formule Diaspora (Plus → Abonnement).');
       const rows = parseImport(fd.get('text'));
       if (!rows.length) fail('Aucun membre reconnu. Mettez un membre par ligne.');
       if (rows.length > 2000) fail('2 000 membres maximum par import.');
@@ -2460,10 +2568,12 @@ Abstention</textarea><p class="help">Entre 2 et 10 choix.</p></div>
       await refresh(); toast('Dispense terminée'); route();
     },
     async subreq(fd) {
-      const plan = val(fd, 'plan'), months = Number(val(fd, 'months')), p = PLANS[plan];
-      if (!p || ![1, 12].includes(months)) fail('Choisissez une formule et une durée.');
+      const months = Number(val(fd, 'months'));
+      if (![1, 12].includes(months)) fail('Choisissez une durée.');
+      const q = must(await sb.rpc('sub_quote', { p_assoc: S.ctx.assoc.id, p_months: months }));
+      if (!q || q.plan === 'devis') fail('Au-delà de 300 membres, le tarif est sur devis : écrivez à contact@villagelinkafrica.com.');
       const ref = val(fd, 'reference'); if (ref.length < 6) fail('Recopiez la référence du paiement Wave (ID de transaction, commence par T_).');
-      must(await sb.rpc('request_subscription', { p_assoc: S.ctx.assoc.id, p_plan: plan, p_months: months, p_amount: months === 12 ? p.year : p.month, p_reference: ref }));
+      must(await sb.rpc('request_subscription', { p_assoc: S.ctx.assoc.id, p_plan: q.plan, p_months: months, p_amount: q.amount, p_reference: ref }));
       toast('Paiement déclaré. VillageLink va l’activer.'); route();
     },
     async ownreject(fd, form) {
@@ -2544,6 +2654,11 @@ Abstention</textarea><p class="help">Entre 2 et 10 choix.</p></div>
       else if (act === 'own-rej') { const f = document.getElementById('orj-' + b.dataset.id); if (f) f.hidden = false; }
       else if (act === 'own-block') { const f = document.getElementById('obk-' + b.dataset.id); if (f) f.hidden = false; }
       else if (act === 'own-unblock') { must(await sb.rpc('owner_unblock', { p_assoc: b.dataset.id })); toast('Association débloquée'); renderAdmin(); }
+      else if (act === 'sub-pick') {
+        const f = $('#sub-form'); if (!f) return;
+        const r = f.querySelector(`input[name=months][value="${b.dataset.m}"]`); if (r) { r.checked = true; f.dispatchEvent(new Event('change', { bubbles: true })); }
+        f.hidden = false; f.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
       else if (act === 'own-trial') { must(await sb.rpc('owner_set_dates', { p_assoc: b.dataset.id, p_trial_ends: plusDays([b.dataset.te, todayISO()].sort().pop(), 30), p_paid_until: b.dataset.pu || null })); toast('Essai prolongé de 30 jours'); renderAdmin(); }
       else if (act === 'theme') { store.set('vl:theme', b.dataset.theme); applyTheme(); route(); }
       else if (act === 'lang') { store.set('vl:lang', b.dataset.lang); if (b.dataset.lang === 'fr' && langNow() === 'fr') { location.reload(); return; } applyLang(); route(); }
