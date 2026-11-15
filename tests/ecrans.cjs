@@ -65,7 +65,8 @@ const RPC = {
   member_contacts: () => MEMBERS.map(m => ({ id: m.id, phone: m.phone, email: m.email })),
   poll_results: () => [{ option_id: O1, votes: 12 }, { option_id: O2, votes: 3 }],
   server_now: () => new Date().toISOString(),
-  assoc_status: () => 'trial', am_owner: () => false, exemption_reasons: () => []
+  assoc_status: () => 'trial', am_owner: () => false, exemption_reasons: () => [],
+  sub_quote: () => ({ plan: 'moyenne', amount: 25000, months: 12, members: 60, discounted: true })
 };
 
 // Lecture des filtres simples de l'API (col=eq.x, col=in.(a,b), limit) pour servir les fiches.

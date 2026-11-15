@@ -164,6 +164,7 @@
   const TIERS = [{ k: 'petite', label: 'Petite', max: 30, month: 2000, year: 20000 }, { k: 'moyenne', label: 'Moyenne', max: 100, month: 5000, year: 50000 }, { k: 'grande', label: 'Grande', max: 300, month: 10000, year: 100000 }];
   const tierFor = n => TIERS.find(t => n <= t.max) || null;
   const PLANS = { association: { label: 'Village', max: 50, month: 5000, year: 50000 }, federation: { label: 'Diaspora', max: 200, month: 10000, year: 100000 } };
+  TIERS.forEach(t => { PLANS[t.k] = { label: t.label, max: t.max, month: t.month, year: t.year }; });
   const VL_WAVE = 'https://pay.wave.com/m/M_Ec4ZLH3AZsSi/c/sn/'; // lien Wave de VillageLink pour les abonnements
   const IS_TWA = (() => { try { if (document.referrer.startsWith('android-app://')) sessionStorage.setItem('vl:twa', '1'); return sessionStorage.getItem('vl:twa') === '1'; } catch (e) { return false; } })();
   const plusDays = (iso, n) => { const d = new Date(iso + 'T12:00:00Z'); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };
@@ -1023,35 +1024,40 @@
     const a = S.ctx.assoc, st = subStatus(a), head = subHead('Abonnement', B() + '/plus');
     const reqs = await sb.from('subscription_requests').select('*').eq('association_id', a.id).order('id', { ascending: false }).limit(10).then(r => r.error ? [] : r.data);
     const pend = reqs.find(r => r.status === 'pending');
-    const n = activeMembers().length, rec = n > PLANS.association.max ? 'federation' : 'association';
+    const n = activeMembers().length;
+    // Le serveur calcule la formule et le prix d'après le nombre de membres (sub_quote) : le bureau ne choisit plus.
+    const [q12, q1] = await Promise.all([12, 1].map(m => sb.rpc('sub_quote', { p_assoc: a.id, p_months: m }).then(r => r.error || !r.data || !r.data.plan ? null : r.data)));
     const state = st === 'active' ? `<span class="pill p-ok">Abonnement actif</span><h2>Formule ${esc((PLANS[a.plan] || {}).label || '')}</h2><span class="muted">Jusqu’au ${dFR(a.paid_until)}</span>`
       : st === 'trial' ? `<span class="pill p-blue">Essai gratuit</span><h2>${a.trial_ends ? 'Jusqu’au ' + dFR(a.trial_ends) : 'En cours'}</h2>${a.trial_ends ? `<span class="muted">Plus que ${daysUntil(a.trial_ends)} jour(s). Toutes les fonctions sont incluses.</span>` : ''}`
       : st === 'blocked' ? `<span class="pill p-red">Suspendue</span><h2>Association suspendue par VillageLink</h2><span class="muted">Motif : ${esc(a.blocked_reason || 'non précisé')}. Tout reste consultable. Écrivez à contact@villagelinkafrica.com pour la rouvrir.</span>`
       : st === 'grace' ? '<span class="pill p-late">Essai terminé</span><h2>Quelques jours de grâce</h2><span class="muted">Activez l’abonnement pour éviter la lecture seule.</span>'
       : '<span class="pill p-red">Lecture seule</span><h2>L’essai est terminé</h2><span class="muted">Tout reste consultable. L’abonnement rouvre l’enregistrement des paiements, membres, réunions…</span>';
-    const ST = { pending: ['p-late', 'En attente de VillageLink'], activated: ['p-ok', 'Activé'], rejected: ['p-red', 'Refusé'] };
-    const hist = reqs.length ? `<section class="stack"><h2>Paiements d’abonnement</h2><div class="list">${reqs.map(r => `<div class="item" style="align-items:flex-start"><div class="body"><div class="t num" style="white-space:normal">${money(r.amount, 'XOF')} · formule ${esc(PLANS[r.plan].label)} · ${r.months === 12 ? '1 an' : '1 mois'}</div><div class="s wrap">${dFR(localDay(r.created_at))} · ${esc(r.created_label)}${r.reference ? ' · réf. ' + esc(r.reference) : ''}${r.note ? '<br>Motif : ' + esc(r.note) : ''}</div></div><span class="pill ${ST[r.status][0]}">${ST[r.status][1]}</span></div>`).join('')}</div></section>` : '';
-    const plans = Object.entries(PLANS).map(([k, p]) => `<label class="plan${k === rec ? ' rec' : ''}"><input type="radio" name="plan" value="${k}" ${k === rec ? 'checked' : ''}><span class="plan-in"><b>${p.label}</b>${k === rec ? '<span class="pill p-ok">Conseillée</span>' : ''}<span class="muted">Jusqu’à ${p.max} membres${k === 'federation' ? ' · toutes les fonctionnalités' : ' · sans sections, catégories ni plusieurs monnaies'}</span><span class="num"><b>${money(p.month, 'XOF')}</b> / mois</span><span class="num muted">ou ${money(p.year, 'XOF')} / an (2 mois offerts)</span></span></label>`).join('');
+    const ST = { pending: ['p-late', 'En attente de VillageLink'], verifying: ['p-late', 'VillageLink vérifie'], confirmed: ['p-ok', 'Confirmé : activation en cours'], activated: ['p-ok', 'Activé'], rejected: ['p-red', 'Refusé'] };
+    const hist = reqs.length ? `<section class="stack"><h2>Paiements d’abonnement</h2><div class="list">${reqs.map(r => `<div class="item" style="align-items:flex-start"><div class="body"><div class="t num" style="white-space:normal">${money(r.amount, 'XOF')} · formule ${esc((PLANS[r.plan] || {}).label || r.plan)} · ${r.months === 12 ? '1 an' : '1 mois'}</div><div class="s wrap">${dFR(localDay(r.created_at))} · ${esc(r.created_label)}${r.reference ? ' · réf. ' + esc(r.reference) : ''}${r.note ? '<br>Motif : ' + esc(r.note) : ''}</div></div><span class="pill ${ST[r.status][0]}">${ST[r.status][1]}</span></div>`).join('')}</div></section>` : '';
+    const tierLine = t => `<div class="between" style="gap:8px${q12 && q12.plan === t.k ? ';font-weight:700' : ''}"><span>${t.label} · ${t.k === 'petite' ? '1 à ' : (TIERS[TIERS.indexOf(t) - 1].max + 1) + ' à '}${t.max} membres${q12 && q12.plan === t.k ? ' (la vôtre)' : ''}</span><span class="num">${money(t.month, 'XOF')} / mois · ${money(t.year, 'XOF')} / an</span></div>`;
+    const grid = `<section class="card stack"><b>Les formules</b>${TIERS.map(tierLine).join('')}<span class="muted" style="font-size:14px">Plus de 300 membres : sur devis. Toutes les fonctions sont incluses, quelle que soit la formule. Un an = 10 mois payés (2 mois offerts). La formule suit le nombre de membres au moment du renouvellement.</span></section>`;
+    const mine = q12 && q12.plan !== 'devis' ? `<section class="card stack"><span class="muted">Votre association compte</span><h2 style="margin:0">${num(n)} membre${n > 1 ? 's' : ''} actif${n > 1 ? 's' : ''}</h2><span>Formule <b>${esc((PLANS[q12.plan] || {}).label || q12.plan)}</b>${q12.discounted ? ' · <span class="pill p-ok">Tarif fondatrice −50 %</span>' : ''}</span></section>` : '';
     const pay = st === 'blocked' ? '<p class="note" style="margin:0">L’abonnement ne peut pas être payé tant que l’association est suspendue. Contactez VillageLink : contact@villagelinkafrica.com</p>'
       : IS_TWA ? '<p class="note" style="margin:0">L’abonnement se gère depuis le site de VillageLink. Contactez-nous : contact@villagelinkafrica.com</p>'
+      : !q12 ? '<p class="note" style="margin:0">Impossible de calculer le prix pour le moment. Réessayez dans un instant.</p>'
+      : q12.plan === 'devis' ? `<p class="note" style="margin:0">Avec ${num(n)} membres, le tarif est sur devis. Écrivez à contact@villagelinkafrica.com : rien n’est bloqué en attendant.</p>`
       : pend ? `<p class="note" style="margin:0">Votre paiement de ${money(pend.amount, 'XOF')} est en attente : VillageLink l’active dès qu’il l’a reçu, en général dans la journée.</p>`
       : `<form class="stack" data-form="subreq" novalidate>
-        <div class="plans">${plans}</div>
-        <div class="radios" role="radiogroup" aria-label="Durée"><label><input type="radio" name="months" value="12" checked>1 an</label><label><input type="radio" name="months" value="1">1 mois</label></div>
+        <input type="hidden" name="plan" value="${q12 ? q12.plan : ''}">
+        <div class="radios" role="radiogroup" aria-label="Durée"><label><input type="radio" name="months" value="12" data-amt="${q12 ? q12.amount : 0}" checked>1 an${q12 && q12.discounted ? ' (tarif fondatrice)' : ''}</label><label><input type="radio" name="months" value="1" data-amt="${q1 ? q1.amount : 0}">1 mois</label></div>
         <section class="card stack"><div class="between"><span class="muted">Montant à payer</span><b class="num" id="sub-amt" style="font-size:22px"></b></div>
           <a class="btn block wave-btn" id="sub-wave" target="_blank" rel="noopener" href="#">Payer avec Wave</a>
           <p class="help" style="margin:0">Wave s’ouvre avec le montant déjà rempli, au nom de VillageLink. Revenez ensuite ici.</p></section>
         <div class="field"><label for="sub-r">Référence du paiement Wave (ID de transaction)</label><input id="sub-r" name="reference" maxlength="60" autocapitalize="characters" placeholder="T_…"></div>
         <p class="err" hidden></p><button class="btn primary block" type="submit">J’ai payé</button>
         <p class="help">VillageLink vérifie le paiement et active l’abonnement, en général dans la journée. Rien n’est supprimé pendant ce temps.</p></form>`;
-    return `${head}<section class="card stack">${state}</section>${pay}
-      <p class="help">${n} membre${n > 1 ? 's' : ''} actif${n > 1 ? 's' : ''}. Questions : contact@villagelinkafrica.com</p>${hist}`;
+    return `${head}<section class="card stack">${state}</section>${mine}${pay}${grid}
+      <p class="help">Questions : contact@villagelinkafrica.com</p>${hist}`;
   };
   AFTER.abonnement = () => {
     const f = document.querySelector('form[data-form=subreq]'); if (!f) return;
     const upd = () => {
-      const p = PLANS[(f.querySelector('input[name=plan]:checked') || {}).value], m = Number((f.querySelector('input[name=months]:checked') || {}).value);
-      const amt = m === 12 ? p.year : p.month;
+      const amt = Number((f.querySelector('input[name=months]:checked') || {}).dataset.amt || 0);
       $('#sub-amt').textContent = money(amt, 'XOF'); $('#sub-wave').href = VL_WAVE + '?amount=' + amt; $('#sub-wave').textContent = 'Payer ' + money(amt, 'XOF') + ' avec Wave';
     };
     f.addEventListener('change', upd); upd();
@@ -2473,10 +2479,12 @@ Abstention</textarea><p class="help">Entre 2 et 10 choix.</p></div>
       await refresh(); toast('Dispense terminée'); route();
     },
     async subreq(fd) {
-      const plan = val(fd, 'plan'), months = Number(val(fd, 'months')), p = PLANS[plan];
-      if (!p || ![1, 12].includes(months)) fail('Choisissez une formule et une durée.');
+      const months = Number(val(fd, 'months'));
+      if (![1, 12].includes(months)) fail('Choisissez une durée.');
+      const q = must(await sb.rpc('sub_quote', { p_assoc: S.ctx.assoc.id, p_months: months }));
+      if (!q || q.plan === 'devis') fail('Au-delà de 300 membres, le tarif est sur devis : écrivez à contact@villagelinkafrica.com.');
       const ref = val(fd, 'reference'); if (ref.length < 6) fail('Recopiez la référence du paiement Wave (ID de transaction, commence par T_).');
-      must(await sb.rpc('request_subscription', { p_assoc: S.ctx.assoc.id, p_plan: plan, p_months: months, p_amount: months === 12 ? p.year : p.month, p_reference: ref }));
+      must(await sb.rpc('request_subscription', { p_assoc: S.ctx.assoc.id, p_plan: q.plan, p_months: months, p_amount: q.amount, p_reference: ref }));
       toast('Paiement déclaré. VillageLink va l’activer.'); route();
     },
     async ownreject(fd, form) {
