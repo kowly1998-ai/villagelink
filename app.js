@@ -236,8 +236,8 @@
       soft(sb.from('pay_numbers').select('*').eq('association_id', id).maybeSingle()),
       soft(sb.from('payment_claims').select('*').eq('association_id', id).eq('status', 'pending').order('id', { ascending: true }).limit(99)),
       soft(sb.from('expense_requests').select('id').eq('association_id', id).eq('status', 'En attente').limit(99)),
-      soft(sb.from('fee_history').select('category_id,from_period,fee_amount').eq('association_id', id).order('from_period').limit(2000)),
-      soft(sb.from('member_category_history').select('member_id,category_id,from_period').eq('association_id', id).order('from_period').limit(5000))
+      fetchAll(() => sb.from('fee_history').select('category_id,from_period,fee_amount').eq('association_id', id).order('from_period').order('id')).catch(() => null),
+      fetchAll(() => sb.from('member_category_history').select('member_id,category_id,from_period').eq('association_id', id).order('from_period').order('id')).catch(() => null)
     ]);
     if (!a) { S.ctx = null; return null; }
     const srv = Date.parse(await clockP || '');
