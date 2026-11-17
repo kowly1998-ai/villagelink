@@ -9,6 +9,18 @@
           }
         ]
       }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash|mcp__.*[Ss]upabase.*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/garde-fou.cjs\"",
+            "timeout": 15
+          }
+        ]
+      }
     ]
   }
 }

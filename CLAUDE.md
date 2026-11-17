@@ -120,8 +120,14 @@ Rôles : `president`, `vice_president`, `secretaire`, `tresorier`, `projets`, `m
    (aujourd'hui `styles.css?v=47`, `config.js?v=2`, `i18n-ff.js?v=1`, `receipt.js?v=3`, `app.js?v=73`, `fonts/inter.css?v=1`, `projet.js?v=2` dans `projet.html`). Sinon les téléphones gardent
    l'ancienne version.
 3. **Vérification** : `node tests/verification.cjs` (avec Playwright, préparé au démarrage de chaque session cloud par `.claude/hooks/session-start.sh`, qui met aussi la branche à jour depuis `main` ou prévient si elle a du travail non fusionné) contrôle l'écriture du code, les fichiers appelés et leur `?v=` (rouge si un fichier a changé depuis `main` sans nouveau numéro), l'absence de clé secrète dans le dépôt, les empreintes SRI, le lecteur de reçus et l'ouverture des pages à 360 px. GitHub Actions (`.github/workflows/verification.yml`) la lance sur chaque demande de fusion et chaque envoi vers `main` : ne pas fusionner si elle est rouge. Ajouter un contrôle quand une nouvelle fonction le mérite.
-4. **Commit** sur `main`, en français : `Version X.Y : <ce qui change>`.
-5. **Push** : GitHub Pages met en ligne en quelques minutes.
+4. **Commit** en français : `Version X.Y : <ce qui change>`. Sur le **site de test**, envoi direct sur `main`.
+5. **Vraie app : jamais d'envoi direct sur `main`** (bloqué par `.claude/hooks/garde-fou.cjs` et par la protection de la branche sur GitHub). Étapes :
+   a. une branche `version-X-Y-Z`, envoyée sur GitHub ;
+   b. une demande de fusion, titre = message du commit (`gh api repos/kowly1998-ai/villagelink/pulls -f title=… -f head=<branche> -f base=main -f body=…` : les commandes `gh pr` ne marchent pas dans les sessions cloud) ;
+   c. relecture par un **autre agent qui n'a pas écrit le changement** (agent `agent-protocols:code-reviewer`, avec seulement le numéro de la demande et ce fichier) ; corriger ce qu'il trouve ;
+   d. la vérification GitHub (`verification`, `affichage`) doit être verte (`gh api repos/kowly1998-ai/villagelink/commits/<branche>/check-runs`) ;
+   e. fusion (`gh api -X PUT repos/kowly1998-ai/villagelink/pulls/<N>/merge -f merge_method=squash`, puis supprimer la branche) : le garde-fou demande l'accord d'Alpha. GitHub Pages met en ligne en quelques minutes.
+   Toute écriture sur la **vraie base** (`ncghmfwfnzgdddnqgnnl` : migration, SQL qui écrit, fonction Edge) demande aussi l'accord d'Alpha ; les lectures et la base de test passent sans question.
 6. Dire à Alpha quoi tester sur son téléphone.
 7. **Site de test** : `test.villagelinkafrica.com` (dépôt `kowly1998-ai/villagelink-test`, base Supabase de test `phkiovzhlmozpdoiigpf`). Toute nouveauté y passe d'abord ; `tests/affichage.cjs` (GitHub Actions) l'ouvre à 360 px avec une fausse base, et `tests/ecrans.cjs` ouvre les 39 écrans (président en clair et en sombre, membre) avec de longs noms et des montants au milliard : rouge si une erreur apparaît ou si un texte dépasse de l'écran ou de sa carte (`CAPTURES=1` garde une capture de chaque écran). Ajouter à sa liste `PRES` tout nouvel écran.
 
