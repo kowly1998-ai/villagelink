@@ -12,7 +12,7 @@
     ],
     "PreToolUse": [
       {
-        "matcher": "Bash|mcp__.*[Ss]upabase.*",
+        "matcher": "Bash|Edit|Write|MultiEdit|NotebookEdit|mcp__.*[Ss]upabase.*|mcp__.*[Gg]it[Hh]ub.*",
         "hooks": [
           {
             "type": "command",
