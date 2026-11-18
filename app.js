@@ -173,8 +173,9 @@
   const TIERS = [{ k: 'petite', label: 'Starter', max: 30, month: 3000, year: 30000 }, { k: 'moyenne', label: 'Pro', max: 200, month: 7500, year: 75000 }, { k: 'grande', label: 'Premium', max: Infinity, month: 15000, year: 150000 }];
   // Liens de paiement SasPay de VillageLink : un par formule et par durée (f12 = offre fondatrice, Pro à l'année)
   const SASPAY = 'https://link.saspay.me/';
-  const SAS_LINKS = { petite: { 1: 'ridtoocsl0y', 12: 'jxzsiwxhzry' }, moyenne: { 1: 'fugx5vfwqoi', 12: 'wjowhgsrx_u', f12: 'zscst3mjork' }, grande: { 1: 's0x06yuxyem', 12: 'w7hknplskv8' } };
-  const sasLink = (plan, months, founder) => { const l = SAS_LINKS[plan] || {}; const id = months === 12 && founder && l.f12 ? l.f12 : l[months]; return id ? SASPAY + id : ''; };
+  // Chaque lien a un montant fixé dans SasPay : il n'est proposé que si ce montant est exactement celui calculé par le serveur.
+  const SAS_LINKS = { petite: { 1: ['ridtoocsl0y', 3000], 12: ['jxzsiwxhzry', 30000] }, moyenne: { 1: ['fugx5vfwqoi', 7500], 12: ['wjowhgsrx_u', 75000], f12: ['zscst3mjork', 50000] }, grande: { 1: ['s0x06yuxyem', 15000], 12: ['w7hknplskv8', 150000] } };
+  const sasLink = (plan, months, founder, amount) => { const l = SAS_LINKS[plan] || {}; const x = months === 12 && founder && l.f12 ? l.f12 : l[months]; return x && x[1] === Number(amount) ? SASPAY + x[0] : ''; };
   const tierFor = n => TIERS.find(t => n <= t.max) || null;
   const PLANS = { association: { label: 'Pro', max: 200, month: 7500, year: 75000 }, federation: { label: 'Premium', max: Infinity, month: 15000, year: 150000 } };
   TIERS.forEach(t => { PLANS[t.k] = { label: t.label, max: t.max, month: t.month, year: t.year }; });
@@ -465,9 +466,9 @@
       sb.rpc('owner_subscriptions').then(x => x.error ? null : x.data, () => null),
       sb.rpc('owner_insights').then(x => x.error ? null : x.data, () => null)]);
     const SUBST = { trial: ['p-blue', 'Essai'], active: ['p-ok', 'Abonnée'], grace: ['p-late', 'Grâce'], readonly: ['p-red', 'Lecture seule'], blocked: ['p-red', 'Bloquée'] };
-    const untilFor = q => { const base = [(subs.assocs.find(x => x.id === q.association_id) || {}).paid_until, todayISO()].filter(Boolean).sort().pop(); const dd = new Date(base + 'T12:00:00Z'); dd.setUTCMonth(dd.getUTCMonth() + q.months); return dd.toISOString().slice(0, 10); };
+    const untilFor = q => { const ax = subs.assocs.find(x => x.id === q.association_id) || {}, base = [ax.paid_until, ax.trial_ends, todayISO()].filter(Boolean).sort().pop(); const dd = new Date(base + 'T12:00:00Z'); dd.setUTCMonth(dd.getUTCMonth() + q.months); return dd.toISOString().slice(0, 10); };
     const subsHtml = sd => `<section class="card stack"><h2>Abonnements</h2>
-        ${sd.requests.length ? sd.requests.map(q => `<div class="stack" style="gap:8px;border-bottom:1px solid var(--line);padding-bottom:12px"><b>${esc(q.assoc_name)}</b><span class="num">${money(q.amount, 'XOF')} · formule ${esc((PLANS[q.plan] || {}).label || q.plan)} · ${q.months === 12 ? '1 an' : '1 mois'}</span><span class="muted" style="font-size:14px">Déclaré le ${dFR(localDay(q.created_at))} par ${esc(q.created_label)}${q.reference ? ' · réf. ' + esc(q.reference) : ''}</span><span class="help" style="margin:0">Vérifiez dans SasPay (Liens de paiement → transactions) ou dans Wave que ce paiement est bien arrivé avant d’activer.</span>
+        ${sd.requests.length ? sd.requests.map(q => `<div class="stack" style="gap:8px;border-bottom:1px solid var(--line);padding-bottom:12px"><b>${esc(q.assoc_name)}</b><span class="num">${money(q.amount, 'XOF')} · formule ${esc((PLANS[q.plan] || {}).label || q.plan)} · ${q.months === 12 ? '1 an' : '1 mois'}</span><span class="muted" style="font-size:14px">Déclaré le ${dFR(localDay(q.created_at))} par ${esc(q.created_label)}${q.reference ? ' · réf. ' + esc(q.reference) : ''}</span><span class="help" style="margin:0">Montant attendu : <b class="num">${money(q.expected_amount || q.amount, 'XOF')}</b>${q.discounted ? ' (offre fondatrice)' : ''}. Vérifiez dans SasPay (Liens de paiement → transactions) ou dans Wave que ce montant exact est arrivé${q.reference ? ', avec la référence ' + esc(q.reference) : ''}, avant d’activer.</span>
           <div class="row" style="flex-wrap:wrap"><button class="btn primary sm" data-act="own-act" data-id="${q.id}" data-until="${untilFor(q)}">Activer jusqu’au ${dFR(untilFor(q))}</button><button class="btn ghost sm" data-act="own-rej" data-id="${q.id}">Refuser</button></div>
           <form class="stack" data-form="ownreject" data-id="${q.id}" id="orj-${q.id}" hidden novalidate><input name="note" placeholder="Motif (ex. rien reçu sur Wave)"><p class="err" hidden></p><button class="btn danger sm" type="submit">Refuser ce paiement</button></form></div>`).join('') : '<span class="muted">Aucun paiement à valider.</span>'}
         <div class="list">${sd.assocs.map(x => { const [c, l] = SUBST[x.status] || ['p-blue', x.status]; return `<div class="item"><div class="body"><div class="t">${esc(x.name)}</div><div class="s wrap num">${N(x.members)} membre${x.members > 1 ? 's' : ''} · ${x.paid_until ? 'payé jusqu’au ' + dFR(x.paid_until) : 'essai jusqu’au ' + dFR(x.trial_ends)}</div><button class="btn ghost sm" style="margin-top:6px" data-act="own-trial" data-id="${x.id}" data-te="${x.trial_ends}" data-pu="${x.paid_until || ''}">+30 jours d’essai</button> <button class="btn ${x.founder ? 'primary' : 'ghost'} sm" style="margin-top:6px" data-act="own-founder" data-id="${x.id}" data-v="${x.founder ? '0' : '1'}" aria-pressed="${x.founder ? 'true' : 'false'}">${x.founder ? 'Fondatrice ✓' : 'Rendre fondatrice'}</button> ${x.status === 'blocked' ? `<button class="btn primary sm" style="margin-top:6px" data-act="own-unblock" data-id="${x.id}">Débloquer</button><div class="s wrap">Motif : ${esc(x.blocked_reason || '')}</div>` : `<button class="btn ghost sm" style="margin-top:6px" data-act="own-block" data-id="${x.id}">Bloquer</button><form class="stack" data-form="ownblock" data-id="${x.id}" id="obk-${x.id}" hidden novalidate><input name="note" placeholder="Motif (ex. abonnement non payé)"><p class="err" hidden></p><button class="btn danger sm" type="submit">Bloquer cette association</button></form>`}</div><span class="pill ${c}">${l}</span></div>`; }).join('')}</div></section>`;
@@ -1144,7 +1145,7 @@
   V.abonnement = async () => {
     const a = S.ctx.assoc, st = subStatus(a), head = subHead('Abonnement', B() + '/plus');
     const reqs = await sb.from('subscription_requests').select('*').eq('association_id', a.id).order('id', { ascending: false }).limit(10).then(r => r.error ? [] : r.data);
-    const pend = reqs.find(r => r.status === 'pending');
+    const pend = reqs.find(r => ['pending', 'verifying', 'confirmed'].includes(r.status));
     const n = activeMembers().length;
     // Le serveur calcule la formule et le prix d'après le nombre de membres (sub_quote) : le bureau ne choisit plus.
     const [q12, q1] = await Promise.all([12, 1].map(m => sb.rpc('sub_quote', { p_assoc: a.id, p_months: m }).then(r => r.error || !r.data || !r.data.plan ? null : r.data)));
@@ -1179,7 +1180,7 @@
       : pend ? `<p class="note" style="margin:0">Votre paiement de ${money(pend.amount, 'XOF')} est en attente : VillageLink l’active dès qu’il l’a reçu, en général dans la journée.</p>`
       : `<form class="stack" data-form="subreq" id="sub-form" hidden novalidate>
         <input type="hidden" name="plan" value="${q12 ? q12.plan : ''}">
-        <div class="radios" role="radiogroup" aria-label="Durée" hidden><label><input type="radio" name="months" value="12" data-amt="${q12 ? q12.amount : 0}" data-sas="${q12 ? esc(sasLink(q12.plan, 12, q12.discounted)) : ''}" checked>1 an${q12 && q12.discounted ? ' (tarif fondatrice)' : ''}</label><label><input type="radio" name="months" value="1" data-amt="${q1 ? q1.amount : 0}" data-sas="${q1 ? esc(sasLink(q1.plan, 1, false)) : ''}">1 mois</label></div>
+        <div class="radios" role="radiogroup" aria-label="Durée" hidden><label><input type="radio" name="months" value="12" data-amt="${q12 ? q12.amount : 0}" data-sas="${q12 ? esc(sasLink(q12.plan, 12, q12.discounted, q12.amount)) : ''}" checked>1 an${q12 && q12.discounted ? ' (tarif fondatrice)' : ''}</label><label><input type="radio" name="months" value="1" data-amt="${q1 ? q1.amount : 0}" data-sas="${q1 ? esc(sasLink(q1.plan, 1, false, q1.amount)) : ''}">1 mois</label></div>
         <section class="card stack"><div class="between"><span class="muted" id="sub-dur">Montant à payer</span><b class="num" id="sub-amt" style="font-size:22px"></b></div>
           <a class="btn primary block" id="sub-sas" target="_blank" rel="noopener" href="#">Payer avec SasPay</a>
           <p class="help" style="margin:0">La page SasPay s’ouvre avec le bon montant : Wave, Orange Money ou carte. Écrivez le nom de votre association dans la case prévue, puis revenez ici.</p>
@@ -2714,6 +2715,7 @@ Abstention</textarea><p class="help">Entre 2 et 10 choix.</p></div>
       else if (act === 'own-act') { must(await sb.rpc('owner_activate', { p_request: Number(b.dataset.id), p_until: b.dataset.until })); toast('Abonnement activé jusqu’au ' + dFR(b.dataset.until)); renderAdmin(); }
       else if (act === 'own-rej') { const f = document.getElementById('orj-' + b.dataset.id); if (f) f.hidden = false; }
       else if (act === 'own-block') { const f = document.getElementById('obk-' + b.dataset.id); if (f) f.hidden = false; }
+      else if (act === 'own-founder' && b.dataset.v === '0' && !b.dataset.sure) { b.dataset.sure = '1'; b.textContent = 'Toucher encore pour retirer l’offre fondatrice'; }
       else if (act === 'own-founder') { must(await sb.rpc('owner_set_founder', { p_assoc: b.dataset.id, p_value: b.dataset.v === '1' })); toast(b.dataset.v === '1' ? 'Association fondatrice : Pro à 50 000 FCFA par an, à vie' : 'Offre fondatrice retirée'); renderAdmin(); }
       else if (act === 'own-unblock') { must(await sb.rpc('owner_unblock', { p_assoc: b.dataset.id })); toast('Association débloquée'); renderAdmin(); }
       else if (act === 'sub-pick') {
@@ -2869,7 +2871,7 @@ Abstention</textarea><p class="help">Entre 2 et 10 choix.</p></div>
 
   /* Mode hors ligne : un service worker garde une copie de l'application et des dernières données lues. */
   function clearOfflineData() {
-    try { localStorage.removeItem('vl:pin'); localStorage.removeItem('vl:pin:try'); } catch (e) { /* rien */ }
+    try { localStorage.removeItem('vl:pin'); localStorage.removeItem('vl:pin:try'); localStorage.removeItem('vl:join'); } catch (e) { /* rien */ }
     try { if (navigator.serviceWorker && navigator.serviceWorker.controller) navigator.serviceWorker.controller.postMessage('vl-clear'); } catch (e) { /* rien */ }
     try { if (window.caches) caches.delete('vl-data-v1'); } catch (e) { /* rien */ }
   }
