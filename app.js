@@ -169,9 +169,15 @@
   };
   /* Essai gratuit et abonnement --------------------------------------- */
   // v2.3.1 : plus de limite. Le prix suit le nombre de membres (même grille que la base : tier_for / plan_price).
-  const TIERS = [{ k: 'petite', label: 'Petite', max: 30, month: 2000, year: 20000 }, { k: 'moyenne', label: 'Moyenne', max: 100, month: 5000, year: 50000 }, { k: 'grande', label: 'Grande', max: 300, month: 10000, year: 100000 }];
+  // Grille Starter / Pro / Premium (v2.4.1). Les clés internes restent petite / moyenne / grande ; le serveur (tier_for, plan_price) fait foi.
+  const TIERS = [{ k: 'petite', label: 'Starter', max: 30, month: 3000, year: 30000 }, { k: 'moyenne', label: 'Pro', max: 200, month: 7500, year: 75000 }, { k: 'grande', label: 'Premium', max: Infinity, month: 15000, year: 150000 }];
+  // Liens de paiement SasPay de VillageLink : un par formule et par durée (f12 = offre fondatrice, Pro à l'année)
+  const SASPAY = 'https://link.saspay.me/';
+  // Chaque lien a un montant fixé dans SasPay : il n'est proposé que si ce montant est exactement celui calculé par le serveur.
+  const SAS_LINKS = { petite: { 1: ['ridtoocsl0y', 3000], 12: ['jxzsiwxhzry', 30000] }, moyenne: { 1: ['fugx5vfwqoi', 7500], 12: ['wjowhgsrx_u', 75000], f12: ['zscst3mjork', 50000] }, grande: { 1: ['s0x06yuxyem', 15000], 12: ['w7hknplskv8', 150000] } };
+  const sasLink = (plan, months, founder, amount) => { const l = SAS_LINKS[plan] || {}; const x = months === 12 && founder && l.f12 ? l.f12 : l[months]; return x && x[1] === Number(amount) ? SASPAY + x[0] : ''; };
   const tierFor = n => TIERS.find(t => n <= t.max) || null;
-  const PLANS = { association: { label: 'Village', max: 50, month: 5000, year: 50000 }, federation: { label: 'Diaspora', max: 200, month: 10000, year: 100000 } };
+  const PLANS = { association: { label: 'Pro', max: 200, month: 7500, year: 75000 }, federation: { label: 'Premium', max: Infinity, month: 15000, year: 150000 } };
   TIERS.forEach(t => { PLANS[t.k] = { label: t.label, max: t.max, month: t.month, year: t.year }; });
   const VL_WAVE = 'https://pay.wave.com/m/M_Ec4ZLH3AZsSi/c/sn/'; // lien Wave de VillageLink pour les abonnements
   const IS_TWA = (() => { try { if (document.referrer.startsWith('android-app://')) sessionStorage.setItem('vl:twa', '1'); return sessionStorage.getItem('vl:twa') === '1'; } catch (e) { return false; } })();
@@ -360,6 +366,19 @@
     }
     const { parts, q } = parseHash();
     try {
+      // Lien d'invitation (v2.4.0) : #/rejoindre/<code>. Le code est gardé sur le téléphone
+      // pendant la création du compte, la confirmation par email ou la connexion Google.
+      if (parts[0] === 'rejoindre') {
+        const c = String(parts[1] || '').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 12);
+        if (c.length >= 4) store.set('vl:join', c);
+        history.replaceState(null, '', location.pathname + '#/');
+        if (!S.session) {
+          S.authMode = 'signup';
+          S.authMsg = 'Vous êtes invité à rejoindre une association. Créez votre compte (ou connectez-vous si vous en avez déjà un) : le code d’invitation sera déjà rempli.';
+          return renderAuth();
+        }
+        return go('#/bienvenue');
+      }
       if (!S.session) { if (!document.querySelector('form[data-form=auth]')) renderAuth(); return; }
       if (parts[0] === 'mot-de-passe') return renderNewPassword();
       if (parts[0] === 'bienvenue') return await renderWelcome();
@@ -374,6 +393,7 @@
   }
 
   async function goHome() {
+    if (store.get('vl:join')) return go('#/bienvenue');
     const last = store.get('vl:last');
     let rows;
     try { rows = must(await sb.rpc('my_memberships')); }
@@ -446,12 +466,12 @@
       sb.rpc('owner_subscriptions').then(x => x.error ? null : x.data, () => null),
       sb.rpc('owner_insights').then(x => x.error ? null : x.data, () => null)]);
     const SUBST = { trial: ['p-blue', 'Essai'], active: ['p-ok', 'Abonnée'], grace: ['p-late', 'Grâce'], readonly: ['p-red', 'Lecture seule'], blocked: ['p-red', 'Bloquée'] };
-    const untilFor = q => { const base = [(subs.assocs.find(x => x.id === q.association_id) || {}).paid_until, todayISO()].filter(Boolean).sort().pop(); const dd = new Date(base + 'T12:00:00Z'); dd.setUTCMonth(dd.getUTCMonth() + q.months); return dd.toISOString().slice(0, 10); };
+    const untilFor = q => { const ax = subs.assocs.find(x => x.id === q.association_id) || {}, base = [ax.paid_until, ax.trial_ends, todayISO()].filter(Boolean).sort().pop(); const dd = new Date(base + 'T12:00:00Z'); dd.setUTCMonth(dd.getUTCMonth() + q.months); return dd.toISOString().slice(0, 10); };
     const subsHtml = sd => `<section class="card stack"><h2>Abonnements</h2>
-        ${sd.requests.length ? sd.requests.map(q => `<div class="stack" style="gap:8px;border-bottom:1px solid var(--line);padding-bottom:12px"><b>${esc(q.assoc_name)}</b><span class="num">${money(q.amount, 'XOF')} · formule ${esc((PLANS[q.plan] || {}).label || q.plan)} · ${q.months === 12 ? '1 an' : '1 mois'}</span><span class="muted" style="font-size:14px">Déclaré le ${dFR(localDay(q.created_at))} par ${esc(q.created_label)}${q.reference ? ' · réf. ' + esc(q.reference) : ''}</span><span class="help" style="margin:0">Vérifiez dans votre application Wave que ce paiement est bien arrivé avant d’activer.</span>
+        ${sd.requests.length ? sd.requests.map(q => `<div class="stack" style="gap:8px;border-bottom:1px solid var(--line);padding-bottom:12px"><b>${esc(q.assoc_name)}</b><span class="num">${money(q.amount, 'XOF')} · formule ${esc((PLANS[q.plan] || {}).label || q.plan)} · ${q.months === 12 ? '1 an' : '1 mois'}</span><span class="muted" style="font-size:14px">Déclaré le ${dFR(localDay(q.created_at))} par ${esc(q.created_label)}${q.reference ? ' · réf. ' + esc(q.reference) : ''}</span><span class="help" style="margin:0">Montant attendu : <b class="num">${money(q.expected_amount || q.amount, 'XOF')}</b>${q.discounted ? ' (offre fondatrice)' : ''}. Vérifiez dans SasPay (Liens de paiement → transactions) ou dans Wave que ce montant exact est arrivé${q.reference ? ', avec la référence ' + esc(q.reference) : ''}, avant d’activer.</span>
           <div class="row" style="flex-wrap:wrap"><button class="btn primary sm" data-act="own-act" data-id="${q.id}" data-until="${untilFor(q)}">Activer jusqu’au ${dFR(untilFor(q))}</button><button class="btn ghost sm" data-act="own-rej" data-id="${q.id}">Refuser</button></div>
           <form class="stack" data-form="ownreject" data-id="${q.id}" id="orj-${q.id}" hidden novalidate><input name="note" placeholder="Motif (ex. rien reçu sur Wave)"><p class="err" hidden></p><button class="btn danger sm" type="submit">Refuser ce paiement</button></form></div>`).join('') : '<span class="muted">Aucun paiement à valider.</span>'}
-        <div class="list">${sd.assocs.map(x => { const [c, l] = SUBST[x.status] || ['p-blue', x.status]; return `<div class="item"><div class="body"><div class="t">${esc(x.name)}</div><div class="s wrap num">${N(x.members)} membre${x.members > 1 ? 's' : ''} · ${x.paid_until ? 'payé jusqu’au ' + dFR(x.paid_until) : 'essai jusqu’au ' + dFR(x.trial_ends)}</div><button class="btn ghost sm" style="margin-top:6px" data-act="own-trial" data-id="${x.id}" data-te="${x.trial_ends}" data-pu="${x.paid_until || ''}">+30 jours d’essai</button> ${x.status === 'blocked' ? `<button class="btn primary sm" style="margin-top:6px" data-act="own-unblock" data-id="${x.id}">Débloquer</button><div class="s wrap">Motif : ${esc(x.blocked_reason || '')}</div>` : `<button class="btn ghost sm" style="margin-top:6px" data-act="own-block" data-id="${x.id}">Bloquer</button><form class="stack" data-form="ownblock" data-id="${x.id}" id="obk-${x.id}" hidden novalidate><input name="note" placeholder="Motif (ex. abonnement non payé)"><p class="err" hidden></p><button class="btn danger sm" type="submit">Bloquer cette association</button></form>`}</div><span class="pill ${c}">${l}</span></div>`; }).join('')}</div></section>`;
+        <div class="list">${sd.assocs.map(x => { const [c, l] = SUBST[x.status] || ['p-blue', x.status]; return `<div class="item"><div class="body"><div class="t">${esc(x.name)}</div><div class="s wrap num">${N(x.members)} membre${x.members > 1 ? 's' : ''} · ${x.paid_until ? 'payé jusqu’au ' + dFR(x.paid_until) : 'essai jusqu’au ' + dFR(x.trial_ends)}</div><button class="btn ghost sm" style="margin-top:6px" data-act="own-trial" data-id="${x.id}" data-te="${x.trial_ends}" data-pu="${x.paid_until || ''}">+30 jours d’essai</button> <button class="btn ${x.founder ? 'primary' : 'ghost'} sm" style="margin-top:6px" data-act="own-founder" data-id="${x.id}" data-v="${x.founder ? '0' : '1'}" aria-pressed="${x.founder ? 'true' : 'false'}">${x.founder ? 'Fondatrice ✓' : 'Rendre fondatrice'}</button> ${x.status === 'blocked' ? `<button class="btn primary sm" style="margin-top:6px" data-act="own-unblock" data-id="${x.id}">Débloquer</button><div class="s wrap">Motif : ${esc(x.blocked_reason || '')}</div>` : `<button class="btn ghost sm" style="margin-top:6px" data-act="own-block" data-id="${x.id}">Bloquer</button><form class="stack" data-form="ownblock" data-id="${x.id}" id="obk-${x.id}" hidden novalidate><input name="note" placeholder="Motif (ex. abonnement non payé)"><p class="err" hidden></p><button class="btn danger sm" type="submit">Bloquer cette association</button></form>`}</div><span class="pill ${c}">${l}</span></div>`; }).join('')}</div></section>`;
     const insightsHtml = x => {
       const m = x.money || {}, u = x.usage || {}, al = x.alerts || {}, wh = x.where || {}, h = x.health || {};
       const st = m.status || {}, fcfa = v => money(v || 0, 'XOF');
@@ -460,7 +480,7 @@
       const mo = k => MOIS[Number(k.slice(5, 7)) - 1].replace('.', ''), wd = w => { const t = new Date(w + 'T12:00:00'); return t.getDate() + '/' + (t.getMonth() + 1); };
       const mb = b => (b / 1048576).toLocaleString('fr-FR', { maximumFractionDigits: 1 }) + NB + 'Mo';
       const gauge = (used, lim, lab) => { const p = Math.min(100, Math.round(used / lim * 100)); return `<div class="stack" style="gap:4px"><div class="between num"><span>${lab}</span><b>${mb(used)} sur ${mb(lim)} (${p}${NB}%)</b></div><div class="bar"><i style="width:${Math.max(1, p)}%"></i></div>${p >= 80 ? '<p class="err" style="margin:0">Bientôt plein : passez à l’offre payante de Supabase.</p>' : ''}</div>`; };
-      const TIER = { petite: 'petite (1 à 30)', moyenne: 'moyenne (31 à 100)', grande: 'grande (101 à 300)' };
+      const TIER = { petite: 'Starter (1 à 30)', moyenne: 'Pro (31 à 200)', grande: 'Premium (201 et plus)' };
       const rowsOf = (list, f) => list.length ? `<div class="list">${list.map(f).join('')}</div>` : '';
       const line = (t, s2, pill) => `<div class="item"><div class="body"><div class="t">${t}</div>${s2 ? `<div class="s wrap num">${s2}</div>` : ''}</div>${pill || ''}</div>`;
       const nAl = (al.no_treasurer || []).length + (al.stuck_expenses || []).length + (al.near_tier || []).length + (al.unpaid || []).length;
@@ -551,16 +571,19 @@
 
   async function renderWelcome() {
     const list = must(await sb.rpc('my_memberships')).filter(a => a.active || a.pending);
+    const joinCode = store.get('vl:join') || ''; if (joinCode) store.set('vl:join', '');   // utilisé une seule fois
     const owner = await sb.rpc('am_owner').then(r => !r.error && r.data === true, () => false);
     root.innerHTML = `<div class="auth" style="max-width:520px">
       ${owner ? `<a class="card between" href="#/admin" style="border-color:var(--gold)"><span><span class="eyebrow">Propriétaire</span><br><b>Tableau de bord VillageLink</b></span><span class="chev">${I.chev}</span></a>` : ''}
       <div class="between"><div class="brand"><img class="logo brand-ic" src="icon.svg" alt="" width="44" height="44"><b>VillageLink</b></div><button class="btn ghost sm" data-act="signout">Déconnexion</button></div>
       ${list.some(a => a.pending) ? '<button class="btn ghost block" data-act="reload">Actualiser : ma demande a-t-elle été validée ?</button>' : ''}
+      ${joinCode ? '<div id="join-first"></div>' : ''}
       ${list.length ? `<section class="stack"><span class="eyebrow">Mes associations</span><div class="list">${list.map(a => a.pending
         ? `<div class="item"><div class="logo letter">${esc(initials(a.name).slice(0, 1))}</div><div class="body"><div class="t">${esc(a.name)}</div><div class="s wrap">Demande envoyée. Un membre du bureau doit la valider.</div></div><span class="pill p-late">En attente</span></div>`
         : `<a class="item" href="#/a/${a.association_id}"><div class="logo letter">${esc(initials(a.name).slice(0, 1))}</div><div class="body"><div class="t">${esc(a.name)}</div><div class="s">${esc([a.village, a.residence_city].filter(Boolean).join(' · '))}</div></div><span class="chev">${I.chev}</span></a>`).join('')}</div></section>` : '<p class="lead">Bienvenue. Rejoignez votre association avec le code donné par le bureau, ou créez-la si vous en êtes le président.</p>'}
-      <form class="card stack" data-form="join" novalidate><h2>Rejoindre une association</h2>
-        <div class="field"><label for="jn-code">Code d’invitation</label><input id="jn-code" name="code" autocapitalize="characters" placeholder="Ex. 7K2P9QXA" required></div>
+      <form class="card stack${joinCode ? ' join-hi' : ''}" data-form="join" novalidate><h2>Rejoindre une association</h2>
+        ${joinCode ? '<p class="note" style="margin:0">Votre code d’invitation est déjà rempli. Ajoutez votre nom et votre téléphone, puis appuyez sur « Rejoindre ».</p>' : ''}
+        <div class="field"><label for="jn-code">Code d’invitation</label><input id="jn-code" name="code" autocapitalize="characters" placeholder="Ex. 7K2P9QXA" value="${esc(joinCode)}" required></div>
         <div class="field"><label for="jn-name">Votre nom complet</label><input id="jn-name" name="full_name" autocomplete="name" required></div>
         <div class="field"><label for="jn-phone">Votre téléphone</label><input id="jn-phone" name="phone" type="tel" inputmode="tel" autocomplete="tel" placeholder="+221 77 000 00 00"><p class="help">Si le trésorier vous a déjà inscrit avec ce numéro, votre historique de cotisations vous suit. Le bureau valide chaque demande.</p></div>
         <p class="err" hidden></p><button class="btn primary block" type="submit">Rejoindre</button></form>
@@ -579,6 +602,11 @@
         <p class="err" hidden></p><button class="btn primary block" type="submit">Créer l’association</button></form>
       ${delAcctBox()}
     </div>`;
+    if (joinCode) {
+      const jf = root.querySelector('form[data-form=join]'), ph = $('#join-first');
+      if (jf && ph) ph.replaceWith(jf);
+      const nm = $('#jn-name'); if (nm) nm.focus();
+    }
   }
 
   /* ------------------------------------------------------------------
@@ -678,7 +706,7 @@
     const cur = TIERS.find(t => t.k === a.plan); if (!cur) return '';
     const n = activeMembers().length; if (n <= cur.max) return '';
     const nt = tierFor(n);
-    const txt = nt ? `Au prochain renouvellement, la formule ${nt.label} s’appliquera (${money(nt.year, 'XOF')} par an). Rien n’est bloqué d’ici là.` : 'Au-delà de 300 membres, le tarif est sur devis : écrivez à contact@villagelinkafrica.com. Rien n’est bloqué.';
+    const txt = `Au prochain renouvellement, la formule ${nt.label} s’appliquera (${money(nt.year, 'XOF')} par an). Rien n’est bloqué d’ici là.`;
     return `<section class="card stack sub-banner sub-info"><b>${num(n)} membres : plus que les ${cur.max} de votre formule ${cur.label}.</b><span>${txt}</span></section>`;
   }
   function subBanner() {
@@ -792,13 +820,32 @@
         status = `<section class="card status-card ok"><div class="between"><span class="eyebrow">Ma cotisation · ${esc(monthName)}</span><span class="pill p-ok">À jour</span></div><div class="big" style="font-size:28px">Vous êtes à jour</div><span class="muted">Merci ! Votre cotisation est payée.</span></section>`;
       }
     }
+    // Premiers pas (v2.4.0) : 5 étapes cochées toutes seules ; la carte disparaît quand tout est fait.
+    const firstSteps = me.role === 'president' && !isRO() ? (() => {
+      const pn = S.ctx.payNums || {};
+      const invited = !!store.get('vl:invited:' + a.id) || S.ctx.members.some(m => m.user_id && m.user_id !== S.user.id);
+      const steps = [
+        [hasFees(), 'Fixer la cotisation', 'Montant par mois et jour d’échéance.', 'parametres'],
+        [!!(pn.wave || pn.orange || pn.free), 'Ajouter le numéro Wave ou Orange Money', 'Les membres y envoient leur cotisation.', 'parametres'],
+        [S.ctx.members.some(m => m.role === 'tresorier' && m.active && !m.pending), 'Nommer le trésorier', 'Ouvrez sa fiche, puis « Modifier la fiche ».', 'membres'],
+        [activeMembers().length > 1, 'Ajouter les membres', 'Collez la liste depuis votre cahier ou WhatsApp.', 'membres/import'],
+        [invited, 'Inviter les membres', 'Envoyez le lien d’invitation sur WhatsApp.', 'parametres']
+      ];
+      const done = steps.filter(x => x[0]).length;
+      if (done === steps.length) return '';
+      return `<section class="card stack first-steps"><div class="between"><h2>Premiers pas</h2><span class="pill p-blue num">${done} sur ${steps.length}</span></div>
+        <div class="bar"><i style="width:${pct(done, steps.length)}%"></i></div>
+        <ol class="steps">${steps.map(([ok, t, sx, href], i) => ok
+          ? `<li class="ok"><span class="st-ic" aria-hidden="true">✓</span><span class="body"><span class="tt">${t}</span><span class="ss">Fait</span></span></li>`
+          : `<li><a href="${B()}/${href}"><span class="st-ic num" aria-hidden="true">${i + 1}</span><span class="body"><span class="tt">${t}</span><span class="ss">À faire · ${sx}</span></span><span class="chev">${I.chev}</span></a></li>`).join('')}</ol></section>`;
+    })() : '';
     const nClaims = isRO() ? 0 : claimsToConfirm().length;
     const todos = [
       nClaims ? todo(`${B()}/cotisations?f=claims`, I.clock, `${nClaims} paiement${nClaims > 1 ? 's' : ''} à confirmer`, 'Vérifiez dans votre Wave ou Orange Money.', true) : '',
       S.ctx.expPending && can('approve') ? todo(`${B()}/depenses`, I.out, `${S.ctx.expPending} dépense${S.ctx.expPending > 1 ? 's' : ''} à valider`, 'Le trésorier attend votre accord avant de sortir l’argent.', true) : '',
       pendingMembers().length && can('members') ? todo(`${B()}/membres?f=pending`, I.users, `${pendingMembers().length} demande${pendingMembers().length > 1 ? 's' : ''} d’adhésion`, 'Vérifiez que ce sont bien des ressortissants du village.', true) : '',
       fee && late && (pres || trea) ? todo(`${B()}/cotisations?f=late`, I.users, `${late} membre${late > 1 ? 's n’ont' : ' n’a'} pas payé`, `Cotisation de ${esc(pFR(cur))}`, false) : '',
-      act.length <= 1 && can('members') ? todo(`${B()}/membres/import`, I.list, 'Ajoutez la liste des membres', 'Collez-la depuis votre cahier, Excel ou WhatsApp.', false) : ''
+      act.length <= 1 && can('members') && !firstSteps ? todo(`${B()}/membres/import`, I.list, 'Ajoutez la liste des membres', 'Collez-la depuis votre cahier, Excel ou WhatsApp.', false) : ''
     ].join('');
     const monthCard = fee && (pres || trea) && dueNow.length ? `<section class="card stack"><div class="between"><span class="eyebrow">${esc(monthName)}</span><b class="num">${paidCount} sur ${dueNow.length} ont payé</b></div><div class="bar"><i style="width:${pct(collected, expected)}%"></i></div><span class="muted num" style="font-size:14px">${money(collected)} sur ${money(expected)} collectés</span></section>` : '';
     // Montant au milliard (francs guinéens) : chiffre plus petit, la monnaie passe à la ligne si besoin.
@@ -833,7 +880,7 @@
           <div class="row" style="flex-wrap:wrap;gap:8px"><button class="btn primary" data-act="paynum-ok" data-at="${esc(pn.updated_at)}">Ce sont les bons numéros</button><a class="btn ghost" href="${B()}/parametres">Corriger</a></div></section>`;
       })() : '';
     let L, R;
-    if (pres) { L = [greet, payAlert, presCash, status, todos, where, monthCard]; R = [projCard, pollCard, meetCard, colCards, opsCard, actCard]; }
+    if (pres) { L = [greet, firstSteps, payAlert, presCash, status, todos, where, monthCard]; R = [projCard, pollCard, meetCard, colCards, opsCard, actCard]; }
     else if (trea) { L = [greet, status, todos, monthCard, shortcuts, pollCard, meetCard, colCards]; R = [cash, lateCard, opsCard, projCard, actCard]; }
     else { L = [greet, status, todos, cash, pollCard, meetCard, colCards, projCard]; R = [opsCard, actCard]; }
     return `${coverBanner}<div class="home-grid"><div class="home-l">${L.join('')}</div><div class="home-r">${R.join('')}</div></div>`;
@@ -1098,7 +1145,7 @@
   V.abonnement = async () => {
     const a = S.ctx.assoc, st = subStatus(a), head = subHead('Abonnement', B() + '/plus');
     const reqs = await sb.from('subscription_requests').select('*').eq('association_id', a.id).order('id', { ascending: false }).limit(10).then(r => r.error ? [] : r.data);
-    const pend = reqs.find(r => r.status === 'pending');
+    const pend = reqs.find(r => ['pending', 'verifying', 'confirmed'].includes(r.status));
     const n = activeMembers().length;
     // Le serveur calcule la formule et le prix d'après le nombre de membres (sub_quote) : le bureau ne choisit plus.
     const [q12, q1] = await Promise.all([12, 1].map(m => sb.rpc('sub_quote', { p_assoc: a.id, p_months: m }).then(r => r.error || !r.data || !r.data.plan ? null : r.data)));
@@ -1112,19 +1159,19 @@
     // Une carte par formule, chacune avec ses boutons. Seule celle que le serveur applique est active : les autres sont grisées avec la raison.
     const canPay = st !== 'blocked' && !IS_TWA && !pend && q12 && q12.plan !== 'devis';
     const tierCard = (t, i) => {
-      const own = !!q12 && q12.plan === t.k, from = i === 0 ? 1 : TIERS[i - 1].max + 1;
+      const own = !!q12 && q12.plan === t.k, from = i === 0 ? 1 : TIERS[i - 1].max + 1, size = t.max === Infinity ? `${from} membres et plus` : `${from} à ${t.max} membres`;
       const y = own ? q12.amount : t.year, mo = own && q1 ? q1.amount : t.month;
-      const why = own ? '' : `<span class="muted" style="font-size:14px">Pas pour vous : avec ${num(n)} membre${n > 1 ? 's' : ''}, c’est la formule ${esc(((PLANS[(q12 || {}).plan]) || {}).label || 'sur devis')} qui s’applique.</span>`;
+      const why = own ? '' : `<span class="muted" style="font-size:14px">Pas pour vous : avec ${num(n)} membre${n > 1 ? 's' : ''}, c’est la formule ${esc(((PLANS[(q12 || {}).plan]) || {}).label || '')} qui s’applique.</span>`;
       const dis = own && canPay ? '' : ' disabled';
       return `<section class="pcard${own ? ' own' : ''}"><div class="between"><b class="pname">${t.label}</b>${own ? '<span class="pill p-ok">Votre formule</span>' : ''}</div>
-        <span class="muted">${from} à ${t.max} membres</span>
+        <span class="muted">${size}</span>
         <div class="pprice"><span class="num">${money(y, 'XOF')}</span><span class="muted"> / an</span></div>
-        ${own && q12.discounted ? `<span class="pill p-ok" style="align-self:flex-start">Tarif fondatrice −50 %</span><span class="muted" style="font-size:14px">Au lieu de ${money(t.year, 'XOF')} par an</span>` : ''}
+        ${own && q12.discounted ? `<span class="pill p-ok" style="align-self:flex-start">Offre fondatrice : prix bloqué à vie</span><span class="muted" style="font-size:14px">Au lieu de ${money(t.year, 'XOF')} par an</span>` : ''}
         <span class="muted">ou ${money(mo, 'XOF')} par mois · 2 mois offerts à l’année</span>
         ${own ? '' : why}
         <div class="row2"><button type="button" class="btn ${own ? 'primary' : 'ghost'}" data-act="sub-pick" data-m="12"${dis}>Payer 1 an</button><button type="button" class="btn ghost" data-act="sub-pick" data-m="1"${dis}>Payer 1 mois</button></div></section>`;
     };
-    const grid = `${q12 ? `<p class="help" style="margin:0">Votre association compte <b>${num(n)} membre${n > 1 ? 's' : ''} actif${n > 1 ? 's' : ''}</b>. La formule suit ce nombre au moment du renouvellement.</p>` : ''}<div class="pcards">${TIERS.map(tierCard).join('')}</div><p class="help" style="margin:0">Plus de 300 membres : sur devis. Toutes les fonctions sont incluses, quelle que soit la formule.</p>`;
+    const grid = `${q12 ? `<p class="help" style="margin:0">Votre association compte <b>${num(n)} membre${n > 1 ? 's' : ''} actif${n > 1 ? 's' : ''}</b>. La formule suit ce nombre au moment du renouvellement.</p>` : ''}<div class="pcards">${TIERS.map(tierCard).join('')}</div><p class="help" style="margin:0">Toutes les fonctions sont incluses, quelle que soit la formule. Essai gratuit d’un mois pour toute nouvelle association.</p>`;
     const mine = '';
     const pay = st === 'blocked' ? '<p class="note" style="margin:0">L’abonnement ne peut pas être payé tant que l’association est suspendue. Contactez VillageLink : contact@villagelinkafrica.com</p>'
       : IS_TWA ? '<p class="note" style="margin:0">L’abonnement se gère depuis le site de VillageLink. Contactez-nous : contact@villagelinkafrica.com</p>'
@@ -1133,11 +1180,12 @@
       : pend ? `<p class="note" style="margin:0">Votre paiement de ${money(pend.amount, 'XOF')} est en attente : VillageLink l’active dès qu’il l’a reçu, en général dans la journée.</p>`
       : `<form class="stack" data-form="subreq" id="sub-form" hidden novalidate>
         <input type="hidden" name="plan" value="${q12 ? q12.plan : ''}">
-        <div class="radios" role="radiogroup" aria-label="Durée" hidden><label><input type="radio" name="months" value="12" data-amt="${q12 ? q12.amount : 0}" checked>1 an${q12 && q12.discounted ? ' (tarif fondatrice)' : ''}</label><label><input type="radio" name="months" value="1" data-amt="${q1 ? q1.amount : 0}">1 mois</label></div>
+        <div class="radios" role="radiogroup" aria-label="Durée" hidden><label><input type="radio" name="months" value="12" data-amt="${q12 ? q12.amount : 0}" data-sas="${q12 ? esc(sasLink(q12.plan, 12, q12.discounted, q12.amount)) : ''}" checked>1 an${q12 && q12.discounted ? ' (tarif fondatrice)' : ''}</label><label><input type="radio" name="months" value="1" data-amt="${q1 ? q1.amount : 0}" data-sas="${q1 ? esc(sasLink(q1.plan, 1, false, q1.amount)) : ''}">1 mois</label></div>
         <section class="card stack"><div class="between"><span class="muted" id="sub-dur">Montant à payer</span><b class="num" id="sub-amt" style="font-size:22px"></b></div>
-          <a class="btn block wave-btn" id="sub-wave" target="_blank" rel="noopener" href="#">Payer avec Wave</a>
-          <p class="help" style="margin:0">Wave s’ouvre avec le montant déjà rempli, au nom de VillageLink. Revenez ensuite ici.</p></section>
-        <div class="field"><label for="sub-r">Référence du paiement Wave (ID de transaction)</label><input id="sub-r" name="reference" maxlength="60" autocapitalize="characters" placeholder="T_…"></div>
+          <a class="btn primary block" id="sub-sas" target="_blank" rel="noopener" href="#">Payer avec SasPay</a>
+          <p class="help" style="margin:0">La page SasPay s’ouvre avec le bon montant : Wave, Orange Money ou carte. Écrivez le nom de votre association dans la case prévue, puis revenez ici.</p>
+          <a class="link" id="sub-wave" target="_blank" rel="noopener" href="#" style="font-size:15px">Payer plutôt directement avec Wave</a></section>
+        <div class="field"><label for="sub-r">Référence du paiement (sur le reçu SasPay ou le SMS Wave)</label><input id="sub-r" name="reference" maxlength="60" autocapitalize="characters"></div>
         <p class="err" hidden></p><button class="btn primary block" type="submit">J’ai payé</button>
         <p class="help">VillageLink vérifie le paiement et active l’abonnement, en général dans la journée. Rien n’est supprimé pendant ce temps.</p></form>`;
     return `${head}<section class="card stack">${state}</section>${grid}${pay}
@@ -1146,8 +1194,9 @@
   AFTER.abonnement = () => {
     const f = document.querySelector('form[data-form=subreq]'); if (!f) return;
     const upd = () => {
-      const amt = Number((f.querySelector('input[name=months]:checked') || {}).dataset.amt || 0);
-      const mo = (f.querySelector('input[name=months]:checked') || {}).value; $('#sub-dur').textContent = 'Montant à payer · ' + (mo === '1' ? '1 mois' : '1 an'); $('#sub-amt').textContent = money(amt, 'XOF'); $('#sub-wave').href = VL_WAVE + '?amount=' + amt; $('#sub-wave').textContent = 'Payer ' + money(amt, 'XOF') + ' avec Wave';
+      const ch = f.querySelector('input[name=months]:checked') || { dataset: {} }, amt = Number(ch.dataset.amt || 0), sas = $('#sub-sas');
+      if (ch.dataset.sas) { sas.href = ch.dataset.sas; sas.hidden = false; sas.textContent = 'Payer ' + money(amt, 'XOF') + ' avec SasPay'; } else sas.hidden = true;
+      const mo = (f.querySelector('input[name=months]:checked') || {}).value; $('#sub-dur').textContent = 'Montant à payer · ' + (mo === '1' ? '1 mois' : '1 an'); $('#sub-amt').textContent = money(amt, 'XOF'); $('#sub-wave').href = VL_WAVE + '?amount=' + amt; $('#sub-wave').textContent = 'Payer plutôt directement avec Wave (' + money(amt, 'XOF') + ')';
     };
     f.addEventListener('change', upd); upd();
   };
@@ -2193,15 +2242,19 @@ Abstention</textarea><p class="help">Entre 2 et 10 choix.</p></div>
       ${ed ? '<p class="err" hidden></p><button class="btn primary block" type="submit">Enregistrer les numéros</button><p class="help">Laissez vide un service que vous n’utilisez pas. Tous les membres seront prévenus du changement.</p>' : ''}</form>`;
   };
 
+  // Message d'invitation (v2.4.0) : un lien qui remplit le code tout seul, et le code en secours.
+  const joinLink = a => location.origin + location.pathname + '#/rejoindre/' + encodeURIComponent(a.invite_code);
+  const inviteText = a => `Rejoignez « ${a.name} » sur VillageLink pour suivre les cotisations et les projets du village.\n\nAppuyez sur ce lien, créez votre compte, puis appuyez sur « Rejoindre » :\n${joinLink(a)}\n\nSi le lien ne s’ouvre pas, allez sur ${location.origin + location.pathname} et entrez ce code : ${a.invite_code}`;
+
   V.parametres = async () => {
     const a = S.ctx.assoc, pres = can('settings');
-    const invite = `Rejoignez « ${a.name} » sur VillageLink pour suivre les cotisations et les projets du village.\n\n1. Ouvrez ${location.origin + location.pathname}\n2. Créez votre compte\n3. Entrez le code : ${a.invite_code}`;
+    const invite = inviteText(a);
     const ro = pres ? '' : 'disabled';
     const cvPrev = can('cover') ? await coverUrl(a) : '';
     return `${subHead('Association', B() + '/plus')}
       <section class="card stack"><h2>Code d’invitation</h2><p class="muted" style="margin:0;font-size:14px">Les membres créent leur compte puis entrent ce code. Ceux que le trésorier a déjà inscrits retrouvent leur historique grâce à leur numéro de téléphone.</p>
         <div class="code">${esc(a.invite_code)}</div>
-        <a class="btn wa block" target="_blank" rel="noopener" href="${waShare(invite)}">${I.wa} Envoyer l’invitation sur WhatsApp</a>
+        <a class="btn wa block" target="_blank" rel="noopener" data-act="invited" href="${waShare(invite)}">${I.wa} Envoyer l’invitation sur WhatsApp</a>
         ${pres ? '<button class="btn ghost sm" data-act="newcode">Changer le code</button>' : ''}</section>
       ${can('members') ? `<section class="card stack"><h2>Exporter les données</h2><p class="muted" style="margin:0;font-size:14px">Téléchargez un fichier que vous ouvrez dans Excel : la liste des membres, ou toutes les opérations de la caisse.</p><div class="row" style="flex-wrap:wrap"><button class="btn ghost sm" data-act="exp" data-what="membres">Les membres</button><button class="btn ghost sm" data-act="exp" data-what="operations">Les opérations</button></div><p class="help">La liste des membres contient les numéros de téléphone : gardez le fichier pour vous.</p></section>` : ''}
       ${can('cover') ? `<form class="card stack" data-form="cover" novalidate><h2>Photo de couverture</h2><p class="muted" style="margin:0;font-size:14px">Elle s’affiche en haut de l’accueil pour tous les membres. Choisissez une belle photo du village.</p>
@@ -2580,7 +2633,7 @@ Abstention</textarea><p class="help">Entre 2 et 10 choix.</p></div>
       if (![1, 12].includes(months)) fail('Choisissez une durée.');
       const q = must(await sb.rpc('sub_quote', { p_assoc: S.ctx.assoc.id, p_months: months }));
       if (!q || q.plan === 'devis') fail('Au-delà de 300 membres, le tarif est sur devis : écrivez à contact@villagelinkafrica.com.');
-      const ref = val(fd, 'reference'); if (ref.length < 6) fail('Recopiez la référence du paiement Wave (ID de transaction, commence par T_).');
+      const ref = val(fd, 'reference'); if (ref.length < 4) fail('Recopiez la référence du paiement : sur le reçu SasPay ou dans le SMS Wave.');
       must(await sb.rpc('request_subscription', { p_assoc: S.ctx.assoc.id, p_plan: q.plan, p_months: months, p_amount: q.amount, p_reference: ref }));
       toast('Paiement déclaré. VillageLink va l’activer.'); route();
     },
@@ -2658,9 +2711,12 @@ Abstention</textarea><p class="help">Entre 2 et 10 choix.</p></div>
       }
       else if (act === 'signout') { await pushOff(true).catch(() => {}); clearOfflineData(); await sb.auth.signOut(); S.ctx = null; S.authMode = 'login'; S.authMsg = ''; S.session = null; S.user = null; location.hash = '#/'; renderAuth(); }
       else if (act === 'reload') location.reload();
+      else if (act === 'invited') { if (S.ctx) store.set('vl:invited:' + S.ctx.assoc.id, '1'); }   // le lien WhatsApp s'ouvre normalement
       else if (act === 'own-act') { must(await sb.rpc('owner_activate', { p_request: Number(b.dataset.id), p_until: b.dataset.until })); toast('Abonnement activé jusqu’au ' + dFR(b.dataset.until)); renderAdmin(); }
       else if (act === 'own-rej') { const f = document.getElementById('orj-' + b.dataset.id); if (f) f.hidden = false; }
       else if (act === 'own-block') { const f = document.getElementById('obk-' + b.dataset.id); if (f) f.hidden = false; }
+      else if (act === 'own-founder' && b.dataset.v === '0' && !b.dataset.sure) { b.dataset.sure = '1'; b.textContent = 'Toucher encore pour retirer l’offre fondatrice'; }
+      else if (act === 'own-founder') { must(await sb.rpc('owner_set_founder', { p_assoc: b.dataset.id, p_value: b.dataset.v === '1' })); toast(b.dataset.v === '1' ? 'Association fondatrice : Pro à 50 000 FCFA par an, à vie' : 'Offre fondatrice retirée'); renderAdmin(); }
       else if (act === 'own-unblock') { must(await sb.rpc('owner_unblock', { p_assoc: b.dataset.id })); toast('Association débloquée'); renderAdmin(); }
       else if (act === 'sub-pick') {
         const f = $('#sub-form'); if (!f) return;
@@ -2815,7 +2871,7 @@ Abstention</textarea><p class="help">Entre 2 et 10 choix.</p></div>
 
   /* Mode hors ligne : un service worker garde une copie de l'application et des dernières données lues. */
   function clearOfflineData() {
-    try { localStorage.removeItem('vl:pin'); localStorage.removeItem('vl:pin:try'); } catch (e) { /* rien */ }
+    try { localStorage.removeItem('vl:pin'); localStorage.removeItem('vl:pin:try'); localStorage.removeItem('vl:join'); } catch (e) { /* rien */ }
     try { if (navigator.serviceWorker && navigator.serviceWorker.controller) navigator.serviceWorker.controller.postMessage('vl-clear'); } catch (e) { /* rien */ }
     try { if (window.caches) caches.delete('vl-data-v1'); } catch (e) { /* rien */ }
   }
