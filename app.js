@@ -140,6 +140,8 @@
   /* ------------------------------------------------------------------
      Rôles et droits (la base les vérifie aussi)
   ------------------------------------------------------------------ */
+  // Limites de rôles (v2.4.4, même règle que role_cap dans la base) : 1 président, 3 vice-présidents, 3 trésoriers.
+  const ROLE_CAP = { president: 1, vice_president: 3, tresorier: 3 };
   const ROLES = { president: 'Président', vice_president: 'Vice-président', secretaire: 'Secrétaire général', tresorier: 'Trésorier', projets: 'Responsable des projets', membre: 'Membre' };
   const ROLE_HELP = {
     president: 'Tous les droits : membres, rôles, paramètres, argent, projets, annonces, réunions, votes. Valide les dépenses.',
@@ -323,6 +325,8 @@
     const late = owed.filter(isLate);
     return { owed, late, remaining: owed.reduce((s, p) => s + feeOf(m, p) - paidFor(m.id, p), 0), isLate: late.length > 0 };
   }
+  // Liste de mois lisible : jusqu'à 3 mois en entier, au-delà « premier → dernier (N mois) » (v2.4.5).
+  const monthsLabel = ps => ps.length > 3 ? `${pFR(ps[0])} → ${pFR(ps[ps.length - 1])} (${ps.length} mois)` : ps.map(pFR).join(', ');
   // Un paiement plus grand que le reste du mois est réparti sur les mois suivants (v2.2.3).
   function spread(m, period, amount) {
     const rows = []; let rem = amount, p = period;
@@ -961,9 +965,30 @@
           ? `<button class="btn danger block" data-act="memberactive" data-id="${m.id}" data-v="0">Retirer de l’association</button><p class="help">${esc(m.full_name)} n’aura plus accès à l’application et n’aura plus de cotisation due. Ses paiements restent dans l’historique, pour la transparence.</p>`
           : `<button class="btn ghost block" data-act="memberactive" data-id="${m.id}" data-v="1">Réintégrer dans l’association</button>`) : ''}
       </div>
+      ${presTransferCard(m)}
       ${hist.length ? `<section class="stack"><span class="eyebrow">Historique des paiements</span><div class="list">${hist.map(t => txItem(t, rset)).join('')}</div></section>` : ''}`;
   };
   AFTER.m = () => {};
+
+  // Passation de la présidence : une association n'a qu'un président (v2.4.3, transfer_presidency dans la base).
+  // Option de fonction : grisée si la limite est atteinte (sauf pour le rôle actuel du membre).
+  const roleOpt = (k, l, cur, exceptId) => {
+    const cap = ROLE_CAP[k], n = cap ? activeMembers().filter(x => x.role === k && x.id !== exceptId).length : 0, full = cap && k !== cur && n >= cap;
+    return `<option value="${esc(k)}" ${k === cur ? 'selected' : ''} ${full ? 'disabled' : ''}>${esc(l)}${full ? ` (complet : ${cap})` : ''}</option>`;
+  };
+  function presTransferCard(m) {
+    const me = S.ctx.me;
+    if (!can('roles') || !me || me.role !== 'president' || m.id === me.id || m.role === 'president' || !m.active || m.pending || isRO()) return '';
+    const first = esc(m.full_name.split(' ')[0]);
+    if (!m.user_id) return `<section class="card stack"><h2>Passer la présidence</h2><p class="help" style="margin:0">${first} n’a pas encore de compte VillageLink relié. Il doit d’abord rejoindre l’association avec le code d’invitation, puis vous pourrez lui passer la présidence.</p></section>`;
+    const mine = [['vice_president', 'Vice-président'], ['secretaire', 'Secrétaire général'], ['tresorier', 'Trésorier'], ['projets', 'Responsable des projets'], ['membre', 'Membre']];
+    return `<section class="card stack"><details class="more"><summary>Passer la présidence à ${first}</summary>
+      <form class="stack" data-form="transferpres" data-id="${m.id}" novalidate style="margin-top:8px">
+        <p class="help" style="margin:0">${esc(m.full_name)} deviendra le président de l’association. Vous ne serez plus président et vous ne pourrez plus changer les rôles ni les paramètres.</p>
+        <div class="field"><label for="tp-role">Votre nouveau rôle</label><select id="tp-role" name="my_role"><option value="" selected disabled>Choisissez…</option>${mine.map(([k, l]) => roleOpt(k, l, '', me.id)).join('')}</select></div>
+        <div class="field"><label class="check"><input type="checkbox" name="ok"> Je confirme : ${esc(m.full_name)} devient président</label></div>
+        <p class="err" hidden></p><button class="btn danger block" type="submit">Passer la présidence</button></form></details></section>`;
+  }
 
   // Dispense temporaire (sans travail, au village…) : le bureau l'accorde, tout le monde la voit, seul le bureau lit le motif.
   const EX_REASONS = ['Sans travail', 'Sans travail, au village', 'Maladie', 'Études', 'Autre'];
@@ -995,7 +1020,7 @@
   }
 
   function memberForm(m) {
-    const isNew = !m, r = m ? m.role : 'membre';
+    const isNew = !m, r = m ? m.role : 'membre', nPres = activeMembers().filter(x => x.role === 'president').length, soloPres = r === 'president' && nPres < 2 && m && m.active && !m.pending;
     if (!can('members')) return `${subHead('Membre')}<p class="note">Seul le bureau peut ajouter ou modifier un membre.</p>`;
     if (m && m.role !== 'membre' && !can('roles')) return `${subHead('Membre', B() + '/m/' + m.id)}<p class="note">Seul le président modifie la fiche d’un membre du bureau.</p>`;
     return `${subHead(isNew ? 'Ajouter un membre' : 'Modifier la fiche', isNew ? B() + '/membres' : B() + '/m/' + m.id)}
@@ -1007,7 +1032,8 @@
         ${(S.ctx.sections || []).length ? `<div class="field"><label for="mb-sec">Section</label><select id="mb-sec" name="section_id"><option value="">Aucune section</option>${S.ctx.sections.map(x => opt(x.id, x.name, m ? m.section_id : '')).join('')}</select></div>` : ''}
         <div class="field"><label for="mb-email">Email (facultatif)</label><input id="mb-email" name="email" type="email" value="${esc(m && m.email)}"></div>
         <div class="field"><label for="mb-joined">Date d’adhésion</label><input id="mb-joined" name="joined_on" type="date" value="${esc(m ? m.joined_on : todayISO())}"><p class="help">Les cotisations sont dues à partir de ce mois.</p></div>
-        ${can('roles') ? `<div class="field"><label for="mb-role">Fonction dans l’association</label><select id="mb-role" name="role">${Object.entries(ROLES).map(([k, l]) => opt(k, l, r)).join('')}</select><p class="help" id="mb-role-help" data-roles='${esc(JSON.stringify(ROLE_HELP))}'>${esc(ROLE_HELP[r] || '')}</p></div>` : ''}
+        ${can('roles') && soloPres ? `<div class="field"><span style="font-size:14px;font-weight:500;color:var(--muted)">Fonction dans l’association</span><p style="margin:4px 0 0"><b>Président</b></p><p class="help">Une association n’a qu’un président. Pour céder ce rôle, ouvrez la fiche du futur président et touchez « Passer la présidence ».</p></div>` : ''}
+        ${can('roles') && !soloPres ? `<div class="field"><label for="mb-role">Fonction dans l’association</label><select id="mb-role" name="role">${Object.entries(ROLES).filter(([k]) => k !== 'president' || r === 'president').map(([k, l]) => roleOpt(k, l, r, m && m.id)).join('')}</select><p class="help" id="mb-role-help" data-roles='${esc(JSON.stringify(ROLE_HELP))}'>${esc(ROLE_HELP[r] || '')}</p></div>` : ''}
         ${!isNew ? `<div class="field"><label class="check"><input type="checkbox" name="active" ${m.active ? 'checked' : ''}> Membre actif</label><p class="help">Décocher revient à retirer le membre de l’association : il perd l’accès et n’a plus de cotisation due. Son historique est conservé.</p></div>` : ''}
         <p class="err" hidden></p><button class="btn primary block" type="submit">${isNew ? 'Ajouter' : 'Enregistrer'}</button></form>`;
   }
@@ -1128,7 +1154,7 @@
       const base = S.ctx.assoc.currency, c = $('#pay-cur') ? $('#pay-cur').value : base, r = Number(($('#pay-rate') || {}).value), v = Number(String(am.value).replace(',', '.')) || 0;
       const got = c === base ? v : (r > 0 ? Math.round(v * r) : 0), left = Math.max(dues(m).remaining - got, 0);
       const sp = c === base && Number.isInteger(v) && v > 0 ? spread(m, ps.value, v) : null;
-      $('#pay-recap').innerHTML = `<dt>${sp && sp.length > 1 ? 'Mois couverts' : 'Mois couvert'}</dt><dd>${sp && sp.length > 1 ? esc(sp.map(x => pFR(x.period)).join(', ')) : esc(pFR(ps.value))}</dd><dt>Reste dû après</dt>${c === base && !Number.isInteger(v) ? '<dd class="due">Montant à corriger</dd>' : `<dd class="${left ? 'due' : ''}">${left ? money(left) : 'À jour'}</dd>`}${m.phone ? `<dt>Reçu à envoyer à</dt><dd>${esc(m.phone)}</dd>` : ''}`;
+      $('#pay-recap').innerHTML = `<dt>${sp && sp.length > 1 ? 'Mois couverts' : 'Mois couvert'}</dt><dd>${sp && sp.length > 1 ? esc(monthsLabel(sp.map(x => x.period))) : esc(pFR(ps.value))}</dd><dt>Reste dû après</dt>${c === base && !Number.isInteger(v) ? '<dd class="due">Montant à corriger</dd>' : `<dd class="${left ? 'due' : ''}">${left ? money(left) : 'À jour'}</dd>`}${m.phone ? `<dt>Reçu à envoyer à</dt><dd>${esc(m.phone)}</dd>` : ''}`;
     };
     // Montant proposé = reste dû, converti dans la monnaie reçue.
     const due = () => Math.max(feeSel() - paidFor(ms.value, ps.value), 0) || feeSel();
@@ -1213,12 +1239,17 @@
     const pendP = new Set(mine.filter(c => c.status === 'pending').map(c => c.period));
     const d = dues(me), cur = curYM();
     const opts = [...new Set([...d.owed, cur, addMonth(cur, 1), addMonth(cur, 2)])].sort().filter(p => paidFor(me.id, p) < feeOf(me, p) && !pendP.has(p) && !exemptOf(me, p));
+    // Pas de mois après un paiement en attente : la répartition à la confirmation passerait par ce mois (v2.4.2).
+    const stopP = [...pendP].sort().find(p => opts.length && p > opts[0]); if (stopP) opts.splice(0, opts.length, ...opts.filter(p => p < stopP));
+    const defSel = new Set(opts.filter(p => d.owed.includes(p)).length ? opts.filter(p => d.owed.includes(p)) : opts.slice(0, 1));
     const ST = { pending: ['p-late', 'En attente du trésorier'], confirmed: ['p-ok', 'Confirmé'], rejected: ['p-red', 'Refusé'], cancelled: ['p-blue', 'Annulé'] };
     const hist = mine.length ? `<section class="stack"><h2>Mes paiements déclarés</h2><div class="list">${mine.map(c => `<div class="item" style="align-items:flex-start"><div class="body"><div class="t num" style="white-space:normal">${money(c.amount)} · ${esc(c.method)}</div><div class="s wrap">${esc(pFR(c.period))} · ${dFR(localDay(c.created_at))} à ${hm(c.created_at)}${c.reference ? ' · réf. ' + esc(c.reference) : ''}${c.status === 'rejected' && c.reason ? '<br>Motif : ' + esc(c.reason) : ''}</div>${c.status === 'pending' ? `<button class="btn ghost sm" style="margin-top:8px" data-act="claim-cancel" data-id="${c.id}">Annuler cette déclaration</button>` : ''}${c.status === 'confirmed' && c.transaction_id ? `<a class="link" style="display:inline-block;margin-top:6px" href="${B()}/op/${c.transaction_id}?recu=1">Voir le reçu</a>` : ''}</div><span class="pill ${ST[c.status][0]}">${ST[c.status][1]}</span></div>`).join('')}</div></section>` : '';
     if (!opts.length) return `${head}<p class="note">${pendP.size ? 'Votre paiement est en attente : le trésorier doit vérifier qu’il a bien reçu l’argent.' : 'Vous êtes à jour. Merci !'}</p>${hist}`;
     return `${head}
       <form class="stack" data-form="claim" novalidate>
-        <div class="field"><label for="cl-p">Mois à payer</label><select id="cl-p" name="period">${opts.map(p => opt(p, `${pFR(p)} · ${money(feeOf(me, p) - paidFor(me.id, p))}`)).join('')}</select></div>
+        <div class="field"><span style="font-size:14px;font-weight:500;color:var(--muted)" id="cl-p-l">Mois à payer</span><input type="hidden" id="cl-p" name="period" value="${esc(opts[0])}">
+          <div class="list" role="group" aria-labelledby="cl-p-l">${opts.map((p, i) => `<label class="item" style="cursor:pointer"><input type="checkbox" class="cl-mo" name="months" value="${esc(p)}" data-i="${i}" data-amt="${feeOf(me, p) - paidFor(me.id, p)}" ${defSel.has(p) ? 'checked' : ''} style="width:24px;height:24px;flex:none"><span class="body"><span class="t">${esc(pFR(p))}</span></span><b class="num">${money(feeOf(me, p) - paidFor(me.id, p))}</b></label>`).join('')}</div>
+          <p class="help">Cochez un ou plusieurs mois. Les mois les plus anciens se paient en premier.</p></div>
         <div class="big-amount"><label for="cl-a" class="muted" style="font-size:14px">Montant à envoyer (${esc(CUR_LABEL[S.ctx.assoc.currency] || 'FCFA')})</label><input id="cl-a" name="amount" type="number" inputmode="numeric" min="1" step="1"></div>
         <div class="field"><span style="font-size:14px;font-weight:500;color:var(--muted)" id="cl-m-l">Payer avec</span><div class="radios" role="radiogroup" aria-labelledby="cl-m-l">${avail.map(([l], k) => `<label><input type="radio" name="method" value="${esc(l)}" ${k === 0 ? 'checked' : ''}>${esc(l)}</label>`).join('')}</div></div>
         <section class="card stack" id="cl-dest"></section>
@@ -1236,17 +1267,27 @@
     const ps = $('#cl-p'), am = $('#cl-a'), box = $('#cl-dest');
     if (!ps) return;
     const me = S.ctx.me, fee = feeOf(me), pn = S.ctx.payNums;
-    const fill = () => { const f = feeOf(me, ps.value); am.value = Math.max(f - paidFor(me.id, ps.value), 0) || f; dest(); };
+    // Cases des mois : cocher un mois coche les plus anciens, décocher un mois décoche les suivants (v2.4.2).
+    const boxes = [...document.querySelectorAll('input.cl-mo')];
+    const selTotal = () => boxes.filter(b => b.checked).reduce((t, b) => t + Number(b.dataset.amt || 0), 0);
+    const fill = () => { am.value = selTotal() || ''; dest(); };
+    boxes.forEach(b => b.addEventListener('change', () => {
+      const i = Number(b.dataset.i);
+      boxes.forEach((x, j) => { if (b.checked && j < i) x.checked = true; if (!b.checked && j > i) x.checked = false; });
+      fill();
+    }));
     const dest = () => {
       const m = (document.querySelector('input[name=method]:checked') || {}).value || '';
       const k = (MM.find(([l]) => l === m) || [])[1], num = k ? pn[k] : '';
       const amt = Number(am.value) || 0, wl = m === 'Wave' && /^https:\/\/pay\.wave\.com\/m\//.test(pn.wave_link || '') ? pn.wave_link.replace(/\/?$/, '/') + '?amount=' + amt : '';
-      box.innerHTML = (wl ? `<a class="btn block wave-btn" href="${esc(wl)}" target="_blank" rel="noopener">Payer ${money(amt)} avec Wave</a><p class="help" style="margin:0">Wave s’ouvre avec le montant déjà rempli. Après le paiement, revenez ici et touchez « J’ai payé ».</p><span class="eyebrow" style="margin-top:4px">Ou à la main</span>` : `<span class="eyebrow">Envoyez avec votre application ${esc(m)}</span>`) + `
+      const rows = amt > 0 ? spread(me, ps.value, amt) : [];
+      const cover = !amt ? '<p class="help" style="margin:0">Cochez au moins un mois.</p>' : rows ? `<p class="help" style="margin:0">Ce paiement couvre : <b>${esc(monthsLabel(rows.map(x => x.period)))}</b>${(l => l && l.amount < feeOf(me, l.period) - paidFor(me.id, l.period) ? ` (${esc(pFR(l.period))} en partie)` : '')(rows[rows.length - 1])}.</p>` : '<p class="note" style="margin:0">Ce montant dépasse 24 mois de cotisation. Réduisez-le.</p>';
+      const feeNote = wl ? '' : `<p class="help" style="margin:0">${m === 'Wave' ? 'Wave prend en général environ 1 % de frais à l’envoi. ' : esc(m) + ' peut prendre des frais à l’envoi, selon le montant. '}Ces frais sont à votre charge : l’association doit recevoir exactement ${money(amt)}.</p>`;
+      box.innerHTML = cover + (wl ? `<a class="btn block wave-btn" href="${esc(wl)}" target="_blank" rel="noopener">Payer ${money(amt)} avec Wave</a><p class="help" style="margin:0">Wave s’ouvre avec le montant déjà rempli. Après le paiement, revenez ici et touchez « J’ai payé ».</p><span class="eyebrow" style="margin-top:4px">Ou à la main</span>` : `<span class="eyebrow">Envoyez avec votre application ${esc(m)}</span>`) + `
         <div class="between" style="flex-wrap:wrap"><span><span class="muted" style="font-size:14px">Au numéro</span><br><b class="num" style="font-size:20px">${esc(num)}</b></span><button type="button" class="btn ghost sm" data-act="copy" data-v="${esc(num.replace(/\s/g, ''))}">Copier le numéro</button></div>
         <div class="between" style="flex-wrap:wrap"><span><span class="muted" style="font-size:14px">Montant</span><br><b class="num" style="font-size:20px">${money(Number(am.value) || 0)}</b></span><button type="button" class="btn ghost sm" data-act="copy" data-v="${esc(String(Number(am.value) || 0))}">Copier le montant</button></div>
-        <p class="note" style="margin:0">Avant de valider dans ${esc(m)}, vérifiez que le nom affiché est bien <b>${esc(pn.holder)}</b>. Sinon, n’envoyez rien et prévenez le bureau.</p>`;
+        ${feeNote}<p class="note" style="margin:0">Avant de valider dans ${esc(m)}, vérifiez que le nom affiché est bien <b>${esc(pn.holder)}</b>. Sinon, n’envoyez rien et prévenez le bureau.</p>`;
     };
-    ps.addEventListener('change', fill);
     am.addEventListener('input', dest);
     document.querySelectorAll('input[name=method]').forEach(r => r.addEventListener('change', dest));
     fill();
@@ -1258,11 +1299,11 @@
       if (r.method) { const rb = document.querySelector(`input[name=method][value="${r.method}"]`); if (rb && !rb.checked) rb.checked = true; }
       const meth = (document.querySelector('input[name=method]:checked') || {}).value || '';
       const k = (MM.find(([l]) => l === meth) || [])[1], num = k ? pn[k] : '';
-      const ef = feeOf(me, ps.value), expected = Math.max(ef - paidFor(me.id, ps.value), 0) || ef, items = [];
+      const expected = selTotal(), items = [], lbl = boxes.filter(b => b.checked).length > 1 ? 'des mois cochés' : 'de ' + pFR(ps.value);
       if (r.amount) {
         am.value = r.amount;
         if (r.sent && r.sent !== r.amount) items.push(['warn', `Vous avez envoyé ${money(r.sent)}, l’association a reçu ${money(r.amount)}${r.fee ? ` (frais ${money(r.fee)} déduits)` : ''}. C’est ${money(r.amount)} qui sera compté.`]);
-        items.push(r.amount === expected ? ['ok', 'Montant reçu : ' + money(r.amount)] : r.amount < expected ? ['warn', `Il manque ${money(expected - r.amount)} pour la cotisation de ${pFR(ps.value)} (${money(expected)}).${r.fee ? ' La prochaine fois, ajoutez les frais au montant envoyé.' : ''}`] : ['warn', `Montant reçu : ${money(r.amount)}, plus que la cotisation de ${pFR(ps.value)} (${money(expected)}).`]);
+        items.push(r.amount === expected ? ['ok', 'Montant reçu : ' + money(r.amount)] : r.amount < expected ? ['warn', `Il manque ${money(expected - r.amount)} pour la cotisation ${lbl} (${money(expected)}).${r.fee ? ' La prochaine fois, ajoutez les frais au montant envoyé.' : ''}`] : ['warn', `Montant reçu : ${money(r.amount)}, plus que la cotisation ${lbl} (${money(expected)}).`]);
       }
       else items.push(['warn', 'Montant non trouvé : saisissez-le à la main.']);
       if (r.reference) { $('#cl-r').value = r.reference; items.push(['ok', 'Référence : ' + r.reference]); }
@@ -2375,6 +2416,13 @@ Abstention</textarea><p class="help">Entre 2 et 10 choix.</p></div>
       }
       await refresh(); toast(id ? 'Fiche enregistrée' : 'Membre ajouté'); go(B() + '/m/' + mid);
     },
+    async transferpres(fd, form) {
+      if (!val(fd, 'my_role')) fail('Choisissez votre nouveau rôle.');
+      if (fd.get('ok') !== 'on') fail('Cochez la case pour confirmer.');
+      const t = S.ctx.byId.get(form.dataset.id);
+      must(await sb.rpc('transfer_presidency', { p_member: form.dataset.id, p_my_role: val(fd, 'my_role') }));
+      await refresh(); toast((t ? t.full_name : 'Le membre') + ' est maintenant président'); go(B() + '/m/' + form.dataset.id);
+    },
     async import(fd) {
       const rows = parseImport(fd.get('text'));
       if (!rows.length) fail('Aucun membre reconnu. Mettez un membre par ligne.');
@@ -2650,6 +2698,8 @@ Abstention</textarea><p class="help">Entre 2 et 10 choix.</p></div>
     async claim(fd) {
       const me = S.ctx.me, period = val(fd, 'period'), amount = Number(val(fd, 'amount').replace(',', '.')); if (Number.isFinite(amount) && !Number.isInteger(amount)) fail('Écrivez le montant en chiffres, sans point ni virgule : 1500, pas 1.500.');
       if (!/^\d{4}-\d{2}$/.test(period)) fail('Choisissez le mois à payer.');
+      if (document.querySelector('input.cl-mo') && !fd.getAll('months').length) fail('Cochez au moins un mois.');
+      if (amount > 0 && !spread(me, period, amount)) fail('Ce montant dépasse 24 mois de cotisation. Réduisez-le.');
       if (!(amount > 0)) fail('Saisissez le montant envoyé.');
       const method = val(fd, 'method'); if (!method) fail('Choisissez Wave, Orange Money ou Free Money.');
       must(await sb.rpc('declare_payment', { p_member: me.id, p_period: period, p_amount: amount, p_method: method, p_reference: val(fd, 'reference') }));
@@ -2819,7 +2869,8 @@ Abstention</textarea><p class="help">Entre 2 et 10 choix.</p></div>
         const tid = must(await sb.rpc('confirm_payment_claim', { p_id: Number(b.dataset.id) }));
         await refresh(); toast('Paiement confirmé'); go(B() + '/op/' + tid + '?recu=1');
       }
-      else if (act === 'ex-end') { const f = $('#exend'); if (f) { f.hidden = false; f.querySelector('[name=id]').value = b.dataset.id; const l = f.querySelector('[name=last]'); l.min = b.dataset.from; if (l.value < b.dataset.from) l.value = b.dataset.from; l.focus(); } }
+      else if (act === 'ex-end') { const f = $('#exend'); if (f) { f.hidden = false; f.querySelector('[name=id]').value = b.dataset.id; const l = f.querySelector('[name=last]'); // Dispense qui commence ce mois ou plus tard : le mois d'avant l'annule (v2.4.6, end_exemption).
+        const fromNow = b.dataset.from >= curYM(), lo = fromNow ? addMonth(b.dataset.from, -1) : b.dataset.from; l.min = lo; if (fromNow || l.value < lo) l.value = lo; l.focus(); } }
       else if (act === 'claim-no') { const f = $('#rjc-' + b.dataset.id); if (f) { f.hidden = false; f.querySelector('input').focus(); } }
       else if (act === 'claim-cancel') {
         if (b.dataset.confirm !== '1') { b.dataset.confirm = '1'; b.textContent = 'Confirmer l’annulation'; return; }

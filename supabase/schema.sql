@@ -4512,3 +4512,115 @@ begin
   ) into r;
   return r;
 end $$;
+-- VillageLink 2.4.3 — Un seul président par association, et passation de la présidence
+-- Une association n'a plus qu'un président actif. On ne peut plus nommer un deuxième
+-- président (ajout, changement de rôle ou réintégration). Pour céder le rôle, le président
+-- appelle transfer_presidency : le nouveau devient président et l'ancien prend le rôle choisi.
+-- Les associations qui ont déjà deux présidents les gardent : la règle ne bloque que
+-- le fait de DEVENIR président.
+
+create or replace function public.members_one_president_check() returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  if coalesce(current_setting('vl.system', true), '') = 'on'
+     or coalesce(current_setting('vl.transfer', true), '') = 'on' then
+    return new;
+  end if;
+  if new.role = 'president' and new.active and not new.pending
+     and (tg_op = 'INSERT' or old.role <> 'president' or not old.active or old.pending)
+     and exists (select 1 from members where association_id = new.association_id
+                   and role = 'president' and active and not pending and id <> new.id) then
+    raise exception 'L''association a déjà un président. Pour céder ce rôle, utilisez « Passer la présidence » sur la fiche du nouveau président.';
+  end if;
+  return new;
+end $$;
+revoke execute on function public.members_one_president_check() from public, anon, authenticated;
+drop trigger if exists members_one_president_check on public.members;
+create trigger members_one_president_check before insert or update on public.members
+  for each row execute function public.members_one_president_check();
+
+create or replace function public.transfer_presidency(p_member uuid, p_my_role text) returns void
+language plpgsql security definer set search_path = public as $$
+declare me members; t members;
+begin
+  select * into t from members where id = p_member;
+  if t.id is null then raise exception 'Membre introuvable.'; end if;
+  select * into me from members where association_id = t.association_id and user_id = auth.uid()
+    and role = 'president' and active and not pending limit 1;
+  if me.id is null then raise exception 'Seul le président peut passer la présidence.'; end if;
+  if t.id = me.id then raise exception 'Choisissez un autre membre.'; end if;
+  if not t.active or t.pending then raise exception 'Ce membre n''est pas actif dans l''association.'; end if;
+  if t.user_id is null then
+    raise exception '% n''a pas encore de compte VillageLink relié. Il doit d''abord rejoindre l''association avec le code d''invitation.', t.full_name;
+  end if;
+  if p_my_role not in ('vice_president', 'secretaire', 'tresorier', 'projets', 'membre') then
+    raise exception 'Choisissez votre nouveau rôle.';
+  end if;
+  perform set_config('vl.transfer', 'on', true);
+  update members set role = 'president' where id = t.id;
+  perform set_config('vl.transfer', 'off', true);
+  update members set role = p_my_role where id = me.id;
+  perform write_log(t.association_id, format('a passé la présidence à %s.', t.full_name));
+end $$;
+revoke execute on function public.transfer_presidency(uuid, text) from public, anon;
+grant execute on function public.transfer_presidency(uuid, text) to authenticated;
+-- VillageLink 2.4.4 — Au plus 3 vice-présidents et 3 trésoriers actifs par association
+-- (décision d'Alpha du 24/11/2026). Comme pour le président, la règle bloque seulement le fait
+-- de DEVENIR vice-président ou trésorier quand la limite est atteinte (ajout, changement de rôle,
+-- réintégration) ; une association déjà au-dessus garde ses membres et peut les changer de rôle.
+
+create or replace function public.role_cap(p_role text) returns integer
+language sql immutable set search_path = public as $$
+  select case p_role when 'vice_president' then 3 when 'tresorier' then 3 else null end
+$$;
+
+create or replace function public.members_role_cap_check() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare cap integer := role_cap(new.role);
+begin
+  if coalesce(current_setting('vl.system', true), '') = 'on' or cap is null then
+    return new;
+  end if;
+  if new.active and not new.pending
+     and (tg_op = 'INSERT' or old.role <> new.role or not old.active or old.pending)
+     and (select count(*) from members where association_id = new.association_id
+            and role = new.role and active and not pending and id <> new.id) >= cap then
+    raise exception 'L''association a déjà % %s. Changez d''abord le rôle de l''un d''eux.',
+      cap, case new.role when 'vice_president' then 'vice-président' else 'trésorier' end;
+  end if;
+  return new;
+end $$;
+revoke execute on function public.members_role_cap_check() from public, anon, authenticated;
+drop trigger if exists members_role_cap_check on public.members;
+create trigger members_role_cap_check before insert or update on public.members
+  for each row execute function public.members_role_cap_check();
+-- VillageLink 2.4.6 — « Il reprend » sur une dispense qui commence ce mois-ci (ou plus tard)
+-- Avant : le dernier mois dispensé ne pouvait pas être avant le début, donc une dispense
+-- commencée ce mois restait au moins pour ce mois. Maintenant, choisir le mois juste avant
+-- le début ANNULE la dispense (ligne retirée, annulation écrite au journal). Permis seulement
+-- si la dispense n'a encore touché aucun mois passé, pour ne jamais changer l'historique.
+
+create or replace function public.end_exemption(p_id bigint, p_last text) returns void
+language plpgsql security definer set search_path = public as $$
+declare e member_exemptions; who text; cur text := to_char(now(), 'YYYY-MM');
+begin
+  select * into e from member_exemptions where id = p_id for update;
+  if e.id is null or not has_role(e.association_id, array['president','vice_president','secretaire','tresorier']) then
+    raise exception 'Seul le bureau peut mettre fin à une dispense.';
+  end if;
+  if p_last !~ '^\d{4}-(0[1-9]|1[0-2])$' then raise exception 'Mois invalide.'; end if;
+  select full_name into who from members where id = e.member_id;
+  if p_last < e.from_period then
+    if e.from_period < cur then
+      raise exception 'Le dernier mois dispensé ne peut pas être avant le début de la dispense.';
+    end if;
+    delete from member_exemptions where id = p_id;
+    perform write_log(e.association_id, format('a annulé la dispense de %s (elle devait commencer en %s).', who, pfr(e.from_period)));
+    return;
+  end if;
+  if e.to_period is not null and p_last > e.to_period then raise exception 'La dispense finit déjà avant ce mois.'; end if;
+  update member_exemptions set to_period = p_last, ended_label = actor_label(e.association_id) where id = p_id;
+  perform write_log(e.association_id, format('a mis fin à la dispense de %s (dernier mois dispensé : %s).', who, pfr(p_last)));
+end $$;
+revoke execute on function public.end_exemption(bigint, text) from public, anon;
+grant execute on function public.end_exemption(bigint, text) to authenticated;
