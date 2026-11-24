@@ -985,7 +985,7 @@
     return `<section class="card stack"><details class="more"><summary>Passer la présidence à ${first}</summary>
       <form class="stack" data-form="transferpres" data-id="${m.id}" novalidate style="margin-top:8px">
         <p class="help" style="margin:0">${esc(m.full_name)} deviendra le président de l’association. Vous ne serez plus président et vous ne pourrez plus changer les rôles ni les paramètres.</p>
-        <div class="field"><label for="tp-role">Votre nouveau rôle</label><select id="tp-role" name="my_role">${mine.map(([k, l]) => roleOpt(k, l, '', me.id)).join('')}</select></div>
+        <div class="field"><label for="tp-role">Votre nouveau rôle</label><select id="tp-role" name="my_role"><option value="" selected disabled>Choisissez…</option>${mine.map(([k, l]) => roleOpt(k, l, '', me.id)).join('')}</select></div>
         <div class="field"><label class="check"><input type="checkbox" name="ok"> Je confirme : ${esc(m.full_name)} devient président</label></div>
         <p class="err" hidden></p><button class="btn danger block" type="submit">Passer la présidence</button></form></details></section>`;
   }
@@ -1020,7 +1020,7 @@
   }
 
   function memberForm(m) {
-    const isNew = !m, r = m ? m.role : 'membre', nPres = activeMembers().filter(x => x.role === 'president').length;
+    const isNew = !m, r = m ? m.role : 'membre', nPres = activeMembers().filter(x => x.role === 'president').length, soloPres = r === 'president' && nPres < 2 && m && m.active && !m.pending;
     if (!can('members')) return `${subHead('Membre')}<p class="note">Seul le bureau peut ajouter ou modifier un membre.</p>`;
     if (m && m.role !== 'membre' && !can('roles')) return `${subHead('Membre', B() + '/m/' + m.id)}<p class="note">Seul le président modifie la fiche d’un membre du bureau.</p>`;
     return `${subHead(isNew ? 'Ajouter un membre' : 'Modifier la fiche', isNew ? B() + '/membres' : B() + '/m/' + m.id)}
@@ -1032,8 +1032,8 @@
         ${(S.ctx.sections || []).length ? `<div class="field"><label for="mb-sec">Section</label><select id="mb-sec" name="section_id"><option value="">Aucune section</option>${S.ctx.sections.map(x => opt(x.id, x.name, m ? m.section_id : '')).join('')}</select></div>` : ''}
         <div class="field"><label for="mb-email">Email (facultatif)</label><input id="mb-email" name="email" type="email" value="${esc(m && m.email)}"></div>
         <div class="field"><label for="mb-joined">Date d’adhésion</label><input id="mb-joined" name="joined_on" type="date" value="${esc(m ? m.joined_on : todayISO())}"><p class="help">Les cotisations sont dues à partir de ce mois.</p></div>
-        ${can('roles') && r === 'president' && nPres < 2 ? `<div class="field"><span style="font-size:14px;font-weight:500;color:var(--muted)">Fonction dans l’association</span><p style="margin:4px 0 0"><b>Président</b></p><p class="help">Une association n’a qu’un président. Pour céder ce rôle, ouvrez la fiche du futur président et touchez « Passer la présidence ».</p></div>` : ''}
-        ${can('roles') && (r !== 'president' || nPres > 1) ? `<div class="field"><label for="mb-role">Fonction dans l’association</label><select id="mb-role" name="role">${Object.entries(ROLES).filter(([k]) => k !== 'president' || r === 'president').map(([k, l]) => roleOpt(k, l, r, m && m.id)).join('')}</select><p class="help" id="mb-role-help" data-roles='${esc(JSON.stringify(ROLE_HELP))}'>${esc(ROLE_HELP[r] || '')}</p></div>` : ''}
+        ${can('roles') && soloPres ? `<div class="field"><span style="font-size:14px;font-weight:500;color:var(--muted)">Fonction dans l’association</span><p style="margin:4px 0 0"><b>Président</b></p><p class="help">Une association n’a qu’un président. Pour céder ce rôle, ouvrez la fiche du futur président et touchez « Passer la présidence ».</p></div>` : ''}
+        ${can('roles') && !soloPres ? `<div class="field"><label for="mb-role">Fonction dans l’association</label><select id="mb-role" name="role">${Object.entries(ROLES).filter(([k]) => k !== 'president' || r === 'president').map(([k, l]) => roleOpt(k, l, r, m && m.id)).join('')}</select><p class="help" id="mb-role-help" data-roles='${esc(JSON.stringify(ROLE_HELP))}'>${esc(ROLE_HELP[r] || '')}</p></div>` : ''}
         ${!isNew ? `<div class="field"><label class="check"><input type="checkbox" name="active" ${m.active ? 'checked' : ''}> Membre actif</label><p class="help">Décocher revient à retirer le membre de l’association : il perd l’accès et n’a plus de cotisation due. Son historique est conservé.</p></div>` : ''}
         <p class="err" hidden></p><button class="btn primary block" type="submit">${isNew ? 'Ajouter' : 'Enregistrer'}</button></form>`;
   }
@@ -2417,6 +2417,7 @@ Abstention</textarea><p class="help">Entre 2 et 10 choix.</p></div>
       await refresh(); toast(id ? 'Fiche enregistrée' : 'Membre ajouté'); go(B() + '/m/' + mid);
     },
     async transferpres(fd, form) {
+      if (!val(fd, 'my_role')) fail('Choisissez votre nouveau rôle.');
       if (fd.get('ok') !== 'on') fail('Cochez la case pour confirmer.');
       const t = S.ctx.byId.get(form.dataset.id);
       must(await sb.rpc('transfer_presidency', { p_member: form.dataset.id, p_my_role: val(fd, 'my_role') }));
@@ -2698,6 +2699,7 @@ Abstention</textarea><p class="help">Entre 2 et 10 choix.</p></div>
       const me = S.ctx.me, period = val(fd, 'period'), amount = Number(val(fd, 'amount').replace(',', '.')); if (Number.isFinite(amount) && !Number.isInteger(amount)) fail('Écrivez le montant en chiffres, sans point ni virgule : 1500, pas 1.500.');
       if (!/^\d{4}-\d{2}$/.test(period)) fail('Choisissez le mois à payer.');
       if (document.querySelector('input.cl-mo') && !fd.getAll('months').length) fail('Cochez au moins un mois.');
+      if (amount > 0 && !spread(me, period, amount)) fail('Ce montant dépasse 24 mois de cotisation. Réduisez-le.');
       if (!(amount > 0)) fail('Saisissez le montant envoyé.');
       const method = val(fd, 'method'); if (!method) fail('Choisissez Wave, Orange Money ou Free Money.');
       must(await sb.rpc('declare_payment', { p_member: me.id, p_period: period, p_amount: amount, p_method: method, p_reference: val(fd, 'reference') }));
