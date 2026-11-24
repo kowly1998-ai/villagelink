@@ -2869,7 +2869,8 @@ Abstention</textarea><p class="help">Entre 2 et 10 choix.</p></div>
         const tid = must(await sb.rpc('confirm_payment_claim', { p_id: Number(b.dataset.id) }));
         await refresh(); toast('Paiement confirmé'); go(B() + '/op/' + tid + '?recu=1');
       }
-      else if (act === 'ex-end') { const f = $('#exend'); if (f) { f.hidden = false; f.querySelector('[name=id]').value = b.dataset.id; const l = f.querySelector('[name=last]'); l.min = b.dataset.from; if (l.value < b.dataset.from) l.value = b.dataset.from; l.focus(); } }
+      else if (act === 'ex-end') { const f = $('#exend'); if (f) { f.hidden = false; f.querySelector('[name=id]').value = b.dataset.id; const l = f.querySelector('[name=last]'); // Dispense qui commence ce mois ou plus tard : le mois d'avant l'annule (v2.4.6, end_exemption).
+        const fromNow = b.dataset.from >= curYM(), lo = fromNow ? addMonth(b.dataset.from, -1) : b.dataset.from; l.min = lo; if (fromNow || l.value < lo) l.value = lo; l.focus(); } }
       else if (act === 'claim-no') { const f = $('#rjc-' + b.dataset.id); if (f) { f.hidden = false; f.querySelector('input').focus(); } }
       else if (act === 'claim-cancel') {
         if (b.dataset.confirm !== '1') { b.dataset.confirm = '1'; b.textContent = 'Confirmer l’annulation'; return; }
