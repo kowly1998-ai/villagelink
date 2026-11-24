@@ -325,8 +325,8 @@ textarea.mono{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
 .radios input{position:absolute;opacity:0;pointer-events:none}
 .radios label:has(input:checked){background:var(--color-primary-soft);color:var(--color-primary);border:2px solid var(--color-primary)}
 .radios label:has(input:focus-visible){outline:3px solid var(--color-focus-ring);outline-offset:2px}
-.recap{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px 12px;font-size:15px;padding:12px 16px}
-.recap dt{color:var(--color-text-3)}.recap dd{margin:0;text-align:right;font-weight:600}
+.recap{display:grid;grid-template-columns:minmax(7.5em,max-content) minmax(0,1fr);gap:8px 12px;font-size:15px;padding:12px 16px}
+.recap dt{color:var(--color-text-3)}.recap dd{margin:0;text-align:right;font-weight:600;overflow-wrap:anywhere}
 .recap dd.due{color:var(--color-danger)}
 details.more summary{cursor:pointer;color:var(--color-primary);font-size:15px;font-weight:600;list-style:none;padding:8px 0;min-height:44px;display:flex;align-items:center;gap:6px}
 details.more summary::before{content:"+ "}
